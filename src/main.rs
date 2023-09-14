@@ -1,7 +1,7 @@
-use std::{path::Path, sync::Arc};
-
 use git2::{FetchOptions, Repository};
 use neo4rs::{query, Graph, Node, Query};
+use std::{path::Path, sync::Arc};
+use tempfile::tempdir;
 
 #[tokio::main]
 async fn main() {
@@ -9,7 +9,11 @@ async fn main() {
     let mut builder = git2::build::RepoBuilder::new();
     builder.bare(true);
 
-    let repo_path = "mine";
+    let tmp_dir = tempdir().unwrap();
+    let file_path = tmp_dir.path().join("repo");
+
+    let repo_path = file_path.as_path();
+    println!("Repo path: {}", repo_path.display());
     let url = "https://github.com/avrabe/meta-fmu.git";
 
     // Try opening the repository
@@ -122,4 +126,8 @@ async fn main() {
     .await
     .unwrap();
     txn.commit().await.unwrap(); //or txn.rollback().await.unwrap();
+
+    // `tmp_dir` goes out of scope, the directory as well as
+    // `tmp_file` will be deleted here.
+    tmp_dir.close().unwrap();
 }
