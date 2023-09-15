@@ -1,5 +1,5 @@
-use git2::{FetchOptions, Repository, BranchType};
-use neo4rs::{query, Graph, Node, Query};
+use git2::{BranchType, FetchOptions, Repository};
+use neo4rs::{query, ConfigBuilder, Graph, Node, Query};
 use std::{path::Path, sync::Arc};
 use tempfile::tempdir;
 
@@ -56,32 +56,28 @@ async fn main() {
         }
     };
 
-
     let mut remote = repo.find_remote("origin").unwrap();
     remote.connect(git2::Direction::Fetch).unwrap();
 
     for branch in remote.list().unwrap() {
         if branch.name().starts_with("refs/heads") {
+            let branch_name = branch.name().to_string();
+            let branch_ref = branch.oid();
+            let branch_commit = repo.find_commit(branch_ref).unwrap();
 
-        let branch_name = branch.name().to_string();
-        let branch_ref = branch.oid();
-        let branch_commit = repo.find_commit(branch_ref).unwrap();
-        
-        if let Ok(local_branch) = repo.find_branch(&branch_name, BranchType::Local) {
-          if !local_branch.is_head() {
-            repo.branch(&branch_name, &branch_commit, true).unwrap();
-          }
-        } else {
-          repo.branch(&branch_name, &branch_commit, true).unwrap(); 
+            if let Ok(local_branch) = repo.find_branch(&branch_name, BranchType::Local) {
+                if !local_branch.is_head() {
+                    repo.branch(&branch_name, &branch_commit, true).unwrap();
+                }
+            } else {
+                repo.branch(&branch_name, &branch_commit, true).unwrap();
+            }
         }
-      }
     }
     for branch in remote.list().unwrap().iter() {
         if branch.name().starts_with("refs/heads") {
-
             let name = branch.name().split('/').last().unwrap();
 
-            
             collector.push(query(
                 format!("MERGE (p:Commit {{oid: \'{}\'}})", branch.oid()).as_str(),
             ));
@@ -94,8 +90,7 @@ async fn main() {
                 MATCH (c:Repository {{uri: \'{}\'}})
                 MATCH (r:Reference {{name: \'{}\'}})
                 MERGE (c)-[:has ]->(r)",
-                    url,
-                    name
+                    url, name
                 )
                 .as_str(),
             ));
@@ -110,7 +105,7 @@ async fn main() {
                 )
                 .as_str(),
             ));
-            let remote_name = format!("refs/remotes/origin/{}",name);
+            let remote_name = format!("refs/remotes/origin/{}", name);
             let reference = repo.find_reference(remote_name.as_str());
             match reference {
                 Ok(reference) => {
@@ -163,24 +158,33 @@ async fn main() {
     }
 
     // concurrent queries
-    let uri = "neo4j://127.0.0.1:7687";
+    let uri = "neo4j://127.0.0.1:7687/graph";
     let user = "neo4j";
     let pass = "12345678";
-    let graph = Arc::new(Graph::new(uri, user, pass).await.unwrap());
-    for _ in 1..=2 {
-        let graph = graph.clone();
-        tokio::spawn(async move {
-            let mut result = graph
-                .execute(query("MATCH (p:Person {name: $name}) RETURN p").param("name", "mark"))
-                .await
-                .unwrap();
-            while let Ok(Some(row)) = result.next().await {
-                let node: Node = row.get("p").unwrap();
-                let name: String = node.get("name").unwrap();
-                println!("{}", name);
-            }
-        });
-    }
+    let config = ConfigBuilder::default()
+        .uri(uri)
+        .user(user)
+        .password(pass)
+        .db("graph")
+        .build()
+        .unwrap();
+    //let graph = Arc::new(Graph::new(uri, user, pass).await.unwrap());
+    let graph = Arc::new(Graph::connect(config).await.unwrap());
+
+    //for _ in 1..=2 {
+    //    let graph = graph.clone();
+    //    tokio::spawn(async move {
+    //        let mut result = graph
+    //            .execute(query("MATCH (p:Person {name: $name}) RETURN p").param("name", "mark"))
+    //            .await
+    //            .unwrap();
+    //        while let Ok(Some(row)) = result.next().await {
+    //            let node: Node = row.get("p").unwrap();
+    //            let name: String = node.get("name").unwrap();
+    //            println!("{}", name);
+    //        }
+    //    });
+    //}
 
     //Transactions
     let txn = graph.start_txn().await.unwrap();
