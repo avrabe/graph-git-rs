@@ -1,4 +1,4 @@
-use git2::{FetchOptions, Repository};
+use git2::{FetchOptions, Repository, BranchType};
 use neo4rs::{query, Graph, Node, Query};
 use std::{path::Path, sync::Arc};
 use tempfile::tempdir;
@@ -56,16 +56,37 @@ async fn main() {
         }
     };
 
+
     let mut remote = repo.find_remote("origin").unwrap();
     remote.connect(git2::Direction::Fetch).unwrap();
 
+    for branch in remote.list().unwrap() {
+        if branch.name().starts_with("refs/heads") {
+
+        let branch_name = branch.name().to_string();
+        let branch_ref = branch.oid();
+        let branch_commit = repo.find_commit(branch_ref).unwrap();
+        
+        if let Ok(local_branch) = repo.find_branch(&branch_name, BranchType::Local) {
+          if !local_branch.is_head() {
+            repo.branch(&branch_name, &branch_commit, true).unwrap();
+          }
+        } else {
+          repo.branch(&branch_name, &branch_commit, true).unwrap(); 
+        }
+      }
+    }
     for branch in remote.list().unwrap().iter() {
-        if branch.name().starts_with("refs/head") {
+        if branch.name().starts_with("refs/heads") {
+
+            let name = branch.name().split('/').last().unwrap();
+
+            
             collector.push(query(
                 format!("MERGE (p:Commit {{oid: \'{}\'}})", branch.oid()).as_str(),
             ));
             collector.push(query(
-                format!("MERGE (p:Reference {{name: \'{}\'}})", branch.name()).as_str(),
+                format!("MERGE (p:Reference {{name: \'{}\'}})", name).as_str(),
             ));
             collector.push(query(
                 format!(
@@ -74,7 +95,7 @@ async fn main() {
                 MATCH (r:Reference {{name: \'{}\'}})
                 MERGE (c)-[:has ]->(r)",
                     url,
-                    branch.name()
+                    name
                 )
                 .as_str(),
             ));
@@ -85,11 +106,12 @@ async fn main() {
                 MATCH (r:Reference {{name: \'{}\'}})
                 MERGE (c)-[:links_to ]->(r)",
                     branch.oid(),
-                    branch.name()
+                    name
                 )
                 .as_str(),
             ));
-            let reference = repo.find_reference(branch.name());
+            let remote_name = format!("refs/remotes/origin/{}",name);
+            let reference = repo.find_reference(remote_name.as_str());
             match reference {
                 Ok(reference) => {
                     let commit = reference.peel_to_commit().unwrap();
