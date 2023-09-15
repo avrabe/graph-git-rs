@@ -89,6 +89,52 @@ async fn main() {
                 )
                 .as_str(),
             ));
+            let reference = repo.find_reference(branch.name());
+            match reference {
+                Ok(reference) => {
+                    let commit = reference.peel_to_commit().unwrap();
+                    let author = commit.author();
+                    let name = author.name().unwrap();
+                    let email = author.email().unwrap();
+                    let message = commit.message().unwrap();
+                    collector.push(query(
+                        format!(
+                            "MERGE (p:Person {{email: \'{}\', name: \'{}\'}})",
+                            email, name
+                        )
+                        .as_str(),
+                    ));
+                    collector.push(query(
+                        format!("MERGE (p:Message {{message: \'{}\'}})", message).as_str(),
+                    ));
+                    collector.push(query(
+                        format!(
+                            "
+                        MATCH (c:Commit {{oid: \'{}\'}})
+                        MATCH (p:Person {{email: \'{}\', name: \'{}\'}})
+                        MERGE (c)-[:authored_by ]->(p)",
+                            branch.oid(),
+                            email,
+                            name
+                        )
+                        .as_str(),
+                    ));
+                    collector.push(query(
+                        format!(
+                            "
+                        MATCH (c:Commit {{oid: \'{}\'}})
+                        MATCH (p:Message {{message: \'{}\'}})
+                        MERGE (c)-[:has_message ]->(p)",
+                            branch.oid(),
+                            message,
+                        )
+                        .as_str(),
+                    ));
+                }
+                Err(e) => {
+                    println!("Error: {}", e);
+                }
+            }
         }
 
         println!("{}\t{}", branch.oid(), branch.name());
