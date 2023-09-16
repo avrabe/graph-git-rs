@@ -4,8 +4,7 @@
 
 A rust library for working with Git repositories as graphs.
 
-
-<img src="./graph.svg">
+![Example graph](./graph.svg)
 
 Clear database
 `MATCH (n) DETACH DELETE n`
