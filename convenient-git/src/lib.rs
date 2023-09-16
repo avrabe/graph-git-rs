@@ -41,6 +41,7 @@ struct State {
     path: Option<PathBuf>,
 }
 
+
 /// Creates a new Git repository instance by first trying to open the
 /// repository at the provided path. If that fails with a NotFound error,
 /// it will clone the repository from the provided URL into the given path.
@@ -177,6 +178,7 @@ impl GitRepository {
     pub fn map_remote_branches_local(&self) {
         let span = span!(Level::INFO, "map");
         let _enter = span.enter();
+
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
             remote.connect(git2::Direction::Fetch).unwrap();

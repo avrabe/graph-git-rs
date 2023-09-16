@@ -93,6 +93,7 @@ fn add_branches_to_query(git_repository: &GitRepository) -> Vec<Query> {
         collector.push(merge_link(
             node_repository(&git_repository.git_url),
             node_reference(branch.name.as_str(), &git_repository.git_url),
+
             "has".to_string(),
         ));
         collector.push(merge_link(
