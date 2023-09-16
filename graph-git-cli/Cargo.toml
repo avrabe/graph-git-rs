@@ -1,0 +1,20 @@
+[package]
+name = "graph-git-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Ralf Anton Beier <ralf_beier@me.com>"]
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.4.3", features = ["cargo", "derive", "env"] }
+git2 = "0.18.0"
+neo4rs = "0.6.2"
+tempfile = "3.8.0"
+tokio = { version = "1.32.0", features = ["rt", "tokio-macros"] }
+tracing = { version = "0.1.37", features = ["attributes"] }
+tracing-subscriber = "0.3.17"
+graph-git = { path = "../graph-git" }
+convenient-git = { path = "../convenient-git" }
+
