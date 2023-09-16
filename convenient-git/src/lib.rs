@@ -1,7 +1,12 @@
-use std::path::Path;
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+};
 
-use git2::{BranchType, Commit, FetchOptions, Repository};
-use tracing::error;
+use git2::{
+    build::CheckoutBuilder, BranchType, Commit, FetchOptions, Progress, RemoteCallbacks, Repository,
+};
+use tracing::{error, info, span, Level};
 
 pub struct GitRemoteHead {
     pub oid: String,
@@ -29,6 +34,14 @@ pub struct GitRepository {
     pub git_url: String,
 }
 
+struct State {
+    progress: Option<Progress<'static>>,
+    total: usize,
+    current: usize,
+    path: Option<PathBuf>,
+}
+
+
 /// Creates a new Git repository instance by first trying to open the
 /// repository at the provided path. If that fails with a NotFound error,
 /// it will clone the repository from the provided URL into the given path.
@@ -48,9 +61,38 @@ pub struct GitRepository {
 /// Panics if failed to open the repository for any reason other than it not existing.
 impl GitRepository {
     pub fn new(repo_path: &Path, git_url: &String) -> GitRepository {
+        let span = span!(Level::INFO, "clone");
+        let _enter = span.enter();
+
+        let state = RefCell::new(State {
+            progress: None,
+            total: 0,
+            current: 0,
+            path: None,
+        });
+        let mut cb = RemoteCallbacks::new();
+        cb.transfer_progress(|stats| {
+            let mut state = state.borrow_mut();
+            state.progress = Some(stats.to_owned());
+            GitRepository::print(&mut *state);
+            true
+        });
+
+        let mut co = CheckoutBuilder::new();
+        co.progress(|path, cur, total| {
+            let mut state = state.borrow_mut();
+            state.path = path.map(|p| p.to_path_buf());
+            state.current = cur;
+            state.total = total;
+            GitRepository::print(&mut *state);
+        });
+
+        let mut fo = FetchOptions::new();
+        fo.remote_callbacks(cb);
+
         // Try opening the repository
-        let mut builder = git2::build::RepoBuilder::new();
-        builder.bare(true);
+        let mut binding = git2::build::RepoBuilder::new();
+        let builder = binding.bare(true).fetch_options(fo).with_checkout(co);
 
         let repo = match Repository::open(repo_path) {
             Ok(repo) => repo,
@@ -69,7 +111,48 @@ impl GitRepository {
         }
     }
 
+    fn print(state: &mut State) {
+        let stats = state.progress.as_ref().unwrap();
+        let network_pct = (100 * stats.received_objects()) / stats.total_objects();
+        let index_pct = (100 * stats.indexed_objects()) / stats.total_objects();
+        let co_pct = if state.total > 0 {
+            (100 * state.current) / state.total
+        } else {
+            0
+        };
+        let kbytes = stats.received_bytes() / 1024;
+        if stats.received_objects() == stats.total_objects() {
+            info!(
+                "Resolving deltas {}/{}\r",
+                stats.indexed_deltas(),
+                stats.total_deltas()
+            );
+        } else {
+            info!(
+                "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
+                 /  chk {:3}% ({:4}/{:4}) {}\r",
+                network_pct,
+                kbytes,
+                stats.received_objects(),
+                stats.total_objects(),
+                index_pct,
+                stats.indexed_objects(),
+                stats.total_objects(),
+                co_pct,
+                state.current,
+                state.total,
+                state
+                    .path
+                    .as_ref()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            )
+        }
+    }
+
     pub fn update_from_remote(&self) {
+        let span = span!(Level::INFO, "update");
+        let _enter = span.enter();
         if let Some(repo) = &self.repo {
             let mut fo = FetchOptions::new();
             match repo.find_remote("origin") {
@@ -93,6 +176,9 @@ impl GitRepository {
     }
 
     pub fn map_remote_branches_local(&self) {
+        let span = span!(Level::INFO, "map");
+        let _enter = span.enter();
+
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
             remote.connect(git2::Direction::Fetch).unwrap();
@@ -118,6 +204,8 @@ impl GitRepository {
     }
 
     pub fn get_remote_heads(&self) -> Option<Vec<GitRemoteHead>> {
+        let span = span!(Level::INFO, "get_remote_heads");
+        let _enter = span.enter();
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
             let _ = remote.connect(git2::Direction::Fetch);
@@ -145,6 +233,8 @@ impl GitRepository {
     }
 
     pub fn find_reference(&self, name: &str) -> Option<GitCommit> {
+        let span = span!(Level::INFO, "find_reference");
+        let _enter = span.enter();
         if let Some(repo) = &self.repo {
             let remote_name = format!("refs/remotes/origin/{}", name);
             let reference = repo.find_reference(remote_name.as_str());

@@ -86,15 +86,19 @@ fn add_branches_to_query(git_repository: &GitRepository) -> Vec<Query> {
     let mut collector = Vec::<Query>::new();
     for branch in git_repository.get_remote_heads().unwrap().iter() {
         collector.push(merge_node(node_commit(branch.oid.as_str())));
-        collector.push(merge_node(node_reference(branch.name.as_str())));
+        collector.push(merge_node(node_reference(
+            branch.name.as_str(),
+            &git_repository.git_url,
+        )));
         collector.push(merge_link(
             node_repository(&git_repository.git_url),
-            node_reference(branch.name.as_str()),
+            node_reference(branch.name.as_str(), &git_repository.git_url),
+
             "has".to_string(),
         ));
         collector.push(merge_link(
             node_commit(branch.oid.as_str()),
-            node_reference(branch.name.as_str()),
+            node_reference(branch.name.as_str(), &git_repository.git_url),
             "links_to".to_string(),
         ));
     }
@@ -150,6 +154,7 @@ async fn main() {
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
         .with_max_level(get_log_level(&log_level))
+        .with_file(true)
         // completes the builder.
         .finish();
 
