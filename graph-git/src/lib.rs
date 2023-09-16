@@ -7,10 +7,13 @@ use tracing::debug;
 ///
 /// * `name` - The name of the reference
 ///
-pub fn node_reference(name: &str) -> GitCypher {
+pub fn node_reference(name: &str, uri: &str) -> GitCypher {
     GitCypher {
         var: "reference".to_owned(),
-        cypher: format!("(reference:Reference {{name: \'{}\'}})", name),
+        cypher: format!(
+            "(reference:Reference {{name: \'{}\', uri: '{}'}})",
+            name, uri
+        ),
     }
 }
 
@@ -66,7 +69,10 @@ pub struct GitCypher {
 pub fn node_message(message: &str) -> GitCypher {
     GitCypher {
         var: "message".to_owned(),
-        cypher: format!("(message:Message {{message: \'{}\'}})", message),
+        cypher: format!(
+            "(message:Message {{message: \'{}\'}})",
+            message.replace("\'", "\\\'")
+        ),
     }
 }
 
