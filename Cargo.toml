@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "graph-git",
     "convenient-git",
+    "convenient-kas",
     "graph-git-cli",
 ]
 
