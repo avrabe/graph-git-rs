@@ -1,12 +1,14 @@
 use clap::{crate_version, Parser};
 use convenient_git::GitRepository;
+use convenient_kas::KasManifest;
 use graph_git::{
-    merge_link, merge_node, node_commit, node_message, node_person, node_reference, node_repository,
+    merge_link, merge_node, node_commit, node_kas_manifest, node_message, node_person,
+    node_reference, node_repository,
 };
 use neo4rs::{ConfigBuilder, Graph, Query};
 use std::sync::Arc;
 use tempfile::tempdir;
-use tracing::{error, span, warn, Level};
+use tracing::{error, info, span, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// Options for the application.
@@ -80,6 +82,15 @@ pub fn get_log_level(level: &str) -> Level {
     }
 }
 
+/// Adds queries to find all branches in the Git repository.
+///
+/// # Arguments
+///
+/// * `git_repository` - The GitRepository struct containing the repository to query.
+///
+/// # Returns
+///
+/// A Vec&lt;Query&gt; containing one query per branch to find all branches in the repository.
 fn add_branches_to_query(git_repository: &GitRepository) -> Vec<Query> {
     let span = span!(Level::INFO, "add_branches_to_query");
     let _enter = span.enter();
@@ -93,7 +104,6 @@ fn add_branches_to_query(git_repository: &GitRepository) -> Vec<Query> {
         collector.push(merge_link(
             node_repository(&git_repository.git_url),
             node_reference(branch.name.as_str(), &git_repository.git_url),
-
             "has".to_string(),
         ));
         collector.push(merge_link(
@@ -138,6 +148,91 @@ fn add_head_commit_to_query(git_repository: &GitRepository) -> Vec<Query> {
     collector
 }
 
+fn find_kas_manifests_in_branches(git_repository: &GitRepository) -> Vec<Query> {
+    let span = span!(Level::INFO, "add_head_commit_to_query");
+    let _enter = span.enter();
+    let mut collector = Vec::<Query>::new();
+    for branch in git_repository.get_remote_heads().unwrap().iter() {
+        match git_repository.checkout(branch.name.as_str()) {
+            Ok(_) => {
+                let kas_manifests = KasManifest::find_kas_manifest(
+                    git_repository.repo.as_ref().unwrap().workdir().unwrap(),
+                );
+                info!(parent: &span, "Found {} kas manifest(s)", kas_manifests.len());
+                for kas in kas_manifests {
+                    collector.push(merge_node(node_kas_manifest(
+                        kas.path.as_str(),
+                        branch.oid.as_str(),
+                    )));
+                    collector.push(merge_link(
+                        node_commit(branch.oid.as_str()),
+                        node_kas_manifest(kas.path.as_str(), branch.oid.as_str()),
+                        "contains".to_string(),
+                    ));
+                    for (kas_repository_name, kas_repository) in kas.manifest.repos {
+                        let mut git_repo: String = String::new();
+                        // if no repo was given. Assume the current repo
+                        git_repo.push_str(&git_repository.git_url);
+                        match kas_repository {
+                            Some(repository) => {
+                                match repository.url {
+                                    Some(url) => {
+                                        collector.push(merge_node(node_repository(url.as_str())));
+                                        git_repo.replace_range(.., url.as_str());
+                                        info!(parent: &span, "Found kas {} repository {}", kas_repository_name, url.as_str());
+                                    }
+                                    None => {
+                                        error!(parent: &span, "Error: {}", kas_repository_name);
+                                    }
+                                };
+                                match repository.refspec {
+                                    Some(refspec) => {
+                                        collector.push(merge_node(node_reference(
+                                            refspec.as_str(),
+                                            &git_repo,
+                                        )));
+                                        collector.push(merge_link(
+                                            node_repository(&git_repo),
+                                            node_reference(
+                                                refspec.as_str(),
+                                                &git_repo,
+                                            ),
+                                            "has".to_string(),
+                                        ));
+                                        collector.push(merge_link(
+                                            node_kas_manifest(
+                                                kas.path.as_str(),
+                                                branch.oid.as_str(),
+                                            ),
+                                            node_reference(
+                                                refspec.as_str(),
+                                                &git_repo,
+                                            ),
+                                            "refers".to_string(),
+                                        ));
+                                        info!(parent: &span, "Found kas {} refspec {}", kas_repository_name, refspec.as_str());
+                                    }
+                                    None => {
+                                        error!(parent: &span, "Error: {}. Need to find a way for default refspec.", kas_repository_name);
+                                    }
+                                };
+                            }
+
+                            None => {
+                                error!(parent: &span, "Error: {}", kas_repository_name);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                error!(parent: &span, "Error: {}", e);
+            }
+        }
+    }
+    collector
+}
+
 #[tokio::main]
 async fn main() {
     // Get the command line arguments
@@ -176,6 +271,7 @@ async fn main() {
     collector.push(merge_node(node_repository(&opts.git_url)));
     collector.append(&mut add_branches_to_query(&git_repository));
     collector.append(&mut add_head_commit_to_query(&git_repository));
+    collector.append(&mut find_kas_manifests_in_branches(&git_repository));
 
     // concurrent queries
     let config = ConfigBuilder::new()

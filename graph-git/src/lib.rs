@@ -41,6 +41,16 @@ pub fn node_repository(uri: &str) -> GitCypher {
     }
 }
 
+pub fn node_kas_manifest(path: &str, oid: &str) -> GitCypher {
+    GitCypher {
+        var: "repository".to_owned(),
+        cypher: format!(
+            "(repository:Manifest {{path: '{}', oid: \'{}\', type: 'kas'}})",
+            path, oid
+        ),
+    }
+}
+
 /// Creates a Cypher node representation for a Git person.
 ///
 /// # Arguments
@@ -71,7 +81,7 @@ pub fn node_message(message: &str) -> GitCypher {
         var: "message".to_owned(),
         cypher: format!(
             "(message:Message {{message: \'{}\'}})",
-            message.replace("\'", "\\\'")
+            message.replace('\'', "\\\'")
         ),
     }
 }

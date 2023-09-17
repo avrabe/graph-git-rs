@@ -421,6 +421,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "convenient-git",
+ "convenient-kas",
  "git2",
  "graph-git",
  "neo4rs",

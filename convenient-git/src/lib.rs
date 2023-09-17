@@ -4,9 +4,10 @@ use std::{
 };
 
 use git2::{
-    build::CheckoutBuilder, BranchType, Commit, FetchOptions, Progress, RemoteCallbacks, Repository,
+    build::CheckoutBuilder, BranchType, Commit, FetchOptions, Oid, Progress, RemoteCallbacks,
+    Repository,
 };
-use tracing::{error, info, span, Level};
+use tracing::{error, info, info_span, span, Level};
 
 pub struct GitRemoteHead {
     pub oid: String,
@@ -14,6 +15,7 @@ pub struct GitRemoteHead {
 }
 
 pub struct GitCommit {
+    pub oid: String,
     pub name: String,
     pub email: String,
     pub message: String,
@@ -22,6 +24,7 @@ pub struct GitCommit {
 impl GitCommit {
     pub fn new(commit: Commit) -> GitCommit {
         GitCommit {
+            oid: commit.id().to_string(),
             name: commit.author().name().unwrap().to_string(),
             email: commit.author().email().unwrap().to_string(),
             message: commit.message().unwrap().to_string(),
@@ -40,7 +43,6 @@ struct State {
     current: usize,
     path: Option<PathBuf>,
 }
-
 
 /// Creates a new Git repository instance by first trying to open the
 /// repository at the provided path. If that fails with a NotFound error,
@@ -74,7 +76,7 @@ impl GitRepository {
         cb.transfer_progress(|stats| {
             let mut state = state.borrow_mut();
             state.progress = Some(stats.to_owned());
-            GitRepository::print(&mut *state);
+            GitRepository::print(&mut state);
             true
         });
 
@@ -84,7 +86,7 @@ impl GitRepository {
             state.path = path.map(|p| p.to_path_buf());
             state.current = cur;
             state.total = total;
-            GitRepository::print(&mut *state);
+            GitRepository::print(&mut state);
         });
 
         let mut fo = FetchOptions::new();
@@ -92,7 +94,7 @@ impl GitRepository {
 
         // Try opening the repository
         let mut binding = git2::build::RepoBuilder::new();
-        let builder = binding.bare(true).fetch_options(fo).with_checkout(co);
+        let builder = binding.bare(false).fetch_options(fo).with_checkout(co);
 
         let repo = match Repository::open(repo_path) {
             Ok(repo) => repo,
@@ -172,6 +174,32 @@ impl GitRepository {
             };
         } else {
             error!("No repository found");
+        }
+    }
+
+    pub fn checkout(&self, name: &str) -> Result<(), git2::Error> {
+        let span = info_span!("checkout", to = &name);
+        let _enter = span.enter();
+        info!("Checking out {}", name);
+        if let Some(repo) = &self.repo {
+            let mut co = git2::build::CheckoutBuilder::new();
+            co.force();
+            match self.find_reference(name) {
+                Some(reference) => {
+                    repo.set_head_detached(Oid::from_str(&reference.oid).unwrap())
+                        .unwrap();
+                    repo.checkout_head(Some(&mut co)).unwrap();
+                    info!("Checked out {}", name);
+                    Ok(())
+                }
+                None => {
+                    error!("Error: {}", name);
+                    Err(git2::Error::from_str("No reference found"))
+                }
+            }
+        } else {
+            error!("No repository found");
+            Err(git2::Error::from_str("No repository found"))
         }
     }
 
