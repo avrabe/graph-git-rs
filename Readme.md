@@ -1,6 +1,7 @@
 # graph-git-rs
 
 [![Rust](https://github.com/avrabe/graph-git-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/avrabe/graph-git-rs/actions/workflows/rust.yml)
+[![codecov](https://codecov.io/gh/avrabe/graph-git-rs/graph/badge.svg?token=9rYlCv0G2W)](https://codecov.io/gh/avrabe/graph-git-rs)
 
 A rust library for working with Git repositories as graphs.
 
