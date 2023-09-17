@@ -1,25 +1,90 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct KasManifest {
-    pub repos: HashMap<String, Option<Repository>>
+pub struct KasManifest {
+    pub repos: HashMap<String, Option<Repository>>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct Repository {
-    url: Option<String>,
-    refspec: Option<String>,
+pub struct Repository {
+    pub url: Option<String>,
+    pub refspec: Option<String>,
 }
 
+impl KasManifest {
+    /// Finds KasManifest files recursively in the given path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The root path to search for KasManifest files.
+    ///
+    /// # Returns
+    ///
+    /// A vector containing any found KasManifest files deserialized from YAML.
+    ///
+    /// # Errors
+    ///
+    /// Any IO or parsing errors are logged via `warn!` and skipped.
+    pub fn find_kas_manifest(path: &Path) -> Vec<KasManifest> {
+        let mut kas_manifests = Vec::<KasManifest>::new();
+
+        for entry in path.read_dir().unwrap() {
+            match entry {
+                Ok(entry) => {
+                    if entry.file_type().unwrap().is_dir() {
+                        continue;
+                    }
+
+                    if !entry.path().is_file() {
+                        continue;
+                    }
+
+                    let path = entry.path();
+
+                    if !path.is_file() {
+                        continue;
+                    }
+
+                    let contents = match std::fs::read_to_string(&path) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            warn!("Failed to read file {}: {}", path.display(), e);
+                            continue;
+                        }
+                    };
+
+                    match serde_yaml::from_str::<KasManifest>(&contents) {
+                        Ok(manifest) => kas_manifests.push(manifest),
+                        Err(e) => warn!("Failed to parse {}: {}", path.display(), e),
+                    }
+                }
+                Err(e) => {
+                    warn!("Error reading directory entry: {}", e);
+                }
+            };
+        }
+        kas_manifests
+    }
+}
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crate::KasManifest;
 
     #[test]
-    fn it_works() {
+    fn kas_manifest_find() {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let manifests = KasManifest::find_kas_manifest(d.as_path());
+        assert_eq!(manifests.len(),1);
+    }
+
+    #[test]
+    fn kas_manifest_deserialize() {
         let manifest = "# Every file needs to contain a header, that provides kas with information
         # about the context of this file.
         header:
@@ -61,6 +126,9 @@ mod tests {
         let kas_manifest: KasManifest = serde_yaml::from_str(&manifest).unwrap();
         assert_eq!(kas_manifest.repos.len(), 3);
         assert_eq!(kas_manifest.repos["meta-custom"], None);
-        assert_eq!(kas_manifest.repos["poky"].as_ref().unwrap().refspec, Some("master".to_string()));
+        assert_eq!(
+            kas_manifest.repos["poky"].as_ref().unwrap().refspec,
+            Some("master".to_string())
+        );
     }
 }
