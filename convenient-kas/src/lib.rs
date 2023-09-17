@@ -4,14 +4,22 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct Kas {
+    pub path: String,
+    pub manifest: KasManifest,
+}
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct KasManifest {
     pub repos: HashMap<String, Option<Repository>>,
 }
 
+// TODO: Way to enable either refspec or branch, commit
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct Repository {
     pub url: Option<String>,
     pub refspec: Option<String>,
+    pub branch: Option<String>,
+    pub commit: Option<String>,
 }
 
 impl KasManifest {
@@ -28,8 +36,8 @@ impl KasManifest {
     /// # Errors
     ///
     /// Any IO or parsing errors are logged via `warn!` and skipped.
-    pub fn find_kas_manifest(path: &Path) -> Vec<KasManifest> {
-        let mut kas_manifests = Vec::<KasManifest>::new();
+    pub fn find_kas_manifest(path: &Path) -> Vec<Kas> {
+        let mut kas_manifests = Vec::<Kas>::new();
 
         for entry in path.read_dir().unwrap() {
             match entry {
@@ -55,9 +63,14 @@ impl KasManifest {
                             continue;
                         }
                     };
-
                     match serde_yaml::from_str::<KasManifest>(&contents) {
-                        Ok(manifest) => kas_manifests.push(manifest),
+                        Ok(manifest) => {
+                            let kas = Kas {
+                                path: path.file_name().unwrap().to_str().unwrap().to_string(),
+                                manifest,
+                            };
+                            kas_manifests.push(kas)
+                        }
                         Err(e) => warn!("Failed to parse {}: {}", path.display(), e),
                     }
                 }
@@ -80,7 +93,7 @@ mod tests {
     fn kas_manifest_find() {
         let d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let manifests = KasManifest::find_kas_manifest(d.as_path());
-        assert_eq!(manifests.len(),1);
+        assert_eq!(manifests.len(), 1);
     }
 
     #[test]
