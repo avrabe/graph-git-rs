@@ -11,6 +11,39 @@ use tempfile::tempdir;
 use tracing::{error, info, span, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+
+struct Queue {
+    queue: Mutex<VecDeque<String>>,
+    dict: Mutex<HashMap<String, String>>,
+}
+
+impl Queue {
+    fn new() -> Self {
+        Self {
+            queue: Mutex::new(VecDeque::new()),
+            dict: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn add(&self, item: String) {
+        let mut queue = self.queue.lock().unwrap();
+        let mut dict = self.dict.lock().unwrap();
+        if dict.contains_key(&item) {
+            info!("Already in queue: {}", item);
+        } else {
+            dict.insert(item.clone(), item.clone());
+            queue.push_back(item);
+        }
+    }
+
+    fn take(&self) -> Option<String> {
+        let mut queue = self.queue.lock().unwrap();
+        queue.pop_front()
+    }
+}
+
 /// Options for the application.
 #[derive(Parser)]
 #[clap(version = crate_version!(), author = "Ralf Anton Beier")]
@@ -148,7 +181,7 @@ fn add_head_commit_to_query(git_repository: &GitRepository) -> Vec<Query> {
     collector
 }
 
-fn find_kas_manifests_in_branches(git_repository: &GitRepository) -> Vec<Query> {
+fn find_kas_manifests_in_branches(git_repository: &GitRepository, queue: &Queue) -> Vec<Query> {
     let span = span!(Level::INFO, "add_head_commit_to_query");
     let _enter = span.enter();
     let mut collector = Vec::<Query>::new();
@@ -177,6 +210,7 @@ fn find_kas_manifests_in_branches(git_repository: &GitRepository) -> Vec<Query> 
                             Some(repository) => {
                                 match repository.url {
                                     Some(url) => {
+                                        queue.add(url.clone());
                                         collector.push(merge_node(node_repository(url.as_str())));
                                         git_repo.replace_range(.., url.as_str());
                                         info!(parent: &span, "Found kas {} repository {}", kas_repository_name, url.as_str());
@@ -193,10 +227,7 @@ fn find_kas_manifests_in_branches(git_repository: &GitRepository) -> Vec<Query> 
                                         )));
                                         collector.push(merge_link(
                                             node_repository(&git_repo),
-                                            node_reference(
-                                                refspec.as_str(),
-                                                &git_repo,
-                                            ),
+                                            node_reference(refspec.as_str(), &git_repo),
                                             "has".to_string(),
                                         ));
                                         collector.push(merge_link(
@@ -204,10 +235,7 @@ fn find_kas_manifests_in_branches(git_repository: &GitRepository) -> Vec<Query> 
                                                 kas.path.as_str(),
                                                 branch.oid.as_str(),
                                             ),
-                                            node_reference(
-                                                refspec.as_str(),
-                                                &git_repo,
-                                            ),
+                                            node_reference(refspec.as_str(), &git_repo),
                                             "refers".to_string(),
                                         ));
                                         info!(parent: &span, "Found kas {} refspec {}", kas_repository_name, refspec.as_str());
@@ -255,23 +283,30 @@ async fn main() {
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
     let mut collector = Vec::<Query>::new();
+    let queue = Arc::new(Queue::new());
 
-    let tmp_dir = tempdir().unwrap();
-    let file_path = tmp_dir.path().join("repo");
+    queue.add(opts.git_url);
 
-    let repo_path = file_path.as_path();
-    warn!("Repo path: {}", repo_path.display());
+    while let Some(git_url) = queue.take() {
+        info!("Preparing: {}", git_url);
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("repo");
 
-    // Try opening the repository
-    let git_repository = GitRepository::new(repo_path, &opts.git_url);
-    //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
-    git_repository.update_from_remote();
-    git_repository.map_remote_branches_local();
+        let repo_path = file_path.as_path();
+        warn!("Repo path: {}", repo_path.display());
 
-    collector.push(merge_node(node_repository(&opts.git_url)));
-    collector.append(&mut add_branches_to_query(&git_repository));
-    collector.append(&mut add_head_commit_to_query(&git_repository));
-    collector.append(&mut find_kas_manifests_in_branches(&git_repository));
+        // Try opening the repository
+        let git_repository = GitRepository::new(repo_path, &git_url);
+        //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
+        git_repository.update_from_remote();
+        git_repository.map_remote_branches_local();
+
+        collector.push(merge_node(node_repository(&git_url)));
+        collector.append(&mut add_branches_to_query(&git_repository));
+        collector.append(&mut add_head_commit_to_query(&git_repository));
+        collector.append(&mut find_kas_manifests_in_branches(&git_repository, &queue));
+        tmp_dir.close().unwrap();
+    }
 
     // concurrent queries
     let config = ConfigBuilder::new()
@@ -304,5 +339,4 @@ async fn main() {
 
     // `tmp_dir` goes out of scope, the directory as well as
     // `tmp_file` will be deleted here.
-    tmp_dir.close().unwrap();
 }
