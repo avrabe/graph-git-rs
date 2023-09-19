@@ -19,7 +19,7 @@ cargo build --release
 In the neo4j explorer, search now for all repositories refered from the branch dunfell.
 Return a list of all referenced repositories.
 
-`MATCH (h:Repository {uri:'https://github.com/avrabe/meta-fmu.git'})-[:has]->(r:Reference {name:'dunfell'})<-[:links_to]-(c:Commit)-[:contains]->(m:Manifest)-[:refers]->(r1:Reference)<-[:has]-(h1:Repository) return h,r,c,m,r1,h1`
+`MATCH (h:Repository {uri:'https://github.com/avrabe/meta-fmu.git'})-[:has]->(r:Reference {name:'dunfell'})<-[:links_to]-(c:Commit)-[:contains]->(m:Manifest)-[:refers]->(r1:Reference)<-[:links_to]-(c1:Commit)-[]->(p) return h,r,c,m,r1,c1,p`
 ![Example graph](./graph.svg)
 
 ## Neo4j helpers

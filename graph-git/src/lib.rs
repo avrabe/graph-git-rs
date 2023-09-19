@@ -57,6 +57,8 @@ pub fn node_kas_manifest(path: &str, oid: &str) -> GitCypher {
 ///
 /// * `name` - The name of the person
 pub fn node_person(name: &str, email: &str) -> GitCypher {
+    let name = name.replace('\'', "\\\'");
+    let email = email.replace('\'', "\\\'");
     GitCypher {
         var: "person".to_owned(),
         cypher: format!(
