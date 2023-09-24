@@ -1,4 +1,5 @@
 use clap::{crate_version, Parser};
+use convenient_bitbake::Bitbake;
 use convenient_git::GitRepository;
 use convenient_kas::KasManifest;
 use graph_git::{
@@ -261,6 +262,28 @@ fn find_kas_manifests_in_branches(git_repository: &GitRepository, queue: &Queue)
     collector
 }
 
+fn find_bitbake_manifests_in_branches(
+    git_repository: &GitRepository,
+    _queue: &Queue,
+) -> Vec<Query> {
+    let span = span!(Level::INFO, "add_head_commit_to_query");
+    let _enter = span.enter();
+    let collector = Vec::<Query>::new();
+    for branch in git_repository.get_remote_heads().unwrap().iter() {
+        match git_repository.checkout(branch.name.as_str()) {
+            Ok(_) => {
+                let _bitbake_manifests = Bitbake::find_bitbake_manifest(
+                    git_repository.repo.as_ref().unwrap().workdir().unwrap(),
+                );
+            }
+            Err(e) => {
+                error!(parent: &span, "Error: {}", e);
+            }
+        }
+    }
+    collector
+}
+
 #[tokio::main]
 async fn main() {
     // Get the command line arguments
@@ -305,6 +328,7 @@ async fn main() {
         collector.append(&mut add_branches_to_query(&git_repository));
         collector.append(&mut add_head_commit_to_query(&git_repository));
         collector.append(&mut find_kas_manifests_in_branches(&git_repository, &queue));
+        find_bitbake_manifests_in_branches(&git_repository, &queue);
         tmp_dir.close().unwrap();
     }
 
