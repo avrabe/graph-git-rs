@@ -4,8 +4,8 @@ use std::{
 };
 
 use git2::{
-    build::CheckoutBuilder, BranchType, Commit, FetchOptions, Oid, Progress, RemoteCallbacks,
-    Repository,
+    build::CheckoutBuilder, BranchType, Commit, FetchOptions, Oid, Progress, ProxyOptions, Remote,
+    RemoteCallbacks, Repository,
 };
 use tracing::{error, info, info_span, span, Level};
 
@@ -62,6 +62,18 @@ struct State {
 ///
 /// Panics if failed to open the repository for any reason other than it not existing.
 impl GitRepository {
+    fn proxy_opts_auto() -> ProxyOptions<'static> {
+        let mut proxy_opts = ProxyOptions::new();
+        proxy_opts.auto();
+        proxy_opts
+    }
+
+    fn remote_connect(remote: &mut Remote<'_>) {
+        remote
+            .connect_auth(git2::Direction::Fetch, None, Some(Self::proxy_opts_auto()))
+            .unwrap();
+    }
+
     pub fn new(repo_path: &Path, git_url: &String) -> GitRepository {
         let span = span!(Level::INFO, "clone");
         let _enter = span.enter();
@@ -91,6 +103,7 @@ impl GitRepository {
 
         let mut fo = FetchOptions::new();
         fo.remote_callbacks(cb);
+        fo.proxy_options(Self::proxy_opts_auto());
 
         // Try opening the repository
         let mut binding = git2::build::RepoBuilder::new();
@@ -157,9 +170,10 @@ impl GitRepository {
         let _enter = span.enter();
         if let Some(repo) = &self.repo {
             let mut fo = FetchOptions::new();
+            fo.proxy_options(Self::proxy_opts_auto());
             match repo.find_remote("origin") {
                 Ok(mut remote) => {
-                    remote.connect(git2::Direction::Fetch).unwrap();
+                    Self::remote_connect(&mut remote);
                     remote.download(&[] as &[&str], Some(&mut fo)).unwrap();
                     let _ = remote.disconnect();
                 }
@@ -209,7 +223,7 @@ impl GitRepository {
 
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
-            remote.connect(git2::Direction::Fetch).unwrap();
+            Self::remote_connect(&mut remote);
 
             for branch in remote.list().unwrap() {
                 if branch.name().starts_with("refs/heads") {
@@ -236,7 +250,7 @@ impl GitRepository {
         let _enter = span.enter();
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
-            let _ = remote.connect(git2::Direction::Fetch);
+            Self::remote_connect(&mut remote);
             let git_remote_heads = remote
                 .list()
                 .unwrap()

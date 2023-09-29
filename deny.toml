@@ -108,6 +108,7 @@ allow = [
     "MPL-2.0",
     "Unicode-DFS-2016",
     "OpenSSL",
+    "Zlib",
     #"Apache-2.0 WITH LLVM-exception",
 ]
 # List of explicitly disallowed licenses

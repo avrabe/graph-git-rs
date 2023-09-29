@@ -13,7 +13,7 @@ Download and start the tool. Create a new database in neo4j. You can use the com
 git clone https://github.com/avrabe/graph-git-rs.git
 cd graph-git-rs
 cargo build --release
-./target/release/graph-git-rs -d
+./target/release/graph-git-cli -d
 ``````
 
 In the neo4j explorer, search now for all repositories refered from the branch dunfell.
