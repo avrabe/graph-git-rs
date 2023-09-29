@@ -6,6 +6,7 @@ members = [
     "convenient-bitbake",
     "convenient-git",
     "convenient-kas",
+    "convenient-repo",
     "graph-git-cli",
 ]
 

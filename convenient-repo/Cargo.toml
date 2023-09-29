@@ -1,0 +1,12 @@
+[package]
+name = "convenient-repo"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+quick-xml = { version = "0.30.0", features = ["serde", "serialize"] }
+serde = { version = "1.0.188", features = ["derive"] }
+xmlem = "0.2.3"
