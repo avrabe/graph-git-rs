@@ -262,6 +262,7 @@ version = "0.1.0"
 dependencies = [
  "quick-xml 0.30.0",
  "serde",
+ "tracing",
  "xmlem",
 ]
 
@@ -540,6 +541,7 @@ dependencies = [
  "convenient-bitbake",
  "convenient-git",
  "convenient-kas",
+ "convenient-repo",
  "git2",
  "graph-git",
  "neo4rs",

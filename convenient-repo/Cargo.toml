@@ -9,4 +9,5 @@ license = "MIT"
 [dependencies]
 quick-xml = { version = "0.30.0", features = ["serde", "serialize"] }
 serde = { version = "1.0.188", features = ["derive"] }
+tracing = "0.1.37"
 xmlem = "0.2.3"
