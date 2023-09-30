@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::default::Default;
+use std::path::Path;
 use std::str::FromStr;
+use tracing::{info, warn};
 use xmlem::display::Config;
 use xmlem::Document;
 
@@ -148,6 +150,19 @@ pub struct Include {
     pub name: String,
 }
 
+/// Converts the given Manifest struct to a string by:
+/// - Serializing the struct to XML using quick_xml::se::to_string
+/// - Removing unwanted empty XML tags from the cleanup vector
+/// - Replacing double spaces with single spaces
+/// - Parsing the string into a Document and pretty printing it
+///
+/// # Arguments
+///
+/// * `manifest` - The Manifest struct to convert to a string
+///
+/// # Returns
+///
+/// The pretty printed XML string representation of the Manifest
 pub fn to_string(manifest: &Manifest) -> String {
     let cleanup = vec![
         "<remote/>",
@@ -201,7 +216,58 @@ pub fn to_string(manifest: &Manifest) -> String {
     doc.to_string_pretty_with_config(&config)
 }
 
+pub fn find_repo_manifest(path: &Path) -> Vec<Manifest> {
+    let mut kas_manifests = Vec::<Manifest>::new();
+
+    for entry in path.read_dir().unwrap() {
+        match entry {
+            Ok(entry) => {
+                if entry.file_type().unwrap().is_dir() {
+                    continue;
+                }
+
+                if !entry.path().is_file() {
+                    continue;
+                }
+
+                let path = entry.path();
+
+                if !path.is_file() {
+                    continue;
+                }
+
+                let contents = match std::fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        warn!("Failed to read file {}: {}", path.display(), e);
+                        continue;
+                    }
+                };
+                match quick_xml::de::from_str(&contents) {
+                    Ok(manifest) => {
+                        kas_manifests.push(manifest);
+                        info!("Found repo manifest: {}", path.display());
+                    }
+                    Err(e) => warn!("Failed to parse {}: {}", path.display(), e),
+                }
+            }
+            Err(e) => {
+                warn!("Error reading directory entry: {}", e);
+            }
+        };
+    }
+    kas_manifests
+}
+
 #[cfg(test)]
+/**
+ * Tests for parsing the manifest XML.
+ *
+ * - default_remote_name: Tests parsing a manifest with a single remote. Verifies remote name is parsed correctly.
+ * - default_remove_project: Tests parsing a manifest with multiple remove-project elements. Verifies names are parsed correctly.
+ * - default_reserialize_project: Tests parsing and re-serializing an empty manifest. Verifies round trip parsing and serialization works.
+ * - default_read_manifest: Tests parsing manifest from example.xml file. Verifies parsing from file works.
+ */
 mod tests {
     use super::*;
     use quick_xml::{self, de::from_str}; //, EventReader, ParserConfig};
@@ -209,19 +275,16 @@ mod tests {
 
     #[test]
     fn default_remote_name() {
-        let src = r#"<manifest><remote name="aptiv"/></manifest>"#;
+        let src = r#"<manifest><remote name="mine"/></manifest>"#;
         let should_be = Manifest {
             remote: Some(vec![Remote {
-                name: "aptiv".into(),
+                name: "mine".into(),
                 ..Default::default()
             }]),
             ..Default::default()
         };
         let item: Manifest = from_str(src).unwrap();
         assert_eq!(item, should_be);
-
-        //let reserialized_item = to_string(&item).unwrap();
-        //assert_eq!(src, reserialized_item);
     }
 
     #[test]

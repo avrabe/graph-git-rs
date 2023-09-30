@@ -19,4 +19,5 @@ graph-git = { path = "../graph-git" }
 convenient-git = { path = "../convenient-git" }
 convenient-kas = { path = "../convenient-kas" }
 convenient-bitbake = { path = "../convenient-bitbake" }
+convenient-repo = { path = "../convenient-repo" }
 
