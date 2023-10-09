@@ -19,7 +19,7 @@ impl Bitbake {
         Bitbake {}
     }
 
-    fn _is_hidden(entry: &DirEntry) -> bool {
+    fn is_hidden(entry: &DirEntry) -> bool {
         entry
             .file_name()
             .to_str()
@@ -35,7 +35,7 @@ impl Bitbake {
             .unwrap_or(true)
     }
 
-    fn _is_file(entry: &DirEntry) -> bool {
+    fn is_file(entry: &DirEntry) -> bool {
         entry.file_type().is_file()
     }
 
@@ -45,7 +45,7 @@ impl Bitbake {
 
         let walker = WalkDir::new(path).follow_links(true).into_iter();
         // !Bitbake::is_hidden(e) && Bitbake::is_file(e) && Bitbake::ends_with_bb_something(e)
-        for entry in walker.filter_entry(|_e| true) {
+        for entry in walker.filter_entry(|e| !Bitbake::is_hidden(e) && Bitbake::is_file(e)) {
             info!("Found entry: {:?}", entry);
             match entry {
                 Ok(entry) => {
