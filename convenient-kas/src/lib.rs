@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{warn, debug};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct Kas {
@@ -71,7 +71,7 @@ impl KasManifest {
                             };
                             kas_manifests.push(kas)
                         }
-                        Err(e) => warn!("Failed to parse {}: {}", path.display(), e),
+                        Err(e) => debug!("Failed to parse {}: {}", path.display(), e),
                     }
                 }
                 Err(e) => {

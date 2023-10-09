@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::path::Path;
 use std::str::FromStr;
-use tracing::{info, warn};
+use tracing::{info, warn, debug};
 use xmlem::display::Config;
 use xmlem::Document;
 
@@ -248,7 +248,7 @@ pub fn find_repo_manifest(path: &Path) -> Vec<Manifest> {
                         kas_manifests.push(manifest);
                         info!("Found repo manifest: {}", path.display());
                     }
-                    Err(e) => warn!("Failed to parse {}: {}", path.display(), e),
+                    Err(e) => debug!("Failed to parse {}: {}", path.display(), e),
                 }
             }
             Err(e) => {
@@ -341,6 +341,16 @@ mod tests {
         //};
         let _item: Manifest = from_str(&src).unwrap();
         //assert_eq!(item, should_be);
+
+        //let reserialized_item = to_string(&item).unwrap();
+        //assert_eq!(src, reserialized_item);
+    }
+
+    #[test]
+    fn test_find_manifest() {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let result = find_repo_manifest(&d);
+        assert_eq!(result.len(), 1);
 
         //let reserialized_item = to_string(&item).unwrap();
         //assert_eq!(src, reserialized_item);

@@ -351,6 +351,7 @@ async fn main() {
         find_repo_manifests_in_branches(&git_repository, &queue);
         tmp_dir.close().unwrap();
     }
+    warn!("Start graph");
 
     // concurrent queries
     let config = ConfigBuilder::new()
@@ -365,6 +366,7 @@ async fn main() {
     let txn = graph.start_txn().await.unwrap();
     txn.run_queries(collector).await.unwrap();
     txn.commit().await.unwrap();
+    warn!("End graph");
 
     //for _ in 1..=2 {
     //    let graph = graph.clone();
@@ -398,7 +400,7 @@ mod tests {
         obj.add("item".to_string());
         assert_eq!(obj.take(), Some("item".to_string()));
 
-        /// Should only return item2 as item was already processed.
+        // Should only return item2 as item was already processed.
         obj.add("item2".to_string());
         obj.add("item".to_string());
         assert_eq!(obj.take(), Some("item2".to_string()));
