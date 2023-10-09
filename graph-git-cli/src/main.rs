@@ -384,3 +384,23 @@ async fn main() {
     // `tmp_dir` goes out of scope, the directory as well as
     // `tmp_file` will be deleted here.
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+
+    fn test_add_and_take() {
+        let obj = Queue::new();
+
+        // should return item.
+        obj.add("item".to_string());
+        assert_eq!(obj.take(), Some("item".to_string()));
+
+        /// Should only return item2 as item was already processed.
+        obj.add("item2".to_string());
+        obj.add("item".to_string());
+        assert_eq!(obj.take(), Some("item2".to_string()));
+    }
+}
