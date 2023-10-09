@@ -775,9 +775,8 @@ dependencies = [
 
 [[package]]
 name = "neo4rs"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f1d8019cfd20115fd664e4e1ecdf144ab4fce8bf7f7ddc7b6523a8835a770a2"
+version = "0.7.0-alpha.1"
+source = "git+https://github.com/neo4j-labs/neo4rs.git#0784bd863abfc03c83b50094704be04f67959653"
 dependencies = [
  "async-trait",
  "bytes",
@@ -787,6 +786,7 @@ dependencies = [
  "log",
  "neo4rs-macros",
  "pin-project-lite",
+ "serde",
  "thiserror",
  "tokio",
  "tokio-rustls",
@@ -797,8 +797,7 @@ dependencies = [
 [[package]]
 name = "neo4rs-macros"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cf52bfa6042343585f458f38f18094a53e8d8c417221867918e9f0a6885f42a"
+source = "git+https://github.com/neo4j-labs/neo4rs.git#0784bd863abfc03c83b50094704be04f67959653"
 dependencies = [
  "quote",
  "syn 1.0.109",

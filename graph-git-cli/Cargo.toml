@@ -10,7 +10,7 @@ license = "MIT"
 [dependencies]
 clap = { version = "4.4.6", features = ["cargo", "derive", "env"] }
 git2 = "0.18.1"
-neo4rs = "0.6.2"
+neo4rs = { git = "https://github.com/neo4j-labs/neo4rs.git", version = "0.7.0-alpha.1" }
 tempfile = "3.8.0"
 tokio = { version = "1.32.0", features = ["rt", "tokio-macros"] }
 tracing = { version = "0.1.37", features = ["attributes"] }
