@@ -29,7 +29,7 @@ jobs:
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: |
-          
+          git remote update
           cargo check
           cargo test
           cargo build --release
@@ -64,6 +64,8 @@ jobs:
           set-safe-directory: true
       - name: Run tarpaulin
         run: |
+          git config --global --add safe.directory /__w/graph-git-rs/graph-git-rs
+          git remote update
           cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
  
       - name: Upload to codecov.io
