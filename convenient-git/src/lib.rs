@@ -75,7 +75,7 @@ impl GitRepository {
     }
 
     pub fn new(repo_path: &Path, git_url: &String) -> GitRepository {
-        let span = span!(Level::INFO, "clone");
+        let span = span!(Level::INFO, "clone", value=%git_url);
         let _enter = span.enter();
 
         let state = RefCell::new(State {

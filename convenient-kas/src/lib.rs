@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
-use tracing::{warn, debug};
+use tracing::{debug, warn};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct Kas {
