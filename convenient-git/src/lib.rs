@@ -126,8 +126,10 @@ impl GitRepository {
         }
     }
 
-    fn is_multiple_of_5(n: usize) -> bool {
-        n % 5 == 0
+    fn is_multiple_of_one_percent_or_total(n: usize, total: usize) -> bool {
+        let total_one_percent: usize = total / 100;
+        let total_one_percent = if total_one_percent == 0 { 1 } else { total_one_percent };
+        n % (total_one_percent) == 0 || n == total
     }
 
     fn print(state: &mut State) {
@@ -141,12 +143,17 @@ impl GitRepository {
         };
         let kbytes = stats.received_bytes() / 1024;
         if stats.received_objects() == stats.total_objects() {
-            info!(
-                "Resolving deltas {}/{}\r",
-                stats.indexed_deltas(),
-                stats.total_deltas()
-            );
-        } else if Self::is_multiple_of_5(network_pct) {
+            if Self::is_multiple_of_one_percent_or_total(stats.indexed_deltas(), stats.total_deltas()) {
+                info!(
+                    "Resolving deltas {}/{}\r",
+                    stats.indexed_deltas(),
+                    stats.total_deltas()
+                );
+            }
+        } else if Self::is_multiple_of_one_percent_or_total(
+            stats.received_objects(),
+            stats.total_objects(),
+        ) {
             info!(
                 "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})
                      /  chk {:3}% ({:4}/{:4}) {}\r",
