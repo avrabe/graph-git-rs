@@ -136,7 +136,7 @@ mod tests {
             BB_NUMBER_THREADS ?= \"${@oe.utils.cpu_count()*3}\"
             PARALLEL_MAKE ?= \"-j ${@oe.utils.cpu_count()*3}\"
         ";
-        let kas_manifest: KasManifest = serde_yaml::from_str(&manifest).unwrap();
+        let kas_manifest: KasManifest = serde_yaml::from_str(manifest).unwrap();
         assert_eq!(kas_manifest.repos.len(), 3);
         assert_eq!(kas_manifest.repos["meta-custom"], None);
         assert_eq!(

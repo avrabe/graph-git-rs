@@ -75,6 +75,11 @@ pub struct GitCypher {
     pub cypher: String,
 }
 
+impl GitCypher {
+    pub fn query(&self) -> Query {
+        query(self.cypher.as_str())
+    }
+}
 /// Creates a Cypher node representation for a Git message.
 ///
 /// # Arguments
@@ -120,19 +125,34 @@ pub fn merge_link(from: GitCypher, to: GitCypher, link: String) -> Query {
     query(q.as_str())
 }
 
-pub fn delete_reference(reference: GitCypher) -> Query {
-    // MATCH (n:Reference {uri:'https://github.com/avrabe/meta-fmu.git', name:'dunfell'})
-    // OPTIONAL MATCH (n)-[r]-()
-    // WITH n,r LIMIT 50000
-    // DELETE n,r
-    // RETURN count(n) as deletedNodesCount
-
+pub fn delete_node_and_references_to_node(node: GitCypher) -> Query {
     let q = format!(
         "MATCH {} OPTIONAL MATCH ({})-[r]-() DELETE {}, r",
-        reference.cypher, reference.var, reference.var
+        node.cypher, node.var, node.var
     );
     debug!("{}", q);
     query(q.as_str())
+}
+
+pub fn delete_references_to_node(node: GitCypher) -> Query {
+    let q = format!(
+        "MATCH {} OPTIONAL MATCH ({})-[r]-() DELETE r",
+        node.cypher, node.var
+    );
+    debug!("{}", q);
+    query(q.as_str())
+}
+
+pub fn find_commits_for_reference(reference: GitCypher) -> GitCypher {
+    let q = format!(
+        "MATCH {}<-[:links_to]-(c:Commit) RETURN c",
+        reference.cypher
+    );
+    debug!("{}", q);
+    GitCypher {
+        var: "c".to_string(),
+        cypher: q,
+    }
 }
 
 pub struct GraphDatabase {
@@ -172,32 +192,43 @@ impl GraphDatabase {
         }
         Ok(())
     }
-
-    //for _ in 1..=2 {
-    //    let graph = graph.clone();
-    //    tokio::spawn(async move {
-    //        let mut result = graph
-    //            .execute(query("MATCH (p:Person {name: $name}) RETURN p").param("name", "mark"))
-    //            .await
-    //            .unwrap();
-    //        while let Ok(Some(row)) = result.next().await {
-    //            let node: Node = row.get("p").unwrap();
-    //            let name: String = node.get("name").unwrap();
-    //            println!("{}", name);
-    //        }
-    //    });
-    //}
+    /// Query the graph database for all Reference nodes linked to the
+    /// Repository node matching the provided URI
     pub async fn query_branches_for_repository(&self, git_uri: &str) -> HashSet<String> {
         let mut res = HashSet::<String>::new();
         match &self.graph {
             Some(graph) => {
                 let mut result = graph
-                .execute(query("MATCH (h:Repository {uri: $uri})-[:has]->(r:Reference) return r").param("uri", git_uri))
-                .await
-                .unwrap();
+                    .execute(
+                        query(
+                            "MATCH (h:Repository {uri: $uri})-[:has]->(r:Reference)
+                 return r",
+                        )
+                        .param("uri", git_uri),
+                    )
+                    .await
+                    .unwrap();
                 while let Ok(Some(row)) = result.next().await {
                     let node: Node = row.get("r").unwrap();
                     let name: String = node.get("name").unwrap();
+                    res.insert(name.clone());
+                    debug!("{}", name);
+                }
+            }
+            None => error!("No graph connection"),
+        }
+        res
+    }
+
+    pub async fn query_commits_for_branches(&self, reference: GitCypher) -> HashSet<String> {
+        let mut res = HashSet::<String>::new();
+        let git_cypher = find_commits_for_reference(reference);
+        match &self.graph {
+            Some(graph) => {
+                let mut result = graph.execute(git_cypher.query()).await.unwrap();
+                while let Ok(Some(row)) = result.next().await {
+                    let node: Node = row.get(&git_cypher.var).unwrap();
+                    let name: String = node.get("oid").unwrap();
                     res.insert(name.clone());
                     debug!("{}", name);
                 }
@@ -241,5 +272,39 @@ mod tests {
                 path, oid
             )
         );
+    }
+
+    #[test]
+    fn test_find_commits_for_reference() {
+        // Create a sample GitCypher object
+        let reference = GitCypher {
+            var: "ref".to_string(),
+            cypher: "(ref:Reference {name:'main'})".to_string(),
+        };
+
+        // Call the function under test
+        let result = find_commits_for_reference(reference);
+
+        // Assert expected result
+        assert_eq!(result.var, "c");
+        assert_eq!(
+            result.cypher,
+            "MATCH (ref:Reference {name:'main'})<-[:links_to]-(c:Commit) RETURN c"
+        );
+    }
+
+    #[test]
+    fn test_delete_node_and_references() {
+        // Create a sample node
+        let node = GitCypher {
+            var: "n".to_string(),
+            cypher: "(n:Node)".to_string(),
+        };
+
+        // Call function under test
+        let result = delete_node_and_references_to_node(node);
+
+        // Assert query is as expected
+        assert!(!result.has_param_key("key"));
     }
 }
