@@ -4,8 +4,9 @@ use convenient_git::GitRepository;
 use convenient_kas::KasManifest;
 use convenient_repo::find_repo_manifest;
 use graph_git::{
-    merge_link, merge_node, node_commit, node_kas_manifest, node_message, node_person,
-    node_reference, node_repository, GraphDatabase, delete_reference,
+    delete_node_and_references_to_node, delete_references_to_node, merge_link, merge_node,
+    node_commit, node_kas_manifest, node_message, node_person, node_reference, node_repository,
+    GraphDatabase,
 };
 use neo4rs::Query;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use tempfile::tempdir;
 use tracing::{error, info, span, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 
 struct Queue {
@@ -126,13 +127,18 @@ pub fn get_log_level(level: &str) -> Level {
 /// # Returns
 ///
 /// A Vec&lt;Query&gt; containing one query per branch to find all branches in the repository.
-async fn iterate_through_branches(git_repository: &GitRepository, queue: &Queue, graph: &GraphDatabase) -> Vec<Query> {
+async fn iterate_through_branches(
+    git_repository: &GitRepository,
+    queue: &Queue,
+    graph: &GraphDatabase,
+) -> Vec<Query> {
     let span = span!(Level::INFO, "iterate", value = git_repository.git_url);
     let _enter = span.enter();
     let mut collector = Vec::<Query>::new();
     // Get the branches that are already in the database
-    let git_branches_in_db_initial =  graph.query_branches_for_repository(&git_repository.git_url).await;
-    let mut git_branches_in_db =  git_branches_in_db_initial.clone();
+    let git_url = &git_repository.git_url;
+    let git_branches_in_db_initial = graph.query_branches_for_repository(git_url).await;
+    let mut git_branches_in_db = git_branches_in_db_initial.clone();
 
     add_git_repository(&mut collector, git_repository);
 
@@ -140,6 +146,16 @@ async fn iterate_through_branches(git_repository: &GitRepository, queue: &Queue,
         let branch_name = branch.name.as_str();
         // Remove the branch from the list of branches in the database still to process
         git_branches_in_db.remove(branch_name);
+
+        find_and_remove_reference_between_commit_and_reference(
+            graph,
+            branch_name,
+            git_url,
+            branch,
+            &mut collector,
+        )
+        .await;
+
         add_branches_to_query_on_branch(&mut collector, branch, git_repository);
         add_head_commit_to_query_on_branch(git_repository, branch, &mut collector, &span);
         match git_repository.checkout(branch_name) {
@@ -159,20 +175,82 @@ async fn iterate_through_branches(git_repository: &GitRepository, queue: &Queue,
             }
         }
     }
-    remove_branches_from_database(&mut collector, git_branches_in_db, git_branches_in_db_initial, &git_repository.git_url);
+    remove_branches_from_database(
+        &mut collector,
+        git_branches_in_db,
+        git_branches_in_db_initial,
+        git_url,
+    );
     collector
 }
 
+async fn find_and_remove_reference_between_commit_and_reference(
+    graph: &GraphDatabase,
+    branch_name: &str,
+    git_url: &String,
+    branch: &convenient_git::GitRemoteHead,
+    collector: &mut Vec<Query>,
+) {
+    // Find the commits that are already in the database
+    let git_commits_in_db_initial = graph
+        .query_commits_for_branches(node_reference(branch_name, git_url))
+        .await;
+    let mut git_commits_in_db = git_commits_in_db_initial.clone();
+    // Remove the current commit from the list of commits in the database
+    git_commits_in_db.remove(branch.oid.as_str());
+    remove_reference_to_commits_from_database(
+        collector,
+        git_commits_in_db,
+        git_commits_in_db_initial,
+        git_url,
+        branch_name,
+    );
+}
 
-fn remove_branches_from_database(collector: &mut Vec<Query>, branches_to_remove: HashSet<String>,branches_to_remove_initial: HashSet<String>, repository_url: &String) {
-    let span = span!(Level::INFO, "remove_branches_from_database", value = repository_url);
+fn remove_reference_to_commits_from_database(
+    collector: &mut Vec<Query>,
+    to_remove: HashSet<String>,
+    to_remove_initial: HashSet<String>,
+    repository_url: &String,
+    branch_name: &str,
+) {
+    let span = span!(
+        Level::INFO,
+        "remove_commits_from_database",
+        value = repository_url
+    );
+    let _enter = span.enter();
+    info!(parent: &span, "Removing references to commits from database: {}/{} items to remove", to_remove.len(), to_remove_initial.len());
+    info!(parent: &span, "Initial commits on branch {} are: {:?}", branch_name, to_remove_initial);
+
+    for commit in to_remove.iter() {
+        let commit_oid = commit.clone();
+        collector.push(delete_references_to_node(node_commit(&commit_oid)));
+        info!(parent: &span, "Removed reference between commit {} from branch {} of database", commit_oid, branch_name);
+    }
+}
+
+fn remove_branches_from_database(
+    collector: &mut Vec<Query>,
+    branches_to_remove: HashSet<String>,
+    branches_to_remove_initial: HashSet<String>,
+    repository_url: &String,
+) {
+    let span = span!(
+        Level::INFO,
+        "remove_branches_from_database",
+        value = repository_url
+    );
     let _enter = span.enter();
     info!(parent: &span, "Removing branches from database: {}/{} items to remove", branches_to_remove.len(), branches_to_remove_initial.len());
     info!(parent: &span, "Initial branches are: {:?}", branches_to_remove_initial);
-    
+
     for branch in branches_to_remove.iter() {
         let branch_name = branch.clone();
-        collector.push(delete_reference(node_reference(&branch_name, repository_url)));
+        collector.push(delete_node_and_references_to_node(node_reference(
+            &branch_name,
+            repository_url,
+        )));
         info!(parent: &span, "Removed branch {} from database", branch_name);
     }
 }
@@ -359,7 +437,8 @@ async fn main() {
     let queue = Arc::new(Queue::new());
 
     queue.add(opts.git_url.clone());
-    let graph: GraphDatabase = GraphDatabase::new(opts.uri, opts.user, opts.password, opts.db).await;
+    let graph: GraphDatabase =
+        GraphDatabase::new(opts.uri, opts.user, opts.password, opts.db).await;
 
     while let Some(git_url) = queue.take() {
         info!("Preparing: {}", git_url);
@@ -381,8 +460,6 @@ async fn main() {
     }
 
     graph.txn_run_queries(collector).await.unwrap();
-
-
 }
 
 #[cfg(test)]

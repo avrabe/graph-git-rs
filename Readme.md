@@ -31,6 +31,9 @@ cargo kani setup
 
 ## Neo4j helpers
 
+Find all commits not linking to a branch.
+`MATCH (a:Commit) WHERE not ((a)-[:links_to]->(:Reference)) RETURN a`
+
 Clear database
 `MATCH (n) DETACH DELETE n`
 
