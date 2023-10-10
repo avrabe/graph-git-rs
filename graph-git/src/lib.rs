@@ -1,6 +1,6 @@
-use std::{error::Error, sync::Arc};
+use std::{collections::HashSet, error::Error, sync::Arc};
 
-use neo4rs::{query, ConfigBuilder, Graph, Query};
+use neo4rs::{query, ConfigBuilder, Graph, Node, Query};
 use tracing::{debug, error};
 
 /// Creates a Cypher node representation for a Git reference.
@@ -120,6 +120,21 @@ pub fn merge_link(from: GitCypher, to: GitCypher, link: String) -> Query {
     query(q.as_str())
 }
 
+pub fn delete_reference(reference: GitCypher) -> Query {
+    // MATCH (n:Reference {uri:'https://github.com/avrabe/meta-fmu.git', name:'dunfell'})
+    // OPTIONAL MATCH (n)-[r]-()
+    // WITH n,r LIMIT 50000
+    // DELETE n,r
+    // RETURN count(n) as deletedNodesCount
+
+    let q = format!(
+        "MATCH {} OPTIONAL MATCH ({})-[r]-() DELETE {}, r",
+        reference.cypher, reference.var, reference.var
+    );
+    debug!("{}", q);
+    query(q.as_str())
+}
+
 pub struct GraphDatabase {
     graph: Option<Arc<Graph>>,
 }
@@ -156,6 +171,40 @@ impl GraphDatabase {
             None => error!("No graph connection"),
         }
         Ok(())
+    }
+
+    //for _ in 1..=2 {
+    //    let graph = graph.clone();
+    //    tokio::spawn(async move {
+    //        let mut result = graph
+    //            .execute(query("MATCH (p:Person {name: $name}) RETURN p").param("name", "mark"))
+    //            .await
+    //            .unwrap();
+    //        while let Ok(Some(row)) = result.next().await {
+    //            let node: Node = row.get("p").unwrap();
+    //            let name: String = node.get("name").unwrap();
+    //            println!("{}", name);
+    //        }
+    //    });
+    //}
+    pub async fn query_branches_for_repository(&self, git_uri: &str) -> HashSet<String> {
+        let mut res = HashSet::<String>::new();
+        match &self.graph {
+            Some(graph) => {
+                let mut result = graph
+                .execute(query("MATCH (h:Repository {uri: $uri})-[:has]->(r:Reference) return r").param("uri", git_uri))
+                .await
+                .unwrap();
+                while let Ok(Some(row)) = result.next().await {
+                    let node: Node = row.get("r").unwrap();
+                    let name: String = node.get("name").unwrap();
+                    res.insert(name.clone());
+                    debug!("{}", name);
+                }
+            }
+            None => error!("No graph connection"),
+        }
+        res
     }
 }
 

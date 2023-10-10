@@ -5,7 +5,7 @@ use convenient_kas::KasManifest;
 use convenient_repo::find_repo_manifest;
 use graph_git::{
     merge_link, merge_node, node_commit, node_kas_manifest, node_message, node_person,
-    node_reference, node_repository, GraphDatabase,
+    node_reference, node_repository, GraphDatabase, delete_reference,
 };
 use neo4rs::Query;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use tempfile::tempdir;
 use tracing::{error, info, span, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, HashSet};
 use std::sync::Mutex;
 
 struct Queue {
@@ -126,16 +126,23 @@ pub fn get_log_level(level: &str) -> Level {
 /// # Returns
 ///
 /// A Vec&lt;Query&gt; containing one query per branch to find all branches in the repository.
-fn iterate_through_branches(git_repository: &GitRepository, queue: &Queue) -> Vec<Query> {
+async fn iterate_through_branches(git_repository: &GitRepository, queue: &Queue, graph: &GraphDatabase) -> Vec<Query> {
     let span = span!(Level::INFO, "iterate", value = git_repository.git_url);
     let _enter = span.enter();
     let mut collector = Vec::<Query>::new();
+    // Get the branches that are already in the database
+    let git_branches_in_db_initial =  graph.query_branches_for_repository(&git_repository.git_url).await;
+    let mut git_branches_in_db =  git_branches_in_db_initial.clone();
+
     add_git_repository(&mut collector, git_repository);
 
     for branch in git_repository.get_remote_heads().unwrap().iter() {
+        let branch_name = branch.name.as_str();
+        // Remove the branch from the list of branches in the database still to process
+        git_branches_in_db.remove(branch_name);
         add_branches_to_query_on_branch(&mut collector, branch, git_repository);
         add_head_commit_to_query_on_branch(git_repository, branch, &mut collector, &span);
-        match git_repository.checkout(branch.name.as_str()) {
+        match git_repository.checkout(branch_name) {
             Ok(_) => {
                 find_kas_manifests_in_directory(
                     git_repository,
@@ -152,7 +159,22 @@ fn iterate_through_branches(git_repository: &GitRepository, queue: &Queue) -> Ve
             }
         }
     }
+    remove_branches_from_database(&mut collector, git_branches_in_db, git_branches_in_db_initial, &git_repository.git_url);
     collector
+}
+
+
+fn remove_branches_from_database(collector: &mut Vec<Query>, branches_to_remove: HashSet<String>,branches_to_remove_initial: HashSet<String>, repository_url: &String) {
+    let span = span!(Level::INFO, "remove_branches_from_database", value = repository_url);
+    let _enter = span.enter();
+    info!(parent: &span, "Removing branches from database: {}/{} items to remove", branches_to_remove.len(), branches_to_remove_initial.len());
+    info!(parent: &span, "Initial branches are: {:?}", branches_to_remove_initial);
+    
+    for branch in branches_to_remove.iter() {
+        let branch_name = branch.clone();
+        collector.push(delete_reference(node_reference(&branch_name, repository_url)));
+        info!(parent: &span, "Removed branch {} from database", branch_name);
+    }
 }
 
 fn add_git_repository(collector: &mut Vec<Query>, git_repository: &GitRepository) {
@@ -336,7 +358,8 @@ async fn main() {
     let mut collector = Vec::<Query>::new();
     let queue = Arc::new(Queue::new());
 
-    queue.add(opts.git_url);
+    queue.add(opts.git_url.clone());
+    let graph: GraphDatabase = GraphDatabase::new(opts.uri, opts.user, opts.password, opts.db).await;
 
     while let Some(git_url) = queue.take() {
         info!("Preparing: {}", git_url);
@@ -352,31 +375,14 @@ async fn main() {
         git_repository.update_from_remote();
         git_repository.map_remote_branches_local();
 
-        collector.append(&mut iterate_through_branches(&git_repository, &queue));
+        collector.append(&mut iterate_through_branches(&git_repository, &queue, &graph).await);
 
         tmp_dir.close().unwrap();
     }
 
-    let graph = GraphDatabase::new(opts.uri, opts.user, opts.password, opts.db).await;
     graph.txn_run_queries(collector).await.unwrap();
 
-    //for _ in 1..=2 {
-    //    let graph = graph.clone();
-    //    tokio::spawn(async move {
-    //        let mut result = graph
-    //            .execute(query("MATCH (p:Person {name: $name}) RETURN p").param("name", "mark"))
-    //            .await
-    //            .unwrap();
-    //        while let Ok(Some(row)) = result.next().await {
-    //            let node: Node = row.get("p").unwrap();
-    //            let name: String = node.get("name").unwrap();
-    //            println!("{}", name);
-    //        }
-    //    });
-    //}
 
-    // `tmp_dir` goes out of scope, the directory as well as
-    // `tmp_file` will be deleted here.
 }
 
 #[cfg(test)]
