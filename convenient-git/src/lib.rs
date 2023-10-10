@@ -126,6 +126,10 @@ impl GitRepository {
         }
     }
 
+    fn is_multiple_of_5(n: usize) -> bool {
+        n % 5 == 0
+    }
+
     fn print(state: &mut State) {
         let stats = state.progress.as_ref().unwrap();
         let network_pct = (100 * stats.received_objects()) / stats.total_objects();
@@ -142,10 +146,10 @@ impl GitRepository {
                 stats.indexed_deltas(),
                 stats.total_deltas()
             );
-        } else {
+        } else if Self::is_multiple_of_5(network_pct) {
             info!(
-                "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})  \
-                 /  chk {:3}% ({:4}/{:4}) {}\r",
+                "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})
+                     /  chk {:3}% ({:4}/{:4}) {}\r",
                 network_pct,
                 kbytes,
                 stats.received_objects(),
@@ -161,7 +165,7 @@ impl GitRepository {
                     .as_ref()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default()
-            )
+            );
         }
     }
 

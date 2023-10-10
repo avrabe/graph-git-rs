@@ -21,3 +21,5 @@ convenient-kas = { path = "../convenient-kas" }
 convenient-bitbake = { path = "../convenient-bitbake" }
 convenient-repo = { path = "../convenient-repo" }
 
+[dev-dependencies]
+tracing-test = "0.2.4"
