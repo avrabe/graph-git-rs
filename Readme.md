@@ -22,6 +22,13 @@ Return a list of all referenced repositories.
 `MATCH (h:Repository {uri:'https://github.com/avrabe/meta-fmu.git'})-[:has]->(r:Reference {name:'dunfell'})<-[:links_to]-(c:Commit)-[:contains]->(m:Manifest)-[:refers]->(r1:Reference)<-[:links_to]-(c1:Commit)-[]->(p) return h,r,c,m,r1,c1,p`
 ![Example graph](./graph.svg)
 
+## Development
+
+```sh
+cargo install --locked kani-verifier
+cargo kani setup
+```
+
 ## Neo4j helpers
 
 Clear database

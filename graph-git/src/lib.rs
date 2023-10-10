@@ -158,3 +158,39 @@ impl GraphDatabase {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_node_reference() {
+        let name = "foo";
+        let uri = "http://example.com";
+
+        let result = node_reference(name, uri);
+
+        assert_eq!(result.var, "reference".to_owned());
+        assert_eq!(
+            result.cypher,
+            format!("(reference:Reference {{name: '{}', uri: '{}'}})", name, uri)
+        );
+    }
+
+    #[test]
+    fn test_node_kas_manifest() {
+        let path = "foo/bar.yml";
+        let oid = "abcdef123456";
+
+        let result = node_kas_manifest(path, oid);
+
+        assert_eq!(result.var, "repository");
+        assert_eq!(
+            result.cypher,
+            format!(
+                "(repository:Manifest {{path: '{}', oid: '{}', type: 'kas'}})",
+                path, oid
+            )
+        );
+    }
+}

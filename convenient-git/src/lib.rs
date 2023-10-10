@@ -128,7 +128,11 @@ impl GitRepository {
 
     fn is_multiple_of_one_percent_or_total(n: usize, total: usize) -> bool {
         let total_one_percent: usize = total / 100;
-        let total_one_percent = if total_one_percent == 0 { 1 } else { total_one_percent };
+        let total_one_percent = if total_one_percent == 0 {
+            1
+        } else {
+            total_one_percent
+        };
         n % (total_one_percent) == 0 || n == total
     }
 
@@ -143,9 +147,12 @@ impl GitRepository {
         };
         let kbytes = stats.received_bytes() / 1024;
         if stats.received_objects() == stats.total_objects() {
-            if Self::is_multiple_of_one_percent_or_total(stats.indexed_deltas(), stats.total_deltas()) {
+            if Self::is_multiple_of_one_percent_or_total(
+                stats.indexed_deltas(),
+                stats.total_deltas(),
+            ) {
                 info!(
-                    "Resolving deltas {}/{}\r",
+                    "Resolving deltas {}/{}",
                     stats.indexed_deltas(),
                     stats.total_deltas()
                 );
@@ -156,7 +163,7 @@ impl GitRepository {
         ) {
             info!(
                 "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})
-                     /  chk {:3}% ({:4}/{:4}) {}\r",
+                     / chk {:3}% ({:4}/{:4}) {}",
                 network_pct,
                 kbytes,
                 stats.received_objects(),
@@ -302,5 +309,31 @@ impl GitRepository {
             error!("No repository found");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_multiple_of_one_percent_or_total() {
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(1, 100));
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(50, 100));
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(100, 100));
+        assert!(!GitRepository::is_multiple_of_one_percent_or_total(
+            99, 1000
+        ));
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(
+            100, 1000
+        ));
+
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(2, 100));
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(51, 100));
+
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(1, 1));
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(2, 1));
+
+        assert!(GitRepository::is_multiple_of_one_percent_or_total(0, 0));
     }
 }
