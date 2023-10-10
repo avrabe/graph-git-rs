@@ -5,9 +5,9 @@ use convenient_kas::KasManifest;
 use convenient_repo::find_repo_manifest;
 use graph_git::{
     merge_link, merge_node, node_commit, node_kas_manifest, node_message, node_person,
-    node_reference, node_repository,
+    node_reference, node_repository, GraphDatabase,
 };
-use neo4rs::{ConfigBuilder, Graph, Query};
+use neo4rs::Query;
 use std::sync::Arc;
 use tempfile::tempdir;
 use tracing::{error, info, span, warn, Level};
@@ -184,7 +184,7 @@ fn add_head_commit_to_query(git_repository: &GitRepository) -> Vec<Query> {
 }
 
 fn find_kas_manifests_in_branches(git_repository: &GitRepository, queue: &Queue) -> Vec<Query> {
-    let span = span!(Level::INFO, "add_head_commit_to_query");
+    let span = span!(Level::INFO, "find_kas_manifests_in_branches");
     let _enter = span.enter();
     let mut collector = Vec::<Query>::new();
     for branch in git_repository.get_remote_heads().unwrap().iter() {
@@ -267,7 +267,7 @@ fn find_bitbake_manifests_in_branches(
     git_repository: &GitRepository,
     _queue: &Queue,
 ) -> Vec<Query> {
-    let span = span!(Level::INFO, "add_head_commit_to_query");
+    let span = span!(Level::INFO, "find_bitbake_manifests_in_branches");
     let _enter = span.enter();
     let collector = Vec::<Query>::new();
     for branch in git_repository.get_remote_heads().unwrap().iter() {
@@ -351,22 +351,9 @@ async fn main() {
         find_repo_manifests_in_branches(&git_repository, &queue);
         tmp_dir.close().unwrap();
     }
-    warn!("Start graph");
 
-    // concurrent queries
-    let config = ConfigBuilder::new()
-        .uri(opts.uri)
-        .user(opts.user)
-        .password(opts.password)
-        .db(opts.db)
-        .build()
-        .unwrap();
-    let graph = Arc::new(Graph::connect(config).await.unwrap());
-    //Transactions
-    let txn = graph.start_txn().await.unwrap();
-    txn.run_queries(collector).await.unwrap();
-    txn.commit().await.unwrap();
-    warn!("End graph");
+    let graph = GraphDatabase::new(opts.uri, opts.user, opts.password, opts.db).await;
+    graph.txn_run_queries(collector).await.unwrap();
 
     //for _ in 1..=2 {
     //    let graph = graph.clone();

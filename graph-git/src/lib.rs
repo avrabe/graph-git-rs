@@ -1,5 +1,7 @@
-use neo4rs::{query, Query};
-use tracing::debug;
+use std::{error::Error, sync::Arc};
+
+use neo4rs::{query, ConfigBuilder, Graph, Query};
+use tracing::{debug, error};
 
 /// Creates a Cypher node representation for a Git reference.
 ///
@@ -116,4 +118,43 @@ pub fn merge_link(from: GitCypher, to: GitCypher, link: String) -> Query {
     );
     debug!("{}", q);
     query(q.as_str())
+}
+
+pub struct GraphDatabase {
+    graph: Option<Arc<Graph>>,
+}
+
+impl GraphDatabase {
+    pub async fn new(uri: String, user: String, password: String, db: String) -> GraphDatabase {
+        let config = ConfigBuilder::new()
+            .uri(uri)
+            .user(user)
+            .password(password)
+            .db(db)
+            .build()
+            .unwrap();
+        let graph = Graph::connect(config).await;
+        match graph {
+            Ok(graph) => GraphDatabase {
+                graph: Some(Arc::new(graph)),
+            },
+            Err(err) => {
+                error!("Error connecting to Graph database: {:?}", err);
+                GraphDatabase { graph: None }
+            }
+        }
+    }
+
+    pub async fn txn_run_queries(&self, queries: Vec<Query>) -> Result<(), Box<dyn Error>> {
+        match &self.graph {
+            Some(graph) => {
+                let txn = graph.start_txn().await?;
+                txn.run_queries(queries).await.unwrap();
+
+                txn.commit().await?;
+            }
+            None => error!("No graph connection"),
+        }
+        Ok(())
+    }
 }

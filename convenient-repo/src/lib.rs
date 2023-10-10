@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::path::Path;
 use std::str::FromStr;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 use xmlem::display::Config;
 use xmlem::Document;
 
