@@ -126,181 +126,190 @@ pub fn get_log_level(level: &str) -> Level {
 /// # Returns
 ///
 /// A Vec&lt;Query&gt; containing one query per branch to find all branches in the repository.
-fn add_branches_to_query(git_repository: &GitRepository) -> Vec<Query> {
-    let span = span!(Level::INFO, "add_branches_to_query");
+fn iterate_through_branches(git_repository: &GitRepository, queue: &Queue) -> Vec<Query> {
+    let span = span!(Level::INFO, "iterate", value = git_repository.git_url);
     let _enter = span.enter();
     let mut collector = Vec::<Query>::new();
-    for branch in git_repository.get_remote_heads().unwrap().iter() {
-        collector.push(merge_node(node_commit(branch.oid.as_str())));
-        collector.push(merge_node(node_reference(
-            branch.name.as_str(),
-            &git_repository.git_url,
-        )));
-        collector.push(merge_link(
-            node_repository(&git_repository.git_url),
-            node_reference(branch.name.as_str(), &git_repository.git_url),
-            "has".to_string(),
-        ));
-        collector.push(merge_link(
-            node_commit(branch.oid.as_str()),
-            node_reference(branch.name.as_str(), &git_repository.git_url),
-            "links_to".to_string(),
-        ));
-    }
-    collector
-}
+    add_git_repository(&mut collector, git_repository);
 
-fn add_head_commit_to_query(git_repository: &GitRepository) -> Vec<Query> {
-    let span = span!(Level::INFO, "add_head_commit_to_query");
-    let _enter = span.enter();
-    let mut collector = Vec::<Query>::new();
     for branch in git_repository.get_remote_heads().unwrap().iter() {
-        let commit = git_repository.find_reference(branch.name.as_str());
-        match commit {
-            Some(commit) => {
-                collector.push(merge_node(node_person(
-                    commit.name.as_str(),
-                    commit.email.as_str(),
-                )));
-                collector.push(merge_node(node_message(commit.message.as_str())));
-                collector.push(merge_link(
-                    node_commit(branch.oid.as_str()),
-                    node_person(commit.name.as_str(), commit.email.as_str()),
-                    "authored_by".to_string(),
-                ));
-
-                collector.push(merge_link(
-                    node_commit(branch.oid.as_str()),
-                    node_message(commit.message.as_str()),
-                    "has_message".to_string(),
-                ));
+        add_branches_to_query_on_branch(&mut collector, branch, git_repository);
+        add_head_commit_to_query_on_branch(git_repository, branch, &mut collector, &span);
+        match git_repository.checkout(branch.name.as_str()) {
+            Ok(_) => {
+                find_kas_manifests_in_directory(
+                    git_repository,
+                    &span,
+                    &mut collector,
+                    branch,
+                    queue,
+                );
+                find_bitbake_manifests_on_branch(git_repository);
+                find_repo_manifest_on_branch(git_repository);
             }
-            None => {
-                error!(parent: &span, "Error: {}", branch.name.as_str());
+            Err(e) => {
+                error!(parent: &span, "Error: {}", e);
             }
         }
     }
     collector
 }
 
-fn find_kas_manifests_in_branches(git_repository: &GitRepository, queue: &Queue) -> Vec<Query> {
-    let span = span!(Level::INFO, "find_kas_manifests_in_branches");
-    let _enter = span.enter();
-    let mut collector = Vec::<Query>::new();
-    for branch in git_repository.get_remote_heads().unwrap().iter() {
-        match git_repository.checkout(branch.name.as_str()) {
-            Ok(_) => {
-                let kas_manifests = KasManifest::find_kas_manifest(
-                    git_repository.repo.as_ref().unwrap().workdir().unwrap(),
-                );
-                info!(parent: &span, "Found {} kas manifest(s)", kas_manifests.len());
-                for kas in kas_manifests {
-                    collector.push(merge_node(node_kas_manifest(
-                        kas.path.as_str(),
-                        branch.oid.as_str(),
-                    )));
-                    collector.push(merge_link(
-                        node_commit(branch.oid.as_str()),
-                        node_kas_manifest(kas.path.as_str(), branch.oid.as_str()),
-                        "contains".to_string(),
-                    ));
-                    for (kas_repository_name, kas_repository) in kas.manifest.repos {
-                        let mut git_repo: String = String::new();
-                        // if no repo was given. Assume the current repo
-                        git_repo.push_str(&git_repository.git_url);
-                        match kas_repository {
-                            Some(repository) => {
-                                match repository.url {
-                                    Some(url) => {
-                                        queue.add(url.clone());
-                                        collector.push(merge_node(node_repository(url.as_str())));
-                                        git_repo.replace_range(.., url.as_str());
-                                        info!(parent: &span, "Found kas {} repository {}", kas_repository_name, url.as_str());
-                                    }
-                                    None => {
-                                        error!(parent: &span, "Error: {}", kas_repository_name);
-                                    }
-                                };
-                                match repository.refspec {
-                                    Some(refspec) => {
-                                        collector.push(merge_node(node_reference(
-                                            refspec.as_str(),
-                                            &git_repo,
-                                        )));
-                                        collector.push(merge_link(
-                                            node_repository(&git_repo),
-                                            node_reference(refspec.as_str(), &git_repo),
-                                            "has".to_string(),
-                                        ));
-                                        collector.push(merge_link(
-                                            node_kas_manifest(
-                                                kas.path.as_str(),
-                                                branch.oid.as_str(),
-                                            ),
-                                            node_reference(refspec.as_str(), &git_repo),
-                                            "refers".to_string(),
-                                        ));
-                                        info!(parent: &span, "Found kas {} refspec {}", kas_repository_name, refspec.as_str());
-                                    }
-                                    None => {
-                                        error!(parent: &span, "Error: {}. Need to find a way for default refspec.", kas_repository_name);
-                                    }
-                                };
-                            }
+fn add_git_repository(collector: &mut Vec<Query>, git_repository: &GitRepository) {
+    let git_url: &String = &git_repository.git_url;
 
-                            None => {
-                                error!(parent: &span, "Error: {}", kas_repository_name);
+    collector.push(merge_node(node_repository(git_url)));
+}
+
+fn add_branches_to_query_on_branch(
+    collector: &mut Vec<Query>,
+    branch: &convenient_git::GitRemoteHead,
+    git_repository: &GitRepository,
+) {
+    collector.push(merge_node(node_commit(branch.oid.as_str())));
+    collector.push(merge_node(node_reference(
+        branch.name.as_str(),
+        &git_repository.git_url,
+    )));
+    collector.push(merge_link(
+        node_repository(&git_repository.git_url),
+        node_reference(branch.name.as_str(), &git_repository.git_url),
+        "has".to_string(),
+    ));
+    collector.push(merge_link(
+        node_commit(branch.oid.as_str()),
+        node_reference(branch.name.as_str(), &git_repository.git_url),
+        "links_to".to_string(),
+    ));
+}
+
+fn add_head_commit_to_query_on_branch(
+    git_repository: &GitRepository,
+    branch: &convenient_git::GitRemoteHead,
+    collector: &mut Vec<Query>,
+    span: &tracing::Span,
+) {
+    let branch_name = branch.name.as_str();
+    let span = span!(parent: span, Level::INFO, "head_commit", value=branch_name);
+
+    let commit = git_repository.find_reference(branch_name);
+    match commit {
+        Some(commit) => {
+            collector.push(merge_node(node_person(
+                commit.name.as_str(),
+                commit.email.as_str(),
+            )));
+            collector.push(merge_node(node_message(commit.message.as_str())));
+            collector.push(merge_link(
+                node_commit(branch.oid.as_str()),
+                node_person(commit.name.as_str(), commit.email.as_str()),
+                "authored_by".to_string(),
+            ));
+
+            collector.push(merge_link(
+                node_commit(branch.oid.as_str()),
+                node_message(commit.message.as_str()),
+                "has_message".to_string(),
+            ));
+        }
+        None => {
+            error!(parent: span, "Error: {}", branch_name);
+        }
+    }
+}
+
+fn find_kas_manifests_in_directory(
+    git_repository: &GitRepository,
+    parent_span: &tracing::Span,
+    collector: &mut Vec<Query>,
+    branch: &convenient_git::GitRemoteHead,
+    queue: &Queue,
+) {
+    let branch_name = branch.name.as_str();
+    span!(parent: parent_span, Level::INFO, "kas", value=branch_name).in_scope(|| {
+        // perform some work in the context of `my_span`...
+
+        let kas_manifests = KasManifest::find_kas_manifest(
+            git_repository.repo.as_ref().unwrap().workdir().unwrap(),
+        );
+        info!("Found {} kas manifest(s)", kas_manifests.len());
+        for kas in kas_manifests {
+            collector.push(merge_node(node_kas_manifest(
+                kas.path.as_str(),
+                branch.oid.as_str(),
+            )));
+            collector.push(merge_link(
+                node_commit(branch.oid.as_str()),
+                node_kas_manifest(kas.path.as_str(), branch.oid.as_str()),
+                "contains".to_string(),
+            ));
+            for (kas_repository_name, kas_repository) in kas.manifest.repos {
+                let mut git_repo: String = String::new();
+                // if no repo was given. Assume the current repo
+                git_repo.push_str(&git_repository.git_url);
+                match kas_repository {
+                    Some(repository) => {
+                        match repository.url {
+                            Some(url) => {
+                                queue.add(url.clone());
+                                collector.push(merge_node(node_repository(url.as_str())));
+                                git_repo.replace_range(.., url.as_str());
+                                info!(
+                                    "Found kas {} repository {}",
+                                    kas_repository_name,
+                                    url.as_str()
+                                );
                             }
-                        }
+                            None => {
+                                error!("Error: {}", kas_repository_name);
+                            }
+                        };
+                        match repository.refspec {
+                            Some(refspec) => {
+                                collector
+                                    .push(merge_node(node_reference(refspec.as_str(), &git_repo)));
+                                collector.push(merge_link(
+                                    node_repository(&git_repo),
+                                    node_reference(refspec.as_str(), &git_repo),
+                                    "has".to_string(),
+                                ));
+                                collector.push(merge_link(
+                                    node_kas_manifest(kas.path.as_str(), branch.oid.as_str()),
+                                    node_reference(refspec.as_str(), &git_repo),
+                                    "refers".to_string(),
+                                ));
+                                info!(
+                                    "Found kas {} refspec {}",
+                                    kas_repository_name,
+                                    refspec.as_str()
+                                );
+                            }
+                            None => {
+                                error!(
+                                    "Error: {}. Need to find a way for default refspec.",
+                                    kas_repository_name
+                                );
+                            }
+                        };
+                    }
+
+                    None => {
+                        error!("Error: {}", kas_repository_name);
                     }
                 }
             }
-            Err(e) => {
-                error!(parent: &span, "Error: {}", e);
-            }
         }
-    }
-    collector
+    }); // --> Subscriber::exit(my_span)
 }
 
-fn find_bitbake_manifests_in_branches(
-    git_repository: &GitRepository,
-    _queue: &Queue,
-) -> Vec<Query> {
-    let span = span!(Level::INFO, "find_bitbake_manifests_in_branches");
-    let _enter = span.enter();
-    let collector = Vec::<Query>::new();
-    for branch in git_repository.get_remote_heads().unwrap().iter() {
-        match git_repository.checkout(branch.name.as_str()) {
-            Ok(_) => {
-                let _bitbake_manifests = Bitbake::find_bitbake_manifest(
-                    git_repository.repo.as_ref().unwrap().workdir().unwrap(),
-                );
-            }
-            Err(e) => {
-                error!(parent: &span, "Error: {}", e);
-            }
-        }
-    }
-    collector
+fn find_bitbake_manifests_on_branch(git_repository: &GitRepository) {
+    let _bitbake_manifests =
+        Bitbake::find_bitbake_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
 }
 
-fn find_repo_manifests_in_branches(git_repository: &GitRepository, _queue: &Queue) -> Vec<Query> {
-    let span = span!(Level::INFO, "add_head_commit_to_query");
-    let _enter = span.enter();
-    let collector = Vec::<Query>::new();
-    for branch in git_repository.get_remote_heads().unwrap().iter() {
-        match git_repository.checkout(branch.name.as_str()) {
-            Ok(_) => {
-                let _bitbake_manifests =
-                    find_repo_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
-            }
-            Err(e) => {
-                error!(parent: &span, "Error: {}", e);
-            }
-        }
-    }
-    collector
+fn find_repo_manifest_on_branch(git_repository: &GitRepository) {
+    let _bitbake_manifests =
+        find_repo_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
 }
 
 #[tokio::main]
@@ -343,12 +352,8 @@ async fn main() {
         git_repository.update_from_remote();
         git_repository.map_remote_branches_local();
 
-        collector.push(merge_node(node_repository(&git_url)));
-        collector.append(&mut add_branches_to_query(&git_repository));
-        collector.append(&mut add_head_commit_to_query(&git_repository));
-        collector.append(&mut find_kas_manifests_in_branches(&git_repository, &queue));
-        find_bitbake_manifests_in_branches(&git_repository, &queue);
-        find_repo_manifests_in_branches(&git_repository, &queue);
+        collector.append(&mut iterate_through_branches(&git_repository, &queue));
+
         tmp_dir.close().unwrap();
     }
 
@@ -376,6 +381,11 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use convenient_git::GitRemoteHead;
+    use tracing_test::traced_test;
+
     use super::*;
 
     #[test]
@@ -391,5 +401,59 @@ mod tests {
         obj.add("item2".to_string());
         obj.add("item".to_string());
         assert_eq!(obj.take(), Some("item2".to_string()));
+    }
+
+    #[test]
+    fn add_git_repository_test() {
+        let mut queries = Vec::new();
+        let test_repo = GitRepository {
+            repo: None,
+            git_url: "foo:bar:foo".to_string(),
+        };
+        add_git_repository(&mut queries, &test_repo);
+        assert_eq!(queries.len(), 1);
+    }
+
+    #[traced_test]
+    #[test]
+    fn add_head_commit_to_query_on_branch_test() {
+        let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let d = binding.parent().unwrap();
+
+        let mut collector = Vec::<Query>::new();
+
+        let span = tracing::info_span!("add_head_commit_to_query_on_branch");
+        let test_repo = GitRepository {
+            repo: Some(git2::Repository::open(d).unwrap()),
+            git_url: "foo:bar:foo".to_string(),
+        };
+        let branch = GitRemoteHead {
+            name: "main".to_string(),
+            oid: "foo:bar:foo".to_string(),
+        };
+        add_head_commit_to_query_on_branch(&test_repo, &branch, &mut collector, &span);
+        assert_eq!(collector.len(), 4);
+    }
+
+    #[traced_test]
+    #[test]
+    fn find_kas_manifests_in_directory_test() {
+        let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let d = binding.parent().unwrap();
+        let queue = Arc::new(Queue::new());
+
+        let mut collector = Vec::<Query>::new();
+
+        let span = tracing::info_span!("find_kas_manifests_in_directory");
+        let test_repo = GitRepository {
+            repo: Some(git2::Repository::open(d).unwrap()),
+            git_url: "foo:bar:foo".to_string(),
+        };
+        let branch = GitRemoteHead {
+            name: "main".to_string(),
+            oid: "foo:bar:foo".to_string(),
+        };
+        find_kas_manifests_in_directory(&test_repo, &span, &mut collector, &branch, &queue);
+        assert_eq!(collector.len(), 0);
     }
 }
