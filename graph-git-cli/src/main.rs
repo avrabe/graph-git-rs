@@ -168,7 +168,8 @@ async fn iterate_through_branches(
                     queue,
                 );
                 find_bitbake_manifests_on_branch(git_repository);
-                find_repo_manifest_on_branch(git_repository);
+                find_repo_manifest_on_branch(&mut collector, git_repository,             branch,
+                    queue);
             }
             Err(e) => {
                 error!(parent: &span, "Error: {}", e);
@@ -407,9 +408,38 @@ fn find_bitbake_manifests_on_branch(git_repository: &GitRepository) {
         Bitbake::find_bitbake_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
 }
 
-fn find_repo_manifest_on_branch(git_repository: &GitRepository) {
-    let _bitbake_manifests =
+fn find_repo_manifest_on_branch(    collector: &mut Vec<Query>,
+    git_repository: &GitRepository,     branch: &convenient_git::GitRemoteHead,
+    queue: &Queue) {
+    let manifest_git_url = git_repository.git_url.clone();
+    let manifests =
         find_repo_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
+    for manifest in manifests {
+        let path = "TODO.xml";
+        collector.push(merge_node(node_kas_manifest(
+            path,
+            branch.oid.as_str(),
+        )));
+        collector.push(merge_link(
+            node_commit(branch.oid.as_str()),
+            node_kas_manifest(path, branch.oid.as_str()),
+            "contains".to_string(),
+        ));
+        for project in manifest.iter() {
+            let git_url = project.git_url(manifest_git_url.clone());
+            queue.add(git_url.clone());
+            let dest_branch = project.dest_branch();
+            collector.push(merge_node(node_repository(git_url.as_str())));
+            collector
+            .push(merge_node(node_reference(&dest_branch, &git_url)));
+        collector.push(merge_link(
+            node_repository(&git_url),
+            node_reference(&dest_branch, &git_url),
+            "has".to_string(),
+        ));
+
+        }
+    }
 }
 
 #[tokio::main]
@@ -428,7 +458,7 @@ async fn main() {
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
         .with_max_level(get_log_level(&log_level))
-        .with_file(true)
+        .with_file(false)
         // completes the builder.
         .finish();
 
