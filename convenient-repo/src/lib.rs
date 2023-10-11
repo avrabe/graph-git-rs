@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::default::Default;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
+use url::Url;
 use xmlem::display::Config;
 use xmlem::Document;
 
@@ -150,6 +152,154 @@ pub struct Include {
     pub name: String,
 }
 
+pub struct ProjectsIterator<'a> {
+    manifest: &'a Manifest,
+    index: usize,
+}
+
+#[derive(Debug)]
+pub struct ConvenientProject {
+    pub name: String,
+    pub git_uri: String,
+    pub relative_path: Option<bool>,
+    pub revision: String,
+    pub dest_branch: Option<String>,
+}
+
+impl ConvenientProject {
+    pub fn git_url(&self, manifest_git_url: String) -> String {
+        if self.relative_path.unwrap_or(false) {
+            let mut url = Url::parse(&manifest_git_url).unwrap();
+            if self.git_uri.ends_with('/') {
+                url = url.join(self.git_uri.as_str()).unwrap();
+            } else {
+                url = url.join(format!("{}/", self.git_uri).as_str()).unwrap();
+            }
+            info!("New url for {}: {} # {}", self.name, url, self.git_uri);
+
+            url.to_string()
+        } else {
+            self.git_uri.clone()
+        }
+    }
+
+    pub fn dest_branch(&self) -> String {
+        match self.dest_branch {
+            Some(ref dest_branch) => dest_branch.clone(),
+            None => self.revision.clone(),
+        }
+    }
+}
+
+impl<'a> ProjectsIterator<'a> {
+    pub fn new(manifest: &'a Manifest) -> Self {
+        ProjectsIterator { manifest, index: 0 }
+    }
+    fn get_git_uri(&mut self, remote_name: &str) -> Option<String> {
+        match self.manifest.remote {
+            Some(ref list) => {
+                for remote in list {
+                    if remote.name == remote_name {
+                        return Some(remote.fetch.clone().unwrap_or_else(|| "TODO".to_string()));
+                    }
+                }
+                None
+            }
+            None => None,
+        }
+    }
+    fn get_remote_or_default_or_todo(&mut self, remote_name: &Option<String>) -> String {
+        match remote_name {
+            Some(name) => name.to_string(),
+            None => match self.manifest.default {
+                Some(ref default) => match default.remote {
+                    Some(ref name) => name.clone(),
+                    None => "TODO".to_string(),
+                },
+                None => "TODO".to_string(),
+            },
+        }
+    }
+
+    fn get_revision_or_default_or_todo(&mut self, remote: &Project) -> String {
+        match remote.revision {
+            Some(ref revision) => revision.clone(),
+            None => match self.manifest.default {
+                Some(ref default) => match default.revision {
+                    Some(ref revision) => revision.clone(),
+                    None => "TODO".to_string(),
+                },
+                None => "TODO".to_string(),
+            },
+        }
+    }
+
+    fn get_dest_branch_or_default_or_todo(&mut self, remote: &Project) -> Option<String> {
+        match remote.dest_branch {
+            Some(ref dest_branch) => Some(dest_branch.clone()),
+            None => match self.manifest.default {
+                Some(ref default) => default.dest_branch.as_ref().cloned(),
+                None => None,
+            },
+        }
+    }
+
+    fn is_relative(&mut self, remote: String) -> Option<bool> {
+        let url = Url::parse(&remote);
+        match url {
+            Ok(_uri) => Some(false),
+            Err(e) => match e {
+                url::ParseError::RelativeUrlWithoutBase => Some(true),
+                _ => None,
+            },
+        }
+    }
+}
+
+impl<'a> Iterator for ProjectsIterator<'a> {
+    type Item = Arc<ConvenientProject>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.manifest.project {
+            Some(ref list) => {
+                if self.index < list.len() {
+                    let p: &Project = &list[self.index];
+                    let name = p.name.clone();
+                    let remote = self.get_remote_or_default_or_todo(&p.remote);
+                    let git_uri = self
+                        .get_git_uri(&remote)
+                        .unwrap_or_else(|| "TODO".to_string());
+                    let relative_path = self.is_relative(git_uri.clone());
+                    let revision = self.get_revision_or_default_or_todo(p);
+                    let dest_branch = self.get_dest_branch_or_default_or_todo(p);
+                    let result = ConvenientProject {
+                        name,
+                        git_uri,
+                        relative_path,
+                        revision,
+                        dest_branch,
+                    };
+                    let result = Some(Arc::new(result));
+                    self.index += 1;
+                    result
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
+    }
+}
+
+impl Manifest {
+    pub fn iter(&self) -> ProjectsIterator {
+        ProjectsIterator {
+            manifest: self,
+            index: 0,
+        }
+    }
+}
+
 /// Converts the given Manifest struct to a string by:
 /// - Serializing the struct to XML using quick_xml::se::to_string
 /// - Removing unwanted empty XML tags from the cleanup vector
@@ -270,8 +420,9 @@ pub fn find_repo_manifest(path: &Path) -> Vec<Manifest> {
  */
 mod tests {
     use super::*;
-    use quick_xml::{self, de::from_str}; //, EventReader, ParserConfig};
+    use quick_xml::{self, de::from_str};
     use std::{fs, path::PathBuf};
+    use tracing_test::traced_test; //, EventReader, ParserConfig};
 
     #[test]
     fn default_remote_name() {
@@ -326,6 +477,7 @@ mod tests {
         assert_eq!(src, reserialized_item);
     }
 
+    #[traced_test]
     #[test]
     fn default_read_manifest() {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -339,8 +491,17 @@ mod tests {
         //    } ]),
         //    ..Default::default()
         //};
-        let _item: Manifest = from_str(&src).unwrap();
-        //assert_eq!(item, should_be);
+        let item: Manifest = from_str(&src).unwrap();
+        for i in item.iter() {
+            info!(
+                "{:?}, {}, {}",
+                i,
+                i.git_url("http://foo/gogo/".to_string()),
+                i.dest_branch()
+            );
+        }
+        let len = item.iter().collect::<Vec<Arc<ConvenientProject>>>().len();
+        assert_eq!(len, 1300);
 
         //let reserialized_item = to_string(&item).unwrap();
         //assert_eq!(src, reserialized_item);
