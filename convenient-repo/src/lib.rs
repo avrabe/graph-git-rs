@@ -173,7 +173,9 @@ impl ConvenientProject {
             if self.git_uri.ends_with('/') {
                 url = url.join(self.git_uri.as_str()).unwrap();
             } else {
-                url = url.join(format!("{}/", self.git_uri).as_str()).unwrap();
+                url = url
+                    .join(format!("{}/{}", self.git_uri, self.name).as_str())
+                    .unwrap();
             }
             info!("New url for {}: {} # {}", self.name, url, self.git_uri);
 
