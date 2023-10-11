@@ -7,7 +7,7 @@ use git2::{
     build::CheckoutBuilder, BranchType, Commit, FetchOptions, Oid, Progress, ProxyOptions, Remote,
     RemoteCallbacks, Repository,
 };
-use tracing::{error, info, info_span, span, Level};
+use tracing::{error, info, info_span, span, warn, Level};
 
 pub struct GitRemoteHead {
     pub oid: String,
@@ -75,7 +75,7 @@ impl GitRepository {
     }
 
     pub fn new(repo_path: &Path, git_url: &String) -> GitRepository {
-        let span = span!(Level::INFO, "clone", value=%git_url);
+        let span = span!(Level::INFO, "clone", uri=%git_url);
         let _enter = span.enter();
 
         let state = RefCell::new(State {
@@ -113,7 +113,17 @@ impl GitRepository {
             Ok(repo) => repo,
             Err(e) if e.code() == git2::ErrorCode::NotFound => {
                 // Repository not found, clone it
-                builder.clone(git_url, Path::new(repo_path)).unwrap()
+                loop {
+                    match builder.clone(git_url, Path::new(repo_path)) {
+                        Ok(repo) => break repo,
+                        Err(e) => {
+                            // Repository not found, clone it
+                            warn!("failed to open: {}", e);
+                            continue;
+                        }
+                    };
+                }
+                //builder.clone(git_url, Path::new(repo_path)).unwrap()
             }
             Err(e) => {
                 // Some other error, panic
@@ -160,10 +170,13 @@ impl GitRepository {
         } else if Self::is_multiple_of_one_percent_or_total(
             stats.received_objects(),
             stats.total_objects(),
-        ) {
+        ) || Self::is_multiple_of_one_percent_or_total(
+            stats.indexed_objects(),
+            stats.total_objects(),
+        ) || co_pct > 0
+        {
             info!(
-                "net {:3}% ({:4} kb, {:5}/{:5})  /  idx {:3}% ({:5}/{:5})
-                     / chk {:3}% ({:4}/{:4}) {}",
+                "net {:3}% ({:4}kb,{:5}/{:5})/idx {:3}% ({:5}/{:5})/chk {:3}% ({:4}/{:4}) {}",
                 network_pct,
                 kbytes,
                 stats.received_objects(),

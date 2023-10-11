@@ -168,8 +168,7 @@ async fn iterate_through_branches(
                     queue,
                 );
                 find_bitbake_manifests_on_branch(git_repository);
-                find_repo_manifest_on_branch(&mut collector, git_repository,             branch,
-                    queue);
+                find_repo_manifest_on_branch(&mut collector, git_repository, branch, queue);
             }
             Err(e) => {
                 error!(parent: &span, "Error: {}", e);
@@ -408,18 +407,17 @@ fn find_bitbake_manifests_on_branch(git_repository: &GitRepository) {
         Bitbake::find_bitbake_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
 }
 
-fn find_repo_manifest_on_branch(    collector: &mut Vec<Query>,
-    git_repository: &GitRepository,     branch: &convenient_git::GitRemoteHead,
-    queue: &Queue) {
+fn find_repo_manifest_on_branch(
+    collector: &mut Vec<Query>,
+    git_repository: &GitRepository,
+    branch: &convenient_git::GitRemoteHead,
+    queue: &Queue,
+) {
     let manifest_git_url = git_repository.git_url.clone();
-    let manifests =
-        find_repo_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
+    let manifests = find_repo_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
     for manifest in manifests {
         let path = "TODO.xml";
-        collector.push(merge_node(node_kas_manifest(
-            path,
-            branch.oid.as_str(),
-        )));
+        collector.push(merge_node(node_kas_manifest(path, branch.oid.as_str())));
         collector.push(merge_link(
             node_commit(branch.oid.as_str()),
             node_kas_manifest(path, branch.oid.as_str()),
@@ -430,14 +428,12 @@ fn find_repo_manifest_on_branch(    collector: &mut Vec<Query>,
             queue.add(git_url.clone());
             let dest_branch = project.dest_branch();
             collector.push(merge_node(node_repository(git_url.as_str())));
-            collector
-            .push(merge_node(node_reference(&dest_branch, &git_url)));
-        collector.push(merge_link(
-            node_repository(&git_url),
-            node_reference(&dest_branch, &git_url),
-            "has".to_string(),
-        ));
-
+            collector.push(merge_node(node_reference(&dest_branch, &git_url)));
+            collector.push(merge_link(
+                node_repository(&git_url),
+                node_reference(&dest_branch, &git_url),
+                "has".to_string(),
+            ));
         }
     }
 }
@@ -463,7 +459,6 @@ async fn main() {
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-    let mut collector = Vec::<Query>::new();
     let queue = Arc::new(Queue::new());
 
     queue.add(opts.git_url.clone());
@@ -471,6 +466,7 @@ async fn main() {
         GraphDatabase::new(opts.uri, opts.user, opts.password, opts.db).await;
 
     while let Some(git_url) = queue.take() {
+        let mut collector = Vec::<Query>::new();
         info!("Preparing: {}", git_url);
         let tmp_dir = tempdir().unwrap();
         let file_path = tmp_dir.path().join("repo");
@@ -485,11 +481,10 @@ async fn main() {
         git_repository.map_remote_branches_local();
 
         collector.append(&mut iterate_through_branches(&git_repository, &queue, &graph).await);
-
         tmp_dir.close().unwrap();
-    }
+        graph.txn_run_queries(collector).await.unwrap();
 
-    graph.txn_run_queries(collector).await.unwrap();
+    }
 }
 
 #[cfg(test)]
