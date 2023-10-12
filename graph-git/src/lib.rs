@@ -106,10 +106,19 @@ pub fn node_message(message: &str) -> GitCypher {
         var: "message".to_owned(),
         cypher: format!(
             "(message:Message {{message: \'{}\'}})",
-            message.replace('\'', "\\\'")
+            message.replace('\\', "\\\\").replace('\'', "\\\'")
         ),
     }
 }
+
+// MATCH (commit:Commit {oid: 'ec41323d7acd2eda47e2f6d5c9aa59e34434c06d'})
+// MATCH (message:Message {message:
+//  'am 6aa21b8c: (-s ours) am f8bd3707: Don\\'t track binaries for newer devices
+//
+//* commit \'6aa21b8cf337c20427b14dd842020a0d1e10d75c\':
+//  Don\'t track binaries for newer devices
+//'})
+// MERGE (commit)-[:has_message]->(message)
 
 /// Creates a Cypher query to merge a node.
 ///

@@ -40,6 +40,8 @@ Create Indexes
 CREATE INDEX manifest IF NOT EXISTS FOR (n:Manifest) ON (n.type, n.path, n.oid)
 CREATE INDEX commit IF NOT EXISTS FOR (n:Commit) ON (n.oid)
 CREATE INDEX reference IF NOT EXISTS FOR (n:Reference) ON (n.name, n.uri)
+CREATE INDEX tag IF NOT EXISTS FOR (n:Tag) ON (n.name, n.uri)
+
 CREATE INDEX repository IF NOT EXISTS FOR (n:Repository) ON (n.uri)
 CREATE INDEX person IF NOT EXISTS FOR (n:Person) ON (n.name, n.email)
 CREATE INDEX message IF NOT EXISTS FOR (n:Message) ON (n.message)
@@ -53,3 +55,10 @@ Config the amount of visible data
 `:config maxNeighbours: 300`
 
 Good example to test: <https://android.googlesource.com/platform/manifest>
+
+```sh
+brew install --cask docker
+brew install colima
+colima start
+export DOCKER_HOST=unix:///$HOME/.colima/docker.sock
+```

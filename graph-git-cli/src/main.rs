@@ -5,8 +5,8 @@ use convenient_kas::KasManifest;
 use convenient_repo::find_repo_manifest;
 use graph_git::{
     delete_node_and_references_to_node, delete_references_to_node, merge_link, merge_node,
-    node_commit, node_kas_manifest, node_message, node_person, node_reference, node_repository,
-    node_tag, GraphDatabase,
+    node_commit, node_kas_manifest, node_message, node_person, node_reference, node_repo_manifest,
+    node_repository, node_tag, GraphDatabase,
 };
 use neo4rs::Query;
 use std::sync::Arc;
@@ -417,10 +417,10 @@ fn find_repo_manifest_on_branch(
     let manifests = find_repo_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
     for manifest in manifests {
         let path = "TODO.xml";
-        collector.push(merge_node(node_kas_manifest(path, branch.oid.as_str())));
+        collector.push(merge_node(node_repo_manifest(path, branch.oid.as_str())));
         collector.push(merge_link(
             node_commit(branch.oid.as_str()),
-            node_kas_manifest(path, branch.oid.as_str()),
+            node_repo_manifest(path, branch.oid.as_str()),
             "contains".to_string(),
         ));
         for project in manifest.iter() {
@@ -428,22 +428,66 @@ fn find_repo_manifest_on_branch(
             queue.add(git_url.clone());
             let dest_branch = project.dest_branch();
             collector.push(merge_node(node_repository(git_url.as_str())));
-            if project.is_dest_branch_a_tag() {
+            if project.is_dest_branch_a_tag() && !project.is_dest_branch_a_commit() {
                 collector.push(merge_node(node_tag(&dest_branch, &git_url)));
                 collector.push(merge_link(
                     node_repository(&git_url),
                     node_tag(&dest_branch, &git_url),
                     "has".to_string(),
                 ));
-            } else {
+                collector.push(merge_link(
+                    node_repo_manifest(path, branch.oid.as_str()),
+                    node_tag(&dest_branch, &git_url),
+                    "refers".to_string(),
+                ));
+            } else if !project.is_dest_branch_a_commit() {
                 collector.push(merge_node(node_reference(&dest_branch, &git_url)));
                 collector.push(merge_link(
                     node_repository(&git_url),
                     node_reference(&dest_branch, &git_url),
                     "has".to_string(),
                 ));
+                collector.push(merge_link(
+                    node_repo_manifest(path, branch.oid.as_str()),
+                    node_reference(&dest_branch, &git_url),
+                    "refers".to_string(),
+                ));                
+            } else {
+                collector.push(merge_node(node_commit(&dest_branch)));
+                collector.push(merge_link(
+                    node_repo_manifest(path, branch.oid.as_str()),
+                    node_commit(&dest_branch),
+                    "refers".to_string(),
+                ));   
             }
         }
+    }
+}
+
+async fn application(uri: String, user: String, password: String, db: String, git_url: String) {
+    let queue = Arc::new(Queue::new());
+
+    queue.add(git_url.clone());
+    let graph: GraphDatabase = GraphDatabase::new(uri, user, password, db).await;
+
+    while let Some(git_url) = queue.take() {
+        let mut collector = Vec::<Query>::new();
+        info!("Preparing: {}", git_url);
+        let tmp_dir = tempdir().unwrap();
+        let file_path = tmp_dir.path().join("repo");
+
+        let repo_path = file_path.as_path();
+        warn!("Repo path: {}", repo_path.display());
+
+        // Try opening the repository
+        let git_repository = GitRepository::new(repo_path, &git_url);
+        //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
+        git_repository.update_from_remote();
+        git_repository.map_remote_branches_local();
+
+        collector.append(&mut iterate_through_branches(&git_repository, &queue, &graph).await);
+        tmp_dir.close().unwrap();
+        graph.txn_run_queries(collector).await.unwrap();
     }
 }
 
@@ -468,39 +512,17 @@ async fn main() {
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-    let queue = Arc::new(Queue::new());
-
-    queue.add(opts.git_url.clone());
-    let graph: GraphDatabase =
-        GraphDatabase::new(opts.uri, opts.user, opts.password, opts.db).await;
-
-    while let Some(git_url) = queue.take() {
-        let mut collector = Vec::<Query>::new();
-        info!("Preparing: {}", git_url);
-        let tmp_dir = tempdir().unwrap();
-        let file_path = tmp_dir.path().join("repo");
-
-        let repo_path = file_path.as_path();
-        warn!("Repo path: {}", repo_path.display());
-
-        // Try opening the repository
-        let git_repository = GitRepository::new(repo_path, &git_url);
-        //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
-        git_repository.update_from_remote();
-        git_repository.map_remote_branches_local();
-
-        collector.append(&mut iterate_through_branches(&git_repository, &queue, &graph).await);
-        tmp_dir.close().unwrap();
-        graph.txn_run_queries(collector).await.unwrap();
-    }
+    application(opts.uri, opts.user, opts.password, opts.db, opts.git_url).await;
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use convenient_git::GitRemoteHead;
+    use neo4j_testcontainers::Neo4j;
+    use std::path::PathBuf;
+    use testcontainers::clients::Cli;
     use tracing_test::traced_test;
+    use url::Url;
 
     use super::*;
 
@@ -571,5 +593,28 @@ mod tests {
         };
         find_kas_manifests_in_directory(&test_repo, &span, &mut collector, &branch, &queue);
         assert_eq!(collector.len(), 0);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_app() {
+        let binding = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let d = binding.parent().unwrap();
+        let url = Url::from_file_path(d).unwrap().to_string();
+        let docker = Cli::default();
+        let container = docker.run(Neo4j::default());
+        let uri = container.image().bolt_uri_ipv4();
+        let auth_user = container.image().user().unwrap().to_string();
+        let auth_pass = container.image().password().unwrap().to_string();
+        let db: String = "neo4j".to_string();
+        let git_url: String = url;
+        info!(
+            "uri: {}, auth_user: {}, auth_pass: {}, db: {}, git_url: {} ",
+            uri, auth_user, auth_pass, db, git_url
+        );
+        let graph: GraphDatabase = GraphDatabase::new(uri, auth_user, auth_pass, db).await;
+        let foo = graph.query_branches_for_repository("git_uri").await;
+        assert!(foo.len() == 0);
+        //application(uri, auth_user, auth_pass, db, git_url).await;
     }
 }
