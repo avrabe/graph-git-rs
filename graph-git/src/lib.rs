@@ -1,7 +1,7 @@
 use std::{collections::HashSet, error::Error, sync::Arc};
 
 use neo4rs::{query, ConfigBuilder, Graph, Node, Query};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 /// Creates a Cypher node representation for a Git reference.
 ///
@@ -16,6 +16,13 @@ pub fn node_reference(name: &str, uri: &str) -> GitCypher {
             "(reference:Reference {{name: \'{}\', uri: '{}'}})",
             name, uri
         ),
+    }
+}
+
+pub fn node_tag(name: &str, uri: &str) -> GitCypher {
+    GitCypher {
+        var: "tag".to_owned(),
+        cypher: format!("(tag:Tag {{name: \'{}\', uri: '{}'}})", name, uri),
     }
 }
 
@@ -192,10 +199,13 @@ impl GraphDatabase {
     pub async fn txn_run_queries(&self, queries: Vec<Query>) -> Result<(), Box<dyn Error>> {
         match &self.graph {
             Some(graph) => {
+                let len = queries.len();
                 let txn = graph.start_txn().await?;
+                info!("run {} queries", len);
                 txn.run_queries(queries).await.unwrap();
-
+                info!("commit {} queries", len);
                 txn.commit().await?;
+                info!("done");
             }
             None => error!("No graph connection"),
         }
