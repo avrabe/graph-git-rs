@@ -34,6 +34,17 @@ cargo kani setup
 Find all commits not linking to a branch.
 `MATCH (a:Commit) WHERE not ((a)-[:links_to]->(:Reference)) RETURN a`
 
+Create Indexes
+
+```cypher
+CREATE INDEX manifest IF NOT EXISTS FOR (n:Manifest) ON (n.type, n.path, n.oid)
+CREATE INDEX commit IF NOT EXISTS FOR (n:Commit) ON (n.oid)
+CREATE INDEX reference IF NOT EXISTS FOR (n:Reference) ON (n.name, n.uri)
+CREATE INDEX repository IF NOT EXISTS FOR (n:Repository) ON (n.uri)
+CREATE INDEX person IF NOT EXISTS FOR (n:Person) ON (n.name, n.email)
+CREATE INDEX message IF NOT EXISTS FOR (n:Message) ON (n.message)
+```
+
 Clear database
 `MATCH (n) DETACH DELETE n`
 

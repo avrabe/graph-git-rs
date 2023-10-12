@@ -6,7 +6,7 @@ use convenient_repo::find_repo_manifest;
 use graph_git::{
     delete_node_and_references_to_node, delete_references_to_node, merge_link, merge_node,
     node_commit, node_kas_manifest, node_message, node_person, node_reference, node_repository,
-    GraphDatabase,
+    node_tag, GraphDatabase,
 };
 use neo4rs::Query;
 use std::sync::Arc;
@@ -428,12 +428,21 @@ fn find_repo_manifest_on_branch(
             queue.add(git_url.clone());
             let dest_branch = project.dest_branch();
             collector.push(merge_node(node_repository(git_url.as_str())));
-            collector.push(merge_node(node_reference(&dest_branch, &git_url)));
-            collector.push(merge_link(
-                node_repository(&git_url),
-                node_reference(&dest_branch, &git_url),
-                "has".to_string(),
-            ));
+            if project.is_dest_branch_a_tag() {
+                collector.push(merge_node(node_tag(&dest_branch, &git_url)));
+                collector.push(merge_link(
+                    node_repository(&git_url),
+                    node_tag(&dest_branch, &git_url),
+                    "has".to_string(),
+                ));
+            } else {
+                collector.push(merge_node(node_reference(&dest_branch, &git_url)));
+                collector.push(merge_link(
+                    node_repository(&git_url),
+                    node_reference(&dest_branch, &git_url),
+                    "has".to_string(),
+                ));
+            }
         }
     }
 }
@@ -483,7 +492,6 @@ async fn main() {
         collector.append(&mut iterate_through_branches(&git_repository, &queue, &graph).await);
         tmp_dir.close().unwrap();
         graph.txn_run_queries(collector).await.unwrap();
-
     }
 }
 

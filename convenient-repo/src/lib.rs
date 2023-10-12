@@ -186,10 +186,22 @@ impl ConvenientProject {
     }
 
     pub fn dest_branch(&self) -> String {
-        match self.dest_branch {
+        let dest_branch = match self.dest_branch {
             Some(ref dest_branch) => dest_branch.clone(),
             None => self.revision.clone(),
+        };
+        if dest_branch.starts_with("refs/heads/") {
+            return dest_branch.replace("refs/heads/", "");
         }
+        dest_branch
+    }
+
+    pub fn is_dest_branch_a_tag(&self) -> bool {
+        let dest_branch = match self.dest_branch {
+            Some(ref dest_branch) => dest_branch.clone(),
+            None => self.revision.clone(),
+        };
+        dest_branch.starts_with("refs/tags/")
     }
 }
 
