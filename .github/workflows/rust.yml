@@ -29,9 +29,7 @@ jobs:
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: |
-          git remote update
           cargo check
-          cargo test
           cargo build --release
           
   cargo-deny:
@@ -56,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: xd009642/tarpaulin:develop-nightly
-      options: --security-opt seccomp=unconfined    
+      options: --security-opt seccomp=unconfined --user=root --network=host
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -64,9 +62,10 @@ jobs:
           set-safe-directory: true
       - name: Run tarpaulin
         run: |
+          apt-get update && apt-get install -y docker.io
           git config --global --add safe.directory /__w/graph-git-rs/graph-git-rs
           git remote update
-          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
+          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 600 --out xml
  
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v3

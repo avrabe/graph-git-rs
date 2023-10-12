@@ -185,15 +185,54 @@ impl ConvenientProject {
         }
     }
 
+    fn could_be_sha256(s: &str) -> bool {
+        if s.len() != 64 {
+            return false;
+        }
+
+        for c in s.chars() {
+            if !c.is_ascii_hexdigit() {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn could_be_sha1(s: &str) -> bool {
+        if s.len() != 40 {
+            return false;
+        }
+
+        for c in s.chars() {
+            if !c.is_ascii_hexdigit() {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub fn dest_branch(&self) -> String {
         let dest_branch = match self.dest_branch {
             Some(ref dest_branch) => dest_branch.clone(),
             None => self.revision.clone(),
         };
+        if dest_branch.starts_with("refs/tags/") {
+            return dest_branch.replace("refs/tags/", "");
+        }
         if dest_branch.starts_with("refs/heads/") {
             return dest_branch.replace("refs/heads/", "");
         }
         dest_branch
+    }
+
+    pub fn is_dest_branch_a_commit(&self) -> bool {
+        let dest_branch = match self.dest_branch {
+            Some(ref dest_branch) => dest_branch.clone(),
+            None => self.revision.clone(),
+        };
+        Self::could_be_sha1(&dest_branch) || Self::could_be_sha256(&dest_branch)
     }
 
     pub fn is_dest_branch_a_tag(&self) -> bool {
@@ -529,5 +568,40 @@ mod tests {
 
         //let reserialized_item = to_string(&item).unwrap();
         //assert_eq!(src, reserialized_item);
+    }
+    #[test]
+    fn valid_sha256() {
+        let valid = "af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf";
+        assert!(ConvenientProject::could_be_sha256(valid));
+    }
+
+    #[test]
+    fn invalid_short_sha256() {
+        let invalid = "af2bdbe1";
+        assert!(!ConvenientProject::could_be_sha256(invalid));
+    }
+
+    #[test]
+    fn invalid_chars_sha256() {
+        let invalid = "zg2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf";
+        assert!(!ConvenientProject::could_be_sha256(invalid));
+    }
+
+    #[test]
+    fn valid_sha1() {
+        let valid = "cbe01a154b16c19ceedee213e65df225f8f72b0f";
+        assert!(ConvenientProject::could_be_sha1(valid));
+    }
+
+    #[test]
+    fn invalid_short_sha1() {
+        let invalid = "af2bdbe";
+        assert!(!ConvenientProject::could_be_sha1(invalid));
+    }
+
+    #[test]
+    fn invalid_chars_sha1() {
+        let invalid = "zyt01a154b16c19ceedee213e65df225f8f72b0f";
+        assert!(!ConvenientProject::could_be_sha1(invalid));
     }
 }
