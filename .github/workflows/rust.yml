@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: xd009642/tarpaulin:develop-nightly
-      options: --security-opt seccomp=unconfined --user=root --network=host
+      options: --security-opt seccomp=unconfined --user=root
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
