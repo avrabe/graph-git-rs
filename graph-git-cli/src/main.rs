@@ -45,6 +45,10 @@ impl Queue {
         let mut queue = self.queue.lock().unwrap();
         queue.pop_front()
     }
+
+    fn is_empty(&self) -> bool {
+        self.queue.lock().unwrap().is_empty()
+    }
 }
 
 /// Options for the application.
@@ -82,9 +86,16 @@ struct Opts {
     #[clap(
         short = 'g',
         long,
-        default_value = "https://github.com/avrabe/meta-fmu.git"
+        default_value = "https://github.com/avrabe/repo-fmu.git"
     )]
     git_url: String,
+
+    #[clap(
+        short = 'm',
+        long,
+        default_value = "-1"
+    )]
+    max_depth: i32,
 
     /// Print debug information
     #[clap(short)]
@@ -451,43 +462,64 @@ fn find_repo_manifest_on_branch(
                     node_repo_manifest(path, branch.oid.as_str()),
                     node_reference(&dest_branch, &git_url),
                     "refers".to_string(),
-                ));                
+                ));
             } else {
                 collector.push(merge_node(node_commit(&dest_branch)));
                 collector.push(merge_link(
                     node_repo_manifest(path, branch.oid.as_str()),
                     node_commit(&dest_branch),
                     "refers".to_string(),
-                ));   
+                ));
             }
         }
     }
 }
 
-async fn application(uri: String, user: String, password: String, db: String, git_url: String) {
+
+async fn application(
+    uri: String,
+    user: String,
+    password: String,
+    db: String,
+    git_url: String,
+    max_depth: i32,
+) {
     let queue = Arc::new(Queue::new());
 
     queue.add(git_url.clone());
     let graph: GraphDatabase = GraphDatabase::new(uri, user, password, db).await;
 
+    let mut current_depth: i32 = 0;
+    let mut iteration_queue = Arc::new(Queue::new());
+
     while let Some(git_url) = queue.take() {
-        let mut collector = Vec::<Query>::new();
-        info!("Preparing: {}", git_url);
-        let tmp_dir = tempdir().unwrap();
-        let file_path = tmp_dir.path().join("repo");
+        if max_depth < 0 || current_depth <= max_depth {
+            warn!("Depth: {}", current_depth);
+            let mut collector = Vec::<Query>::new();
+            warn!("Preparing: {}", git_url);
+            let tmp_dir = tempdir().unwrap();
+            let file_path = tmp_dir.path().join("repo");
 
-        let repo_path = file_path.as_path();
-        warn!("Repo path: {}", repo_path.display());
+            let repo_path = file_path.as_path();
+            warn!("Repo path: {}", repo_path.display());
 
-        // Try opening the repository
-        let git_repository = GitRepository::new(repo_path, &git_url);
-        //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
-        git_repository.update_from_remote();
-        git_repository.map_remote_branches_local();
+            // Try opening the repository
+            let git_repository = GitRepository::new(repo_path, &git_url);
+            //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
+            git_repository.update_from_remote();
+            git_repository.map_remote_branches_local();
 
-        collector.append(&mut iterate_through_branches(&git_repository, &queue, &graph).await);
-        tmp_dir.close().unwrap();
-        graph.txn_run_queries(collector).await.unwrap();
+            collector.append(&mut iterate_through_branches(&git_repository, &iteration_queue, &graph).await);
+            tmp_dir.close().unwrap();
+            graph.txn_run_queries(collector).await.unwrap();
+        }
+        if queue.is_empty() && max_depth > 0 {
+            while let Some(git_url) = iteration_queue.take() {
+                queue.add(git_url.clone());
+            }
+            iteration_queue = Arc::new(Queue::new());
+            current_depth += 1;
+        }
     }
 }
 
@@ -512,7 +544,7 @@ async fn main() {
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-    application(opts.uri, opts.user, opts.password, opts.db, opts.git_url).await;
+    application(opts.uri, opts.user, opts.password, opts.db, opts.git_url, opts.max_depth).await;
 }
 
 #[cfg(test)]
