@@ -5,8 +5,8 @@ use convenient_kas::KasManifest;
 use convenient_repo::find_repo_manifest;
 use graph_git::{
     delete_node_and_references_to_node, delete_references_to_node, merge_link, merge_node,
-    node_commit, node_kas_manifest, node_message, node_person, node_reference, node_repo_manifest,
-    node_repository, node_tag, GraphDatabase,
+    node_bitbake_manifest, node_commit, node_kas_manifest, node_message, node_person,
+    node_reference, node_repo_manifest, node_repository, node_tag, GraphDatabase,
 };
 use neo4rs::Query;
 use std::sync::Arc;
@@ -90,11 +90,7 @@ struct Opts {
     )]
     git_url: String,
 
-    #[clap(
-        short = 'm',
-        long,
-        default_value = "-1"
-    )]
+    #[clap(short = 'm', long, default_value = "-1")]
     max_depth: i32,
 
     /// Print debug information
@@ -178,7 +174,7 @@ async fn iterate_through_branches(
                     branch,
                     queue,
                 );
-                find_bitbake_manifests_on_branch(git_repository);
+                find_bitbake_manifests_on_branch(&mut collector, git_repository, branch);
                 find_repo_manifest_on_branch(&mut collector, git_repository, branch, queue);
             }
             Err(e) => {
@@ -413,9 +409,32 @@ fn find_kas_manifests_in_directory(
     }); // --> Subscriber::exit(my_span)
 }
 
-fn find_bitbake_manifests_on_branch(git_repository: &GitRepository) {
-    let _bitbake_manifests =
+fn find_bitbake_manifests_on_branch(
+    collector: &mut Vec<Query>,
+    git_repository: &GitRepository,
+    branch: &convenient_git::GitRemoteHead,
+) {
+    let bitbake_manifests =
         Bitbake::find_bitbake_manifest(git_repository.repo.as_ref().unwrap().workdir().unwrap());
+    for manifest in bitbake_manifests {
+        let path = manifest.path.as_str();
+        let src_uris = manifest.src_uris;
+        collector.push(merge_node(node_bitbake_manifest(path, branch.oid.as_str())));
+        collector.push(merge_link(
+            node_commit(branch.oid.as_str()),
+            node_bitbake_manifest(path, branch.oid.as_str()),
+            "contains".to_string(),
+        ));
+        for git_url in src_uris {
+            collector.push(merge_node(node_repository(git_url.as_str())));
+
+            collector.push(merge_link(
+                node_bitbake_manifest(path, branch.oid.as_str()),
+                node_repository(git_url.as_str()),
+                "refers".to_string(),
+            ));
+        }
+    }
 }
 
 fn find_repo_manifest_on_branch(
@@ -475,7 +494,6 @@ fn find_repo_manifest_on_branch(
     }
 }
 
-
 async fn application(
     uri: String,
     user: String,
@@ -509,7 +527,9 @@ async fn application(
             git_repository.update_from_remote();
             git_repository.map_remote_branches_local();
 
-            collector.append(&mut iterate_through_branches(&git_repository, &iteration_queue, &graph).await);
+            collector.append(
+                &mut iterate_through_branches(&git_repository, &iteration_queue, &graph).await,
+            );
             tmp_dir.close().unwrap();
             graph.txn_run_queries(collector).await.unwrap();
         }
@@ -544,7 +564,15 @@ async fn main() {
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-    application(opts.uri, opts.user, opts.password, opts.db, opts.git_url, opts.max_depth).await;
+    application(
+        opts.uri,
+        opts.user,
+        opts.password,
+        opts.db,
+        opts.git_url,
+        opts.max_depth,
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -644,7 +672,7 @@ mod tests {
             "uri: {}, auth_user: {}, auth_pass: {}, db: {}, git_url: {} ",
             uri, auth_user, auth_pass, db, git_url
         );
-        // TODO: when using github actions and running a container, I need a possibility 
+        // TODO: when using github actions and running a container, I need a possibility
         //       to be able to connect to localhost of the actions host
         //let graph: GraphDatabase = GraphDatabase::new(uri, auth_user, auth_pass, db).await;
         //let foo = graph.query_branches_for_repository("git_uri").await;

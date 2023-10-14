@@ -1,66 +1,81 @@
-use std::path::Path;
+use std::{env, path::Path};
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{info, span, warn, Level};
 use tree_sitter::{Parser, Query, QueryCursor, Tree, TreeCursor};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub struct Bitbake {}
+pub struct Bitbake {
+    pub path: String,
+    pub src_uris: Vec<String>,
+}
 
 impl Default for Bitbake {
     fn default() -> Self {
-        Self::new()
+        Self::new(env::current_dir().unwrap().to_str().unwrap().to_string())
     }
 }
 
 impl Bitbake {
-    pub fn new() -> Self {
-        Bitbake {}
+    pub fn new(path: String) -> Self {
+        Bitbake {
+            path,
+            src_uris: Vec::<String>::new(),
+        }
     }
 
-    fn is_hidden(entry: &DirEntry) -> bool {
-        entry
-            .file_name()
-            .to_str()
-            .map(|s| s.starts_with('.'))
-            .unwrap_or(false)
-    }
-
-    fn _ends_with_bb_something(entry: &DirEntry) -> bool {
-        entry
+    fn ends_with_bb_something(entry: &DirEntry) -> bool {
+        let ret = entry
             .file_name()
             .to_str()
             .map(|s| s.ends_with(".bb") || s.ends_with(".bbappend"))
-            .unwrap_or(true)
-    }
-
-    fn is_file(entry: &DirEntry) -> bool {
-        entry.file_type().is_file()
+            .unwrap_or(true);
+        let ret_dir = entry.path().is_dir();
+        info!("{} ends with bb something: {}", entry.path().display(), ret);
+        //info!("{} is dir: {}", entry.path().display(), ret_dir);
+        ret || ret_dir
     }
 
     pub fn find_bitbake_manifest(path: &Path) -> Vec<Bitbake> {
         info!("Searching for BitBake manifests in {}", path.display());
-        let bitbake_manifests = Vec::<Bitbake>::new();
+        let mut bitbake_manifests = Vec::<Bitbake>::new();
 
         let walker = WalkDir::new(path).follow_links(true).into_iter();
         // !Bitbake::is_hidden(e) && Bitbake::is_file(e) && Bitbake::ends_with_bb_something(e)
-        for entry in walker.filter_entry(|e| !Bitbake::is_hidden(e) && Bitbake::is_file(e)) {
-            info!("Found entry: {:?}", entry);
+        let walker = walker.filter_entry(|e: &DirEntry| Self::ends_with_bb_something(e));
+        for entry in walker {
             match entry {
                 Ok(entry) => {
-                    let path = entry.path();
-                    info!("Found BitBake manifest: {}", path.display());
-                    match std::fs::read_to_string(path) {
+                    if entry.path().is_dir() {
+                        continue;
+                    }
+                    let bitbake_path = entry.path();
+                    info!("Found BitBake manifest: {}", bitbake_path.display());
+                    match std::fs::read_to_string(bitbake_path) {
                         Ok(c) => {
-                            Self::parse_bitbake(
+                            let src_uri = Self::parse_bitbake(
                                 c.as_str(),
                                 path.file_name().unwrap().to_str().unwrap(),
                             );
+                            let relative_path =
+                                bitbake_path.strip_prefix(path.parent().unwrap()).unwrap();
+                            let mut bitbake =
+                                Bitbake::new(relative_path.to_str().unwrap().to_string());
+                            match src_uri {
+                                Some(s) => {
+                                    bitbake.src_uris.push(s);
+                                }
+                                None => {
+                                    warn!("No SRC_URI found in {}", path.display());
+                                }
+                            }
+                            bitbake_manifests.push(bitbake);
+                            warn!("Found BitBake manifest: {}", path.display());
                         }
                         Err(e) => {
                             warn!("Failed to read file {}: {}", path.display(), e);
-                            continue;
+                            //continue;
                         }
                     };
                 }
@@ -94,7 +109,8 @@ impl Bitbake {
         _left + _right
     }
 
-    pub fn parse_bitbake(code: &str, filename: &str) {
+    // TODO: Only return the first find.
+    pub fn parse_bitbake(code: &str, filename: &str) -> Option<String> {
         let mut parser = Parser::new();
         parser
             .set_language(tree_sitter_bitbake::language())
@@ -103,7 +119,6 @@ impl Bitbake {
         let mut cursor = Tree::walk(&tree);
 
         Self::walk(&mut cursor, code.as_bytes(), filename);
-        info!("{} {:?}", filename, tree);
 
         // Create a query to match all function declarations
         let query_source = "(variable_assignment (identifier) @name (literal) @value)";
@@ -111,7 +126,7 @@ impl Bitbake {
             .expect("Error creating query");
         let mut query_cursor = QueryCursor::new();
         let query_matches = query_cursor.matches(&query, tree.root_node(), code.as_bytes());
-
+        let mut ret = None;
         // Print the function names
         for m in query_matches {
             let mut name = "";
@@ -131,11 +146,17 @@ impl Bitbake {
                     "{}:  Found variable: {} with literal: {}",
                     filename, name, literal
                 );
+                ret = literal.to_string().parse::<String>().ok();
             }
         }
+        warn!("Found SRC_URI: {:?}", ret);
+        ret
     }
 
     fn walk(cursor: &mut TreeCursor, text: &[u8], filename: &str) {
+        let span = span!(Level::WARN, "walk", value = filename);
+        let _ = span.enter();
+        //info!("{} {:?}", filename, cursor.node().kind());
         let kind = cursor.node().kind();
         let utf8_text = cursor.node().utf8_text(text).unwrap();
         match (kind, utf8_text) {
@@ -185,9 +206,11 @@ mod tests {
 
     #[traced_test]
     #[test]
-    fn kas_manifest_find() {
+    fn bitbake_manifest_find() {
         let d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let manifests = Bitbake::find_bitbake_manifest(d.as_path());
-        assert_eq!(manifests.len(), 0);
+        assert!(logs_contain("Searching for BitBake manifests in"));
+        assert!(logs_contain("Found BitBake manifest"));
+        assert_eq!(manifests.len(), 1);
     }
 }
