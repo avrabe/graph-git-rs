@@ -14,7 +14,8 @@ pub fn node_reference(name: &str, uri: &str) -> GitCypher {
         var: "reference".to_owned(),
         cypher: format!(
             "(reference:Reference {{name: \'{}\', uri: '{}'}})",
-            name, uri
+            name.replace('\\', "\\\\").replace('\'', "\\\'"),
+            uri.replace('\\', "\\\\").replace('\'', "\\\'")
         ),
     }
 }
@@ -46,7 +47,10 @@ pub fn node_commit(oid: &str) -> GitCypher {
 pub fn node_repository(uri: &str) -> GitCypher {
     GitCypher {
         var: "repository".to_owned(),
-        cypher: format!("(repository:Repository {{uri: '{}'}})", uri),
+        cypher: format!(
+            "(repository:Repository {{uri: '{}'}})",
+            uri.replace('\\', "\\\\").replace('\'', "\\\'")
+        ),
     }
 }
 
@@ -69,6 +73,16 @@ pub fn node_repo_manifest(path: &str, oid: &str) -> GitCypher {
         ),
     }
 }
+
+pub fn node_bitbake_manifest(path: &str, oid: &str) -> GitCypher {
+    GitCypher {
+        var: "bitbake".to_owned(),
+        cypher: format!(
+            "(bitbake:Manifest {{path: '{}', oid: \'{}\', type: 'bitbake'}})",
+            path, oid
+        ),
+    }
+}
 /// Creates a Cypher node representation for a Git person.
 ///
 /// # Arguments
@@ -81,7 +95,8 @@ pub fn node_person(name: &str, email: &str) -> GitCypher {
         var: "person".to_owned(),
         cypher: format!(
             "(person:Person {{name: \'{}\', email: \'{}\'}})",
-            name, email
+            name.replace('\\', "\\\\").replace('\'', "\\\'"),
+            email.replace('\\', "\\\\").replace('\'', "\\\'")
         ),
     }
 }
