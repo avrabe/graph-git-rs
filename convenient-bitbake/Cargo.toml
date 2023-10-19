@@ -8,7 +8,7 @@ license = "MIT"
 
 [dependencies]
 serde = { version = "1.0.189", features = ["derive"] }
-tracing = "0.1.39"
+tracing = "0.1.40"
 tree-sitter = "0.20.10"
 #tree-sitter-bitbake = "1.0.1"
 tree-sitter-bitbake = {git = "https://github.com/avrabe/tree-sitter-bitbake", branch = "include"}
