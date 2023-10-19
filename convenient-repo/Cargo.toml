@@ -8,8 +8,8 @@ license = "MIT"
 
 [dependencies]
 quick-xml = { version = "0.30.0", features = ["serde", "serialize"] }
-serde = { version = "1.0.189", features = ["derive"] }
-tracing = "0.1.39"
+serde = { workspace = true }
+tracing = { workspace = true }
 url = "2.4.1"
 xmlem = "0.2.3"
 
