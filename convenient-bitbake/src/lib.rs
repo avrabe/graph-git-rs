@@ -58,8 +58,7 @@ impl Bitbake {
                                 c.as_str(),
                                 path.file_name().unwrap().to_str().unwrap(),
                             );
-                            let relative_path =
-                                bitbake_path.strip_prefix(path.parent().unwrap()).unwrap();
+                            let relative_path = bitbake_path.strip_prefix(path).unwrap();
                             let mut bitbake =
                                 Bitbake::new(relative_path.to_str().unwrap().to_string());
                             match src_uri {
