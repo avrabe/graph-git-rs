@@ -986,7 +986,7 @@ dependencies = [
 [[package]]
 name = "neo4rs"
 version = "0.7.0-rc.1"
-source = "git+https://github.com/neo4j-labs/neo4rs.git#904b854e984d42d6e905d9be981aa80f41328938"
+source = "git+https://github.com/neo4j-labs/neo4rs.git#7f4f86f6779c7a6b1e711fce2c098c6d7f126ff3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1009,11 +1009,11 @@ dependencies = [
 
 [[package]]
 name = "neo4rs-macros"
-version = "0.2.1"
-source = "git+https://github.com/neo4j-labs/neo4rs.git#904b854e984d42d6e905d9be981aa80f41328938"
+version = "0.3.0"
+source = "git+https://github.com/neo4j-labs/neo4rs.git#7f4f86f6779c7a6b1e711fce2c098c6d7f126ff3"
 dependencies = [
  "quote",
- "syn 1.0.109",
+ "syn 2.0.37",
 ]
 
 [[package]]
