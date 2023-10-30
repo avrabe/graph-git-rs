@@ -1,6 +1,6 @@
 use clap::{crate_version, Parser};
 use convenient_bitbake::Bitbake;
-use convenient_git::GitRepository;
+use convenient_git::{GitRepository, RefsKind};
 use convenient_kas::KasManifest;
 use convenient_repo::find_repo_manifest;
 use graph_git::{
@@ -149,7 +149,11 @@ async fn iterate_through_branches(
 
     add_git_repository(&mut collector, git_repository);
 
-    for branch in git_repository.get_remote_heads().unwrap().iter() {
+    for branch in git_repository
+        .get_remote_heads(RefsKind::Branch)
+        .unwrap()
+        .iter()
+    {
         let branch_name = branch.name.as_str();
         // Remove the branch from the list of branches in the database still to process
         git_branches_in_db.remove(branch_name);
@@ -163,7 +167,7 @@ async fn iterate_through_branches(
         )
         .await;
 
-        add_branches_to_query_on_branch(&mut collector, branch, git_repository);
+        add_branches_to_query_on_branch(&mut collector, branch, RefsKind::Branch, git_repository);
         add_head_commit_to_query_on_branch(git_repository, branch, &mut collector, &span);
         match git_repository.checkout(branch_name) {
             Ok(_) => {
@@ -188,6 +192,62 @@ async fn iterate_through_branches(
         git_branches_in_db_initial,
         git_url,
     );
+    collector
+}
+
+async fn iterate_through_tags(
+    git_repository: &GitRepository,
+    queue: &Queue,
+    _graph: &GraphDatabase,
+) -> Vec<Query> {
+    let span = span!(Level::INFO, "iterate_tags", value = git_repository.git_url);
+    let _enter = span.enter();
+    let mut collector = Vec::<Query>::new();
+    // Get the branches that are already in the database
+    //let git_url = &git_repository.git_url;
+    //let git_branches_in_db_initial = graph.query_branches_for_repository(git_url).await;
+    //let mut git_branches_in_db = git_branches_in_db_initial.clone();
+
+    //add_git_repository(&mut collector, git_repository);
+    info!("iterate_tags");
+    for refs in git_repository
+        .get_remote_heads(RefsKind::Tag)
+        .unwrap()
+        .iter()
+    {
+        let refs_name = refs.name.as_str();
+        info!("refs_name: {}", refs_name);
+        // Remove the branch from the list of branches in the database still to process
+        //git_branches_in_db.remove(branch_name);
+
+        //find_and_remove_reference_between_commit_and_reference(
+        //    graph,
+        //    branch_name,
+        //    git_url,
+        //    branch,
+        //    &mut collector,
+        //)
+        //.await;
+
+        add_branches_to_query_on_branch(&mut collector, refs, RefsKind::Tag, git_repository);
+        add_head_commit_to_query_on_branch(git_repository, refs, &mut collector, &span);
+        match git_repository.checkout(refs_name) {
+            Ok(_) => {
+                find_kas_manifests_in_directory(git_repository, &span, &mut collector, refs, queue);
+                find_bitbake_manifests_on_branch(&mut collector, git_repository, refs);
+                find_repo_manifest_on_branch(&mut collector, git_repository, refs, queue);
+            }
+            Err(e) => {
+                error!(parent: &span, "Error: {}", e);
+            }
+        }
+    }
+    //remove_branches_from_database(
+    //    &mut collector,
+    //    git_branches_in_db,
+    //    git_branches_in_db_initial,
+    //    git_url,
+    //);
     collector
 }
 
@@ -270,22 +330,26 @@ fn add_git_repository(collector: &mut Vec<Query>, git_repository: &GitRepository
 
 fn add_branches_to_query_on_branch(
     collector: &mut Vec<Query>,
-    branch: &convenient_git::GitRemoteHead,
+    refs: &convenient_git::GitRemoteHead,
+    refs_kind: RefsKind,
     git_repository: &GitRepository,
 ) {
-    collector.push(merge_node(node_commit(branch.oid.as_str())));
-    collector.push(merge_node(node_reference(
-        branch.name.as_str(),
-        &git_repository.git_url,
-    )));
+    collector.push(merge_node(node_commit(refs.oid.as_str())));
+
+    let node_refs = match refs_kind {
+        RefsKind::Branch => node_reference(refs.name.as_str(), &git_repository.git_url),
+        RefsKind::Tag => node_tag(refs.name.as_str(), &git_repository.git_url),
+    };
+    collector.push(merge_node(node_refs.clone()));
+
     collector.push(merge_link(
         node_repository(&git_repository.git_url),
-        node_reference(branch.name.as_str(), &git_repository.git_url),
+        node_refs.clone(),
         "has".to_string(),
     ));
     collector.push(merge_link(
-        node_commit(branch.oid.as_str()),
-        node_reference(branch.name.as_str(), &git_repository.git_url),
+        node_commit(refs.oid.as_str()),
+        node_refs,
         "links_to".to_string(),
     ));
 }
@@ -530,6 +594,8 @@ async fn application(
             collector.append(
                 &mut iterate_through_branches(&git_repository, &iteration_queue, &graph).await,
             );
+            collector
+                .append(&mut iterate_through_tags(&git_repository, &iteration_queue, &graph).await);
             tmp_dir.close().unwrap();
             graph.txn_run_queries(collector).await.unwrap();
         }

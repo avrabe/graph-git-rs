@@ -101,6 +101,7 @@ pub fn node_person(name: &str, email: &str) -> GitCypher {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct GitCypher {
     pub var: String,
     pub cypher: String,

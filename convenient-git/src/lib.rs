@@ -44,6 +44,11 @@ struct State {
     path: Option<PathBuf>,
 }
 
+pub enum RefsKind {
+    Tag,
+    Branch,
+}
+
 /// Creates a new Git repository instance by first trying to open the
 /// repository at the provided path. If that fails with a NotFound error,
 /// it will clone the repository from the provided URL into the given path.
@@ -104,6 +109,7 @@ impl GitRepository {
         let mut fo = FetchOptions::new();
         fo.remote_callbacks(cb);
         fo.proxy_options(Self::proxy_opts_auto());
+        fo.download_tags(git2::AutotagOption::All);
 
         // Try opening the repository
         let mut binding = git2::build::RepoBuilder::new();
@@ -202,6 +208,7 @@ impl GitRepository {
         if let Some(repo) = &self.repo {
             let mut fo = FetchOptions::new();
             fo.proxy_options(Self::proxy_opts_auto());
+            fo.download_tags(git2::AutotagOption::All);
             match repo.find_remote("origin") {
                 Ok(mut remote) => {
                     Self::remote_connect(&mut remote);
@@ -276,28 +283,44 @@ impl GitRepository {
         }
     }
 
-    pub fn get_remote_heads(&self) -> Option<Vec<GitRemoteHead>> {
+    pub fn get_remote_heads(&self, refs_kind: RefsKind) -> Option<Vec<GitRemoteHead>> {
         let span = span!(Level::INFO, "get_remote_heads");
+        let repo = match &self.repo {
+            Some(repo) => repo,
+            None => return None,
+        };
+        let _ = repo.tag_foreach({
+            |oid, name| {
+                info!("Found tag{}: {:?}", oid, name);
+                true
+            }
+        });
+        let refs_string = match refs_kind {
+            RefsKind::Tag => "refs/tags/",
+            RefsKind::Branch => "refs/heads/",
+        };
         let _enter = span.enter();
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
             Self::remote_connect(&mut remote);
+
             let git_remote_heads = remote
                 .list()
                 .unwrap()
                 .iter()
-                .filter(|branch| branch.name().starts_with("refs/heads/"))
+                .filter(|branch| branch.name().starts_with(refs_string))
                 .map(|branch| GitRemoteHead {
                     oid: branch.oid().to_string(),
                     name: branch
                         .name()
                         .to_string()
-                        .split("refs/heads/")
+                        .split(refs_string)
                         .last()
                         .unwrap()
                         .to_string(),
                 })
                 .collect::<Vec<GitRemoteHead>>();
+            info!("Found {} remote heads", git_remote_heads.len());
             Some(git_remote_heads)
         } else {
             error!("No repository found");
