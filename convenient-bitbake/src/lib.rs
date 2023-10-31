@@ -37,6 +37,21 @@ impl Bitbake {
         ret || ret_dir
     }
 
+    pub fn find_first_git_uri(src_uris: &String) -> Option<String> {
+        for src_uri in src_uris.lines() {
+            if src_uri.starts_with("git://") {
+                let mut ret = src_uri.trim();
+                // if we get a bitbake git uri, we need to remove the trailing slash
+                if ret.ends_with("\\") {
+                    ret = &ret[..ret.len() - 1];
+                    ret = ret.trim();
+                }
+                return Some(ret.to_string());
+            }
+        }
+        None
+    }
+
     pub fn find_bitbake_manifest(path: &Path) -> Vec<Bitbake> {
         info!("Searching for BitBake manifests in {}", path.display());
         let mut bitbake_manifests = Vec::<Bitbake>::new();
@@ -63,13 +78,24 @@ impl Bitbake {
                                 Bitbake::new(relative_path.to_str().unwrap().to_string());
                             match src_uri {
                                 Some(s) => {
-                                    bitbake.src_uris.push(s);
+                                    let git_uri = Self::find_first_git_uri(&s);
+                                    match git_uri {
+                                        Some(g) => {
+                                            bitbake.src_uris.push(g);
+
+                                        }
+                                        None => {
+                                            info!("No git uri found in {}", path.display());
+                                        }   
+                                    }
                                 }
                                 None => {
                                     warn!("No SRC_URI found in {}", path.display());
                                 }
                             }
-                            bitbake_manifests.push(bitbake);
+                            if bitbake.src_uris.len() > 0 {
+                                bitbake_manifests.push(bitbake);
+                            }
                             warn!("Found BitBake manifest: {}", path.display());
                         }
                         Err(e) => {
