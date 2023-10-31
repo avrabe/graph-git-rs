@@ -4,8 +4,8 @@ use std::{
 };
 
 use git2::{
-    build::CheckoutBuilder, BranchType, Commit, FetchOptions, Oid, Progress, ProxyOptions, Remote,
-    RemoteCallbacks, Repository,
+    build::CheckoutBuilder, BranchType, Commit, Cred, FetchOptions, Oid, Progress, ProxyOptions,
+    Remote, RemoteCallbacks, Repository,
 };
 use tracing::{error, info, info_span, span, warn, Level};
 
@@ -35,6 +35,8 @@ impl GitCommit {
 pub struct GitRepository {
     pub repo: Option<Repository>,
     pub git_url: String,
+    pub git_user: String,
+    pub git_password: String,
 }
 
 struct State {
@@ -79,7 +81,12 @@ impl GitRepository {
             .unwrap();
     }
 
-    pub fn new(repo_path: &Path, git_url: &String) -> GitRepository {
+    pub fn new(
+        repo_path: &Path,
+        git_url: &String,
+        git_user: &String,
+        git_password: &String,
+    ) -> GitRepository {
         let span = span!(Level::INFO, "clone", uri=%git_url);
         let _enter = span.enter();
 
@@ -105,7 +112,9 @@ impl GitRepository {
             state.total = total;
             GitRepository::print(&mut state);
         });
-
+        cb.credentials(|_url, _username_from_url, _allowed_types| {
+            Cred::userpass_plaintext(git_user, git_password)
+        });
         let mut fo = FetchOptions::new();
         fo.remote_callbacks(cb);
         fo.proxy_options(Self::proxy_opts_auto());
@@ -139,6 +148,8 @@ impl GitRepository {
         GitRepository {
             repo: Some(repo),
             git_url: git_url.to_string(),
+            git_user: git_user.to_string(),
+            git_password: git_password.to_string(),
         }
     }
 
@@ -206,7 +217,13 @@ impl GitRepository {
         let span = span!(Level::INFO, "update");
         let _enter = span.enter();
         if let Some(repo) = &self.repo {
+            let mut cb = RemoteCallbacks::new();
+            cb.credentials(|_url, _username_from_url, _allowed_types| {
+                Cred::userpass_plaintext(&self.git_user, &self.git_password)
+            });
+
             let mut fo = FetchOptions::new();
+            fo.remote_callbacks(cb);
             fo.proxy_options(Self::proxy_opts_auto());
             fo.download_tags(git2::AutotagOption::All);
             match repo.find_remote("origin") {

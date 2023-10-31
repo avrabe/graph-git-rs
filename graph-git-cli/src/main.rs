@@ -90,6 +90,19 @@ struct Opts {
     )]
     git_url: String,
 
+    /// The username for authenticating with the git server.
+    #[clap(long, default_value = "git", env = "GIT_USER")]
+    git_user: String,
+
+    /// The password for authenticating with the git server.
+    #[clap(
+        long,
+        default_value = "abcdef",
+        env = "GIT_PASSWORD",
+        hide_env_values = true
+    )]
+    git_password: String,
+
     #[clap(short = 'm', long, default_value = "-1")]
     max_depth: i32,
 
@@ -564,6 +577,8 @@ async fn application(
     password: String,
     db: String,
     git_url: String,
+    git_user: String,
+    git_password: String,
     max_depth: i32,
 ) {
     let queue = Arc::new(Queue::new());
@@ -575,8 +590,8 @@ async fn application(
     let mut iteration_queue = Arc::new(Queue::new());
 
     while let Some(git_url) = queue.take() {
-        if max_depth < 0 || current_depth <= max_depth {
-            warn!("Depth: {}", current_depth);
+        if max_depth < 0 || (current_depth <= max_depth && max_depth >= 0) {
+            warn!("Depth: {}/{}", current_depth, max_depth);
             let mut collector = Vec::<Query>::new();
             warn!("Preparing: {}", git_url);
             let tmp_dir = tempdir().unwrap();
@@ -586,7 +601,7 @@ async fn application(
             warn!("Repo path: {}", repo_path.display());
 
             // Try opening the repository
-            let git_repository = GitRepository::new(repo_path, &git_url);
+            let git_repository = GitRepository::new(repo_path, &git_url, &git_user, &git_password);
             //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
             git_repository.update_from_remote();
             git_repository.map_remote_branches_local();
@@ -599,7 +614,7 @@ async fn application(
             tmp_dir.close().unwrap();
             graph.txn_run_queries(collector).await.unwrap();
         }
-        if queue.is_empty() && max_depth > 0 {
+        if queue.is_empty() {
             while let Some(git_url) = iteration_queue.take() {
                 queue.add(git_url.clone());
             }
@@ -636,6 +651,8 @@ async fn main() {
         opts.password,
         opts.db,
         opts.git_url,
+        opts.git_user,
+        opts.git_password,
         opts.max_depth,
     )
     .await;
@@ -673,6 +690,8 @@ mod tests {
         let test_repo = GitRepository {
             repo: None,
             git_url: "foo:bar:foo".to_string(),
+            git_user: "user".to_string(),
+            git_password: "password".to_string(),
         };
         add_git_repository(&mut queries, &test_repo);
         assert_eq!(queries.len(), 1);
@@ -690,6 +709,8 @@ mod tests {
         let test_repo = GitRepository {
             repo: Some(git2::Repository::open(d).unwrap()),
             git_url: "foo:bar:foo".to_string(),
+            git_user: "user".to_string(),
+            git_password: "password".to_string(),
         };
         let branch = GitRemoteHead {
             name: "main".to_string(),
@@ -712,6 +733,8 @@ mod tests {
         let test_repo = GitRepository {
             repo: Some(git2::Repository::open(d).unwrap()),
             git_url: "foo:bar:foo".to_string(),
+            git_user: "user".to_string(),
+            git_password: "password".to_string(),
         };
         let branch = GitRemoteHead {
             name: "main".to_string(),
