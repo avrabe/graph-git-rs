@@ -168,8 +168,8 @@ pub struct ConvenientProject {
 
 impl ConvenientProject {
     pub fn git_url(&self, manifest_git_url: String) -> String {
+        let mut url = Url::parse(&manifest_git_url).unwrap();
         if self.relative_path.unwrap_or(false) {
-            let mut url = Url::parse(&manifest_git_url).unwrap();
             if self.git_uri.ends_with('/') {
                 url = url.join(self.git_uri.as_str()).unwrap();
             } else {
@@ -181,7 +181,11 @@ impl ConvenientProject {
 
             url.to_string()
         } else {
-            self.git_uri.clone()
+            url = url
+                .join(format!("{}/{}", self.git_uri, self.name).as_str())
+                .unwrap();
+            info!("New url for {}: {} # {}", self.name, url, self.git_uri);
+            url.to_string()
         }
     }
 
