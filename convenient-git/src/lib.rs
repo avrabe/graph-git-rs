@@ -75,9 +75,13 @@ impl GitRepository {
         proxy_opts
     }
 
-    fn remote_connect(remote: &mut Remote<'_>) {
+    fn remote_connect(&self, remote: &mut Remote<'_>) {
+        let mut cb = RemoteCallbacks::new();
+        cb.credentials(|_url, _username_from_url, _allowed_types| {
+            Cred::userpass_plaintext(&self.git_user, &self.git_password)
+        });
         remote
-            .connect_auth(git2::Direction::Fetch, None, Some(Self::proxy_opts_auto()))
+            .connect_auth(git2::Direction::Fetch, Some(cb), Some(Self::proxy_opts_auto()))
             .unwrap();
     }
 
@@ -228,7 +232,7 @@ impl GitRepository {
             fo.download_tags(git2::AutotagOption::All);
             match repo.find_remote("origin") {
                 Ok(mut remote) => {
-                    Self::remote_connect(&mut remote);
+                    self.remote_connect(&mut remote);
                     remote.download(&[] as &[&str], Some(&mut fo)).unwrap();
                     let _ = remote.disconnect();
                 }
@@ -278,7 +282,7 @@ impl GitRepository {
 
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
-            Self::remote_connect(&mut remote);
+            self.remote_connect(&mut remote);
 
             for branch in remote.list().unwrap() {
                 if branch.name().starts_with("refs/heads") {
@@ -319,7 +323,7 @@ impl GitRepository {
         let _enter = span.enter();
         if let Some(repo) = &self.repo {
             let mut remote = repo.find_remote("origin").unwrap();
-            Self::remote_connect(&mut remote);
+            self.remote_connect(&mut remote);
 
             let git_remote_heads = remote
                 .list()
