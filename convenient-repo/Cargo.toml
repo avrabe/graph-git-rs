@@ -10,7 +10,7 @@ license = "MIT"
 quick-xml = { version = "0.31.0", features = ["serde", "serialize"] }
 serde = { workspace = true }
 tracing = { workspace = true }
-url = "2.4.1"
+url = "2.5.0"
 xmlem = "0.2.3"
 
 [dev-dependencies]

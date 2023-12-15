@@ -37,12 +37,14 @@ impl Bitbake {
         ret || ret_dir
     }
 
-    pub fn find_first_git_uri(src_uris: &String) -> Option<String> {
+    pub fn find_first_git_uri(src_uris: &str) -> Option<String> {
         for src_uri in src_uris.lines() {
-            if src_uri.starts_with("git://") {
+            warn!("Checking if {} is a git uri", src_uri);
+            if src_uri.starts_with("\"git://") {
+                warn!("Found git uri: {}", src_uri);
                 let mut ret = src_uri.trim();
                 // if we get a bitbake git uri, we need to remove the trailing slash
-                if ret.ends_with("\\") {
+                if ret.ends_with('\\') {
                     ret = &ret[..ret.len() - 1];
                     ret = ret.trim();
                 }
@@ -81,19 +83,20 @@ impl Bitbake {
                                     let git_uri = Self::find_first_git_uri(&s);
                                     match git_uri {
                                         Some(g) => {
-                                            bitbake.src_uris.push(g);
+                                            info!("uri found in {}", g);
 
+                                            bitbake.src_uris.push(g);
                                         }
                                         None => {
                                             info!("No git uri found in {}", path.display());
-                                        }   
+                                        }
                                     }
                                 }
                                 None => {
                                     warn!("No SRC_URI found in {}", path.display());
                                 }
                             }
-                            if bitbake.src_uris.len() > 0 {
+                            if !bitbake.src_uris.is_empty() {
                                 bitbake_manifests.push(bitbake);
                             }
                             warn!("Found BitBake manifest: {}", path.display());

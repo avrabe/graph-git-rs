@@ -225,7 +225,7 @@ impl GraphDatabase {
         match &self.graph {
             Some(graph) => {
                 let len = queries.len();
-                let txn = graph.start_txn().await?;
+                let mut txn = graph.start_txn().await?;
                 info!("run {} queries", len);
                 txn.run_queries(queries).await.unwrap();
                 info!("commit {} queries", len);

@@ -664,6 +664,7 @@ mod tests {
     use neo4j_testcontainers::Neo4j;
     use std::path::PathBuf;
     use testcontainers::clients::Cli;
+    //use testcontainers::clients::Cli;
     use tracing_test::traced_test;
     use url::Url;
 

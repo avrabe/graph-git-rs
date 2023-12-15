@@ -81,7 +81,11 @@ impl GitRepository {
             Cred::userpass_plaintext(&self.git_user, &self.git_password)
         });
         remote
-            .connect_auth(git2::Direction::Fetch, Some(cb), Some(Self::proxy_opts_auto()))
+            .connect_auth(
+                git2::Direction::Fetch,
+                Some(cb),
+                Some(Self::proxy_opts_auto()),
+            )
             .unwrap();
     }
 
