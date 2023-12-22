@@ -8,5 +8,5 @@ license = "MIT"
 
 [dependencies]
 serde = { workspace = true }
-serde_yaml = "0.9.27"
+serde_yaml = "0.9.29"
 tracing = { workspace = true }
