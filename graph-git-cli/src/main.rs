@@ -590,7 +590,7 @@ async fn application(
     let mut iteration_queue = Arc::new(Queue::new());
 
     while let Some(git_url) = queue.take() {
-        if max_depth < 0 || (current_depth <= max_depth && max_depth >= 0) {
+        if max_depth < 0 || current_depth <= max_depth {
             warn!("Depth: {}/{}", current_depth, max_depth);
             let mut collector = Vec::<Query>::new();
             warn!("Preparing: {}", git_url);

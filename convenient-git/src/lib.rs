@@ -81,7 +81,11 @@ impl GitRepository {
             Cred::userpass_plaintext(&self.git_user, &self.git_password)
         });
         remote
-            .connect_auth(git2::Direction::Fetch, Some(cb), Some(Self::proxy_opts_auto()))
+            .connect_auth(
+                git2::Direction::Fetch,
+                Some(cb),
+                Some(Self::proxy_opts_auto()),
+            )
             .unwrap();
     }
 
@@ -332,13 +336,7 @@ impl GitRepository {
                 .filter(|branch| branch.name().starts_with(refs_string))
                 .map(|branch| GitRemoteHead {
                     oid: branch.oid().to_string(),
-                    name: branch
-                        .name()
-                        .to_string()
-                        .split(refs_string)
-                        .last()
-                        .unwrap()
-                        .to_string(),
+                    name: branch.name().split(refs_string).last().unwrap().to_string(),
                 })
                 .collect::<Vec<GitRemoteHead>>();
             info!("Found {} remote heads", git_remote_heads.len());
