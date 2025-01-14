@@ -81,6 +81,7 @@ allow = [
     "ISC",
     "MPL-2.0",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
     "OpenSSL",
     "Zlib",
     #"Apache-2.0 WITH LLVM-exception",
