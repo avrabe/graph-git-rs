@@ -1,0 +1,16 @@
+pull_request_rules:
+  - name: Automatic merge
+    description: Automatic merge for Dependabot pull requests
+    conditions:
+      - author=dependabot[bot]
+      - check-success = Test `cargo check/test/build` on ubuntu-latest
+        (pull_request)
+      - check-success = Test `cargo check/test/build` on macos-latest
+        (pull_request)
+      - check-success = Test `cargo check/test/build` on windows-latest
+      - check-success = cargo-deny (advisories)
+      - check-success = cargo-deny (bans licenses sources)
+      - check-success = codecov-check
+    actions:
+      merge:
+        method: squash
