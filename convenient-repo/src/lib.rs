@@ -415,11 +415,7 @@ pub fn to_string(manifest: &Manifest) -> String {
     result = result.replace(" >", ">");
     result = result.replace(" >", ">");
     let doc = Document::from_str(&result).unwrap();
-    let config = Config {
-        is_pretty: true,
-        max_line_length: 200,
-        ..Default::default()
-    };
+    let config = Config::default_pretty();
     doc.to_string_pretty_with_config(&config)
 }
 

@@ -17,7 +17,7 @@ strip = "debuginfo"
 
 [workspace.dependencies]
 neo4rs = { git = "https://github.com/neo4j-labs/neo4rs.git", version = "0.7.0-alpha.1" }
-tracing = { version = "0.1.40", features = ["attributes"] }
-serde = { version = "1.0.193", features = ["derive"] }
-git2 = "0.18.1"
+tracing = { version = "0.1.41", features = ["attributes"] }
+serde = { version = "1.0.217", features = ["derive"] }
+git2 = "0.20.0"
 
