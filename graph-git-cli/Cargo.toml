@@ -23,6 +23,6 @@ convenient-repo = { path = "../convenient-repo" }
 [dev-dependencies]
 neo4j_testcontainers = "0.2.0"
 testcontainers = "0.14.0"
-tracing-test = "0.2.4"
+tracing-test = "0.2.5"
 url = "2.4.1"
 git2 = { workspace = true }
