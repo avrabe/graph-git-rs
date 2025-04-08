@@ -11,7 +11,7 @@ license = "MIT"
 clap = { version = "4.4.10", features = ["cargo", "derive", "env"] }
 neo4rs = { workspace = true }
 tempfile = "3.8.1"
-tokio = { version = "1.33.0", features = ["rt", "tokio-macros"] }
+tokio = { version = "1.44.2", features = ["rt", "tokio-macros"] }
 tracing = { workspace = true }
 tracing-subscriber = "0.3.18"
 graph-git = { path = "../graph-git" }
