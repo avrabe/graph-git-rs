@@ -236,8 +236,8 @@ impl Parser {
 
         self.skip_whitespace_inline();
 
-        // File path (can be string or identifier with variable expansion)
-        if self.at(SyntaxKind::STRING) || self.at(SyntaxKind::IDENT) || self.at(SyntaxKind::VAR_EXPANSION) {
+        // File path - consume all tokens until newline (path can be complex like ${BPN}-crates.inc)
+        while !self.at_eof() && !self.at(SyntaxKind::NEWLINE) {
             self.bump();
         }
 
@@ -252,8 +252,8 @@ impl Parser {
 
         self.skip_whitespace_inline();
 
-        // File path
-        if self.at(SyntaxKind::STRING) || self.at(SyntaxKind::IDENT) || self.at(SyntaxKind::VAR_EXPANSION) {
+        // File path - consume all tokens until newline
+        while !self.at_eof() && !self.at(SyntaxKind::NEWLINE) {
             self.bump();
         }
 
