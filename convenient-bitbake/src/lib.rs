@@ -4,6 +4,7 @@
 pub mod syntax_kind;
 pub mod lexer;
 pub mod parser;
+pub mod resolver;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}};
@@ -13,6 +14,7 @@ use walkdir::{DirEntry, WalkDir};
 // Re-export public types
 pub use parser::{parse, Parse, ParseError};
 pub use syntax_kind::{SyntaxKind, SyntaxNode};
+pub use resolver::SimpleResolver;
 
 // === Data Models ===
 
@@ -167,6 +169,22 @@ impl BitbakeRecipe {
         extract_from_cst(&root, &mut recipe);
 
         Ok(recipe)
+    }
+
+    /// Create a variable resolver for this recipe
+    /// Useful for expanding ${VAR} references in SRC_URI and other fields
+    pub fn create_resolver(&self) -> SimpleResolver {
+        SimpleResolver::new(self)
+    }
+
+    /// Get resolved SRC_URI values with all ${VAR} references expanded
+    pub fn resolve_src_uri(&self) -> Vec<String> {
+        let resolver = self.create_resolver();
+        if let Some(src_uri) = self.variables.get("SRC_URI") {
+            resolver.resolve_list(src_uri)
+        } else {
+            Vec::new()
+        }
     }
 }
 
