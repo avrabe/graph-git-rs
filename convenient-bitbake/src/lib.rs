@@ -239,25 +239,27 @@ fn extract_variable_assignment(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
     for child in node.children() {
         match child.kind() {
             SyntaxKind::VARIABLE_NAME => {
-                // Get the identifier text
-                let tokens: Vec<_> = child.descendants_with_tokens()
-                    .filter_map(|elem| elem.as_token())
-                    .collect();
-                var_name = tokens.iter()
-                    .find(|token| token.kind() == SyntaxKind::IDENT)
-                    .map(|token| token.text().to_string());
+                // Get the identifier text - collect token info immediately
+                for elem in child.descendants_with_tokens() {
+                    if let Some(token) = elem.as_token() {
+                        if token.kind() == SyntaxKind::IDENT {
+                            var_name = Some(token.text().to_string());
+                            break;
+                        }
+                    }
+                }
             }
             SyntaxKind::VARIABLE_VALUE => {
                 // Concatenate all text in value
-                let tokens: Vec<_> = child.descendants_with_tokens()
-                    .filter_map(|elem| elem.as_token())
-                    .collect();
-                var_value = Some(
-                    tokens.iter()
-                        .filter(|token| !token.kind().is_trivia())
-                        .map(|token| token.text())
-                        .collect::<String>()
-                );
+                let mut value_text = String::new();
+                for elem in child.descendants_with_tokens() {
+                    if let Some(token) = elem.as_token() {
+                        if !token.kind().is_trivia() {
+                            value_text.push_str(token.text());
+                        }
+                    }
+                }
+                var_value = Some(value_text);
             }
             _ => {}
         }
@@ -281,14 +283,37 @@ fn extract_inherit(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
 }
 
 fn extract_include(node: &SyntaxNode, recipe: &mut BitbakeRecipe, required: bool) {
-    for token in node.descendants_with_tokens() {
-        if let Some(token) = token.as_token() {
-            if matches!(token.kind(), SyntaxKind::IDENT | SyntaxKind::STRING | SyntaxKind::VAR_EXPANSION) &&
-               token.text() != "include" && token.text() != "require" {
-                let path = token.text().trim_matches('"').trim_matches('\'').to_string();
-                recipe.includes.push(IncludeDirective { path, required });
+    // Concatenate all non-keyword, non-whitespace tokens to form the path
+    // Include ERROR_TOKEN as they might be valid path characters like '-' or '.'
+    let mut path = String::new();
+    let mut found_keyword = false;
+
+    for elem in node.descendants_with_tokens() {
+        if let Some(token) = elem.as_token() {
+            let text = token.text();
+
+            // Skip the include/require keyword itself
+            if text == "include" || text == "require" {
+                found_keyword = true;
+                continue;
+            }
+
+            // Skip whitespace and newlines
+            if matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE) {
+                continue;
+            }
+
+            // After the keyword, collect everything else as the path
+            // This includes IDENT, VAR_EXPANSION, STRING, and even ERROR_TOKEN (which might be '-' or '.')
+            if found_keyword {
+                let trimmed = text.trim_matches('"').trim_matches('\'');
+                path.push_str(trimmed);
             }
         }
+    }
+
+    if !path.is_empty() {
+        recipe.includes.push(IncludeDirective { path, required });
     }
 }
 
@@ -512,8 +537,10 @@ mod tests {
         let input = "include ${BPN}-crates.inc";
         let recipe = BitbakeRecipe::parse_string(input, Path::new("test.bb")).unwrap();
 
-        assert_eq!(recipe.includes.len(), 1);
-        assert!(recipe.includes[0].path.contains("crates.inc"));
+        assert_eq!(recipe.includes.len(), 1, "Should have 1 include");
+        println!("Include path: {:?}", recipe.includes[0].path);
+        assert!(recipe.includes[0].path.contains("crates.inc"),
+                "Path '{}' should contain 'crates.inc'", recipe.includes[0].path);
     }
 
     #[test]
