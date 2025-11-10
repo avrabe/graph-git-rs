@@ -9,13 +9,14 @@ license = "MIT"
 [dependencies]
 serde = { version = "1.0.217", features = ["derive"] }
 tracing = "0.1.40"
-tree-sitter = "0.20.10"
-#tree-sitter-bitbake = "1.0.1"
-tree-sitter-bitbake = {git = "https://github.com/avrabe/tree-sitter-bitbake", branch = "include"}
 walkdir = "2.5.0"
 regex = "1.10.0"
 url = "2.5.0"
 thiserror = "1.0.50"
+
+# Rowan for resilient CST parsing (rust-analyzer approach)
+rowan = "0.15.15"
+logos = "0.14.0"
 
 
 [dev-dependencies]
