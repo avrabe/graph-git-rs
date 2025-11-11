@@ -12,6 +12,30 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "python-execution")]
 use crate::python_executor::PythonExecutor;
 
+/// Build context for override resolution
+#[derive(Debug, Clone, PartialEq)]
+pub struct BuildContext {
+    /// Class context: "native", "target", "nativesdk", "cross"
+    pub class: String,
+    /// Libc: "glibc", "musl", "newlib"
+    pub libc: String,
+    /// Architecture: "x86-64", "arm", "aarch64", etc.
+    pub arch: String,
+    /// Additional active overrides
+    pub overrides: Vec<String>,
+}
+
+impl Default for BuildContext {
+    fn default() -> Self {
+        Self {
+            class: "target".to_string(),
+            libc: "glibc".to_string(),
+            arch: "x86-64".to_string(),
+            overrides: Vec::new(),
+        }
+    }
+}
+
 /// Configuration for recipe extraction
 #[derive(Debug, Clone)]
 pub struct ExtractionConfig {
@@ -33,6 +57,8 @@ pub struct ExtractionConfig {
     pub extract_class_deps: bool,
     /// Search paths for .bbclass files
     pub class_search_paths: Vec<std::path::PathBuf>,
+    /// Build context for override resolution (Phase 7c)
+    pub build_context: BuildContext,
 }
 
 impl Default for ExtractionConfig {
@@ -53,6 +79,7 @@ impl Default for ExtractionConfig {
             resolve_inherit: false,
             extract_class_deps: false,
             class_search_paths: Vec::new(),
+            build_context: BuildContext::default(),
         }
     }
 }
@@ -334,6 +361,39 @@ impl RecipeExtractor {
             .to_string()
     }
 
+    /// Check if an override is active based on build context (Phase 7c)
+    fn is_override_active(&self, override_str: &str) -> bool {
+        if override_str.is_empty() {
+            return true; // No override - always active
+        }
+
+        let ctx = &self.config.build_context;
+
+        match override_str {
+            // Class overrides
+            "class-native" => ctx.class == "native",
+            "class-target" => ctx.class == "target",
+            "class-nativesdk" => ctx.class == "nativesdk",
+            "class-cross" => ctx.class == "cross",
+
+            // Libc overrides
+            "libc-glibc" => ctx.libc == "glibc",
+            "libc-musl" => ctx.libc == "musl",
+            "libc-newlib" => ctx.libc == "newlib",
+
+            // Architecture overrides (common ones)
+            "x86-64" | "amd64" => ctx.arch == "x86-64",
+            "arm" => ctx.arch == "arm",
+            "aarch64" | "arm64" => ctx.arch == "aarch64",
+            "mips" => ctx.arch == "mips",
+            "powerpc" => ctx.arch == "powerpc",
+            "riscv64" => ctx.arch == "riscv64",
+
+            // Check custom overrides list
+            _ => ctx.overrides.iter().any(|o| o == override_str),
+        }
+    }
+
     /// Apply variable operator (=, +=, :append, :prepend, :remove, ?=, etc.)
     fn apply_variable_operator(
         &self,
@@ -345,26 +405,31 @@ impl RecipeExtractor {
     ) {
         match operator {
             "=" => {
-                // Simple assignment - replace or append based on override
-                if let Some(_override) = override_suffix {
-                    // For now, treat overrides as append (simplified)
-                    // TODO: Proper override resolution in Phase 7
+                // Simple assignment - for dependency extraction, be inclusive
+                if let Some(override_str) = override_suffix {
+                    // Phase 7c: For dependency extraction, include all override variants
+                    // This gives us a complete picture of dependencies across contexts
                     if let Some(existing) = vars.get(var_name) {
-                        let mut combined = existing.clone();
-                        if !combined.is_empty() && !value.is_empty() {
-                            combined.push(' ');
+                        // Merge with existing value if override is active or if we want complete deps
+                        if self.is_override_active(override_str) || existing.is_empty() {
+                            let mut combined = existing.clone();
+                            if !combined.is_empty() && !value.is_empty() {
+                                combined.push(' ');
+                            }
+                            combined.push_str(value);
+                            vars.insert(var_name.to_string(), combined);
                         }
-                        combined.push_str(value);
-                        vars.insert(var_name.to_string(), combined);
                     } else {
                         vars.insert(var_name.to_string(), value.to_string());
                     }
                 } else {
+                    // No override - simple assignment
                     vars.insert(var_name.to_string(), value.to_string());
                 }
             }
             "+=" | ":append" | ".=" => {
                 // Append to existing value
+                // For dependency extraction, include all variants regardless of override
                 if let Some(existing) = vars.get(var_name) {
                     let mut combined = existing.clone();
                     if !combined.is_empty() && !value.is_empty() {
@@ -378,6 +443,7 @@ impl RecipeExtractor {
             }
             "=+" | ":prepend" => {
                 // Prepend to existing value
+                // For dependency extraction, include all variants regardless of override
                 if let Some(existing) = vars.get(var_name) {
                     let mut combined = value.to_string();
                     if !combined.is_empty() && !existing.is_empty() {
@@ -390,7 +456,13 @@ impl RecipeExtractor {
                 }
             }
             ":remove" => {
-                // Remove items from existing value
+                // Remove items from existing value - only apply if override is active (Phase 7c)
+                if let Some(override_str) = override_suffix {
+                    if !self.is_override_active(override_str) {
+                        return; // Skip removal if override not active
+                    }
+                }
+
                 if let Some(existing) = vars.get(var_name) {
                     let items_to_remove: Vec<&str> = value.split_whitespace().collect();
                     let filtered: Vec<&str> = existing
