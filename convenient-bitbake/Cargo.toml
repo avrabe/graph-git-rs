@@ -23,6 +23,9 @@ logos = "0.14.0"
 rustpython = { version = "0.3", optional = true }
 rustpython-vm = { version = "0.3", optional = true }
 
+# Force older home crate version to avoid edition2024 requirement in CI
+home = "=0.5.9"
+
 [features]
 default = []
 python-execution = ["rustpython", "rustpython-vm"]
