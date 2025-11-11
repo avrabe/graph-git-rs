@@ -25,8 +25,14 @@ mod bitbake_internal {
 
     #[pyclass]
     impl DataStore {
+        #[pymethod(magic)]
+        fn __init__(_zelf: PyObjectRef, _vm: &VirtualMachine) -> PyResult<()> {
+            // Constructor for Python - not actually used since we create from Rust
+            Ok(())
+        }
+
         #[pymethod]
-        fn getVar(&self, name: PyStrRef, expand: Option<bool>, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        fn getVar(&self, name: PyStrRef, expand: rustpython_vm::function::OptionalArg<bool>, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
             let name_str = name.as_str();
             let expand_val = expand.unwrap_or(true);
 
@@ -217,6 +223,7 @@ impl PythonExecutor {
     ) -> PythonExecutionResult {
         // Create interpreter with module registration using InterpreterConfig
         let interp = InterpreterConfig::new()
+            .init_stdlib()
             .init_hook(Box::new(|vm| {
                 // Register our bitbake_internal module with the DataStore class
                 vm.add_native_module(
@@ -249,14 +256,17 @@ impl PythonExecutor {
             inner.lock().unwrap().set_initial(key.clone(), value.clone());
         }
 
+        // Import our module first to ensure type registration
+        let scope = vm.new_scope_with_builtins();
+        vm.run_block_expr(scope.clone(), "import bitbake_internal")?;
+
         // Create DataStore as a Python object using our registered class
         let datastore = bitbake_internal::DataStore {
             inner: inner.clone(),
         };
         let d_obj = datastore.into_pyobject(vm);
 
-        // Create a new scope and add 'd' as a global
-        let scope = vm.new_scope_with_builtins();
+        // Add 'd' as a global
         scope.globals.set_item("d", d_obj, vm)?;
 
         // Execute the Python code
