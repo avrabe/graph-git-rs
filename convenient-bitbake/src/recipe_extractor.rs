@@ -115,7 +115,18 @@ impl RecipeExtractor {
         let recipe_id = graph.add_recipe(&recipe_name);
 
         // Parse variables from content
-        let variables = self.parse_variables(content);
+        let mut variables = self.parse_variables(content);
+
+        // Expand simple variable references (${PN}, ${PV}, ${BPN}, ${P})
+        let vars_to_expand: Vec<String> = variables.keys().cloned().collect();
+        for var_name in vars_to_expand {
+            if let Some(value) = variables.get(&var_name).cloned() {
+                let expanded = self.expand_simple_variables(&value, &recipe_name, &variables);
+                if expanded != value {
+                    variables.insert(var_name, expanded);
+                }
+            }
+        }
 
         // Parse PACKAGECONFIG declarations
         let packageconfig_opts = self.parse_packageconfig(content);
@@ -436,6 +447,65 @@ impl RecipeExtractor {
         }
 
         (build_deps, runtime_deps)
+    }
+
+    /// Expand simple variable references in a string
+    /// Expands ${PN}, ${PV}, ${BPN}, ${P} while keeping complex variables like ${VIRTUAL-RUNTIME_*}
+    fn expand_simple_variables(
+        &self,
+        value: &str,
+        recipe_name: &str,
+        variables: &HashMap<String, String>,
+    ) -> String {
+        let mut result = value.to_string();
+        let mut start = 0;
+
+        while let Some(pos) = result[start..].find("${") {
+            let abs_pos = start + pos;
+
+            // Find closing brace
+            if let Some(end_pos) = result[abs_pos + 2..].find('}') {
+                let var_name = &result[abs_pos + 2..abs_pos + 2 + end_pos];
+
+                // Determine replacement value
+                let replacement = match var_name {
+                    "PN" => Some(recipe_name.to_string()),
+                    "BPN" => {
+                        // BPN is PN without prefix like nativesdk-
+                        let bn = recipe_name
+                            .strip_prefix("nativesdk-")
+                            .or_else(|| recipe_name.strip_prefix("native-"))
+                            .unwrap_or(recipe_name);
+                        Some(bn.to_string())
+                    }
+                    "PV" => variables.get("PV").cloned(),
+                    "P" => {
+                        // P = ${PN}-${PV}
+                        if let Some(pv) = variables.get("PV") {
+                            Some(format!("{}-{}", recipe_name, pv))
+                        } else {
+                            None
+                        }
+                    }
+                    // Keep other variables as-is (e.g., VIRTUAL-RUNTIME_*, TARGET_*, etc.)
+                    _ => None,
+                };
+
+                if let Some(repl) = replacement {
+                    // Replace the variable reference
+                    result.replace_range(abs_pos..abs_pos + end_pos + 3, &repl);
+                    start = abs_pos + repl.len();
+                } else {
+                    // Keep the variable as-is, move past it
+                    start = abs_pos + end_pos + 3;
+                }
+            } else {
+                // No closing brace found, stop searching
+                break;
+            }
+        }
+
+        result
     }
 
     /// Extract and parse dependency list, handling version constraints
