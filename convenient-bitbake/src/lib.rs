@@ -6,6 +6,8 @@ pub mod lexer;
 pub mod parser;
 pub mod resolver;
 pub mod include_resolver;
+pub mod layer_context;
+pub mod override_resolver;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}};
@@ -17,6 +19,8 @@ pub use parser::{parse, Parse, ParseError};
 pub use syntax_kind::{SyntaxKind, SyntaxNode};
 pub use resolver::SimpleResolver;
 pub use include_resolver::IncludeResolver;
+pub use layer_context::{BuildContext, LayerConfig};
+pub use override_resolver::{OverrideResolver, OverrideOp, OverrideAssignment};
 
 // === Data Models ===
 
