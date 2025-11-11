@@ -24,7 +24,14 @@ targets = [
 # they are connected to another crate in the graph that hasn't been pruned,
 # so it should be used with care. The identifiers are [Package ID Specifications]
 # (https://doc.rust-lang.org/cargo/reference/pkgid-spec.html)
-#exclude = []
+# Exclude malachite crates - cargo-deny's parser doesn't support LGPL-3.0-only SPDX format
+exclude = [
+    "malachite",
+    "malachite-base",
+    "malachite-bigint",
+    "malachite-nz",
+    "malachite-q",
+]
 # If true, metadata will be collected with `--all-features`. Note that this can't
 # be toggled off if true, if you want to conditionally enable `--all-features` it
 # is recommended to pass `--all-features` on the cmd line instead
@@ -103,12 +110,6 @@ exceptions = [
     # Each entry is the crate and version constraint, and its specific allow
     # list
     #{ allow = ["Zlib"], name = "adler32", version = "*" },
-    # RustPython dependencies use LGPL-3.0-only which cargo-deny treats separately from LGPL-3.0
-    { allow = ["LGPL-3.0-only"], name = "malachite", version = "*" },
-    { allow = ["LGPL-3.0-only"], name = "malachite-base", version = "*" },
-    { allow = ["LGPL-3.0-only"], name = "malachite-bigint", version = "*" },
-    { allow = ["LGPL-3.0-only"], name = "malachite-nz", version = "*" },
-    { allow = ["LGPL-3.0-only"], name = "malachite-q", version = "*" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
