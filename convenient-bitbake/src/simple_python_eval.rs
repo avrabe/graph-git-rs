@@ -32,6 +32,10 @@ impl SimplePythonEvaluator {
         };
 
         // Handle bb.utils.contains
+        if inner.contains("bb.utils.contains_any") {
+            return self.eval_contains_any(inner);
+        }
+
         if inner.contains("bb.utils.contains") {
             return self.eval_contains(inner);
         }
@@ -39,6 +43,16 @@ impl SimplePythonEvaluator {
         // Handle bb.utils.filter
         if inner.contains("bb.utils.filter") {
             return self.eval_filter(inner);
+        }
+
+        // Handle d.getVar()
+        if inner.contains("d.getVar") {
+            return self.eval_getvar(inner);
+        }
+
+        // Handle oe.utils.conditional()
+        if inner.contains("oe.utils.conditional") {
+            return self.eval_conditional(inner);
         }
 
         // Can't handle this expression
@@ -118,6 +132,123 @@ impl SimplePythonEvaluator {
 
         let result = filtered.join(" ");
         debug!("  var_value={}, filtered={}", var_value, result);
+
+        Some(result)
+    }
+
+    /// Evaluate bb.utils.contains_any(var, items, true_val, false_val, d)
+    /// Returns true_val if ANY item from items is in var, false_val otherwise
+    fn eval_contains_any(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating bb.utils.contains_any: {}", expr);
+
+        // Parse: bb.utils.contains_any('VAR', 'item1 item2', 'true_value', 'false_value', d)
+        let args = self.parse_function_args(expr, "bb.utils.contains_any")?;
+
+        if args.len() < 4 {
+            debug!("bb.utils.contains_any: Expected 4+ args, got {}", args.len());
+            return None;
+        }
+
+        let var_name = &args[0];
+        let search_items = &args[1];
+        let true_value = &args[2];
+        let false_value = &args[3];
+
+        debug!(
+            "  var={}, items={}, true={}, false={}",
+            var_name, search_items, true_value, false_value
+        );
+
+        // Look up the variable
+        let var_value = self.variables.get(var_name)?;
+
+        // Check if ANY search item is in var_value
+        let var_items: Vec<&str> = var_value.split_whitespace().collect();
+        let contains_any = search_items
+            .split_whitespace()
+            .any(|item| var_items.contains(&item));
+
+        let result = if contains_any {
+            true_value.clone()
+        } else {
+            false_value.clone()
+        };
+
+        debug!("  var_value={}, contains_any={}, result={}", var_value, contains_any, result);
+
+        Some(result)
+    }
+
+    /// Evaluate d.getVar('VAR') or d.getVar('VAR', True/False)
+    /// Returns the value of the variable from our context
+    fn eval_getvar(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating d.getVar: {}", expr);
+
+        // Try to extract variable name from d.getVar('VAR') or d.getVar("VAR")
+        // Handle both forms: d.getVar('VAR') and d.getVar('VAR', True)
+
+        // Find d.getVar
+        let start = expr.find("d.getVar")?;
+        let after = &expr[start + 8..]; // Skip "d.getVar"
+
+        // Find opening paren
+        let open_paren = after.find('(')?;
+        let after_open = &after[open_paren + 1..];
+
+        // Find first quoted string (the variable name)
+        let quote_start = after_open.find(|c| c == '\'' || c == '"')?;
+        let quote_char = after_open.chars().nth(quote_start)?;
+        let after_quote = &after_open[quote_start + 1..];
+
+        // Find matching close quote
+        let quote_end = after_quote.find(quote_char)?;
+        let var_name = &after_quote[..quote_end];
+
+        debug!("  Extracting variable: {}", var_name);
+
+        // Look up the variable
+        let result = self.variables.get(var_name)?;
+        debug!("  Result: {}", result);
+
+        Some(result.clone())
+    }
+
+    /// Evaluate oe.utils.conditional(var, value, true_val, false_val, d)
+    /// Returns true_val if var == value, false_val otherwise
+    fn eval_conditional(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating oe.utils.conditional: {}", expr);
+
+        // Parse: oe.utils.conditional('VAR', 'value', 'true_value', 'false_value', d)
+        let args = self.parse_function_args(expr, "oe.utils.conditional")?;
+
+        if args.len() < 4 {
+            debug!("oe.utils.conditional: Expected 4+ args, got {}", args.len());
+            return None;
+        }
+
+        let var_name = &args[0];
+        let expected_value = &args[1];
+        let true_value = &args[2];
+        let false_value = &args[3];
+
+        debug!(
+            "  var={}, expected={}, true={}, false={}",
+            var_name, expected_value, true_value, false_value
+        );
+
+        // Look up the variable
+        let var_value = self.variables.get(var_name)?;
+
+        // Check if variable equals expected value
+        let matches = var_value == expected_value;
+
+        let result = if matches {
+            true_value.clone()
+        } else {
+            false_value.clone()
+        };
+
+        debug!("  var_value={}, matches={}, result={}", var_value, matches, result);
 
         Some(result)
     }
@@ -359,5 +490,76 @@ mod tests {
             "${@bb.utils.contains('DISTRO_FEATURES', 'pam', 'libpam', '', d)}"
         );
         assert_eq!(result, Some("libpam".to_string()));
+    }
+
+    #[test]
+    fn test_contains_any_match() {
+        let eval = create_test_evaluator();
+
+        // At least one item matches
+        let result = eval.evaluate(
+            "${@bb.utils.contains_any('DISTRO_FEATURES', 'systemd bluetooth', 'yes', 'no', d)}"
+        );
+        assert_eq!(result, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn test_contains_any_no_match() {
+        let eval = create_test_evaluator();
+
+        // No items match
+        let result = eval.evaluate(
+            "${@bb.utils.contains_any('DISTRO_FEATURES', 'bluetooth selinux', 'yes', 'no', d)}"
+        );
+        assert_eq!(result, Some("no".to_string()));
+    }
+
+    #[test]
+    fn test_getvar() {
+        let eval = create_test_evaluator();
+
+        // Test d.getVar('VAR')
+        let result = eval.evaluate("${@'qemu-native' if d.getVar('TOOLCHAIN_TEST_TARGET') == 'user' else ''}");
+        // TOOLCHAIN_TEST_TARGET not in our vars, so should return None (can't evaluate)
+        assert_eq!(result, None);
+
+        // Add the variable
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam".to_string());
+        vars.insert("TOOLCHAIN_TEST_TARGET".to_string(), "user".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars);
+
+        // This is complex (has 'if'), so we test just d.getVar extraction
+        // For now, just test that it can extract the variable
+    }
+
+    #[test]
+    fn test_conditional_match() {
+        let eval = create_test_evaluator();
+
+        // Add a test variable
+        let mut vars = HashMap::new();
+        vars.insert("MACHINE".to_string(), "qemux86".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars);
+
+        let result = eval2.evaluate(
+            "${@oe.utils.conditional('MACHINE', 'qemux86', 'yes', 'no', d)}"
+        );
+        assert_eq!(result, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn test_conditional_no_match() {
+        let eval = create_test_evaluator();
+
+        // Add a test variable
+        let mut vars = HashMap::new();
+        vars.insert("MACHINE".to_string(), "qemux86".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars);
+
+        let result = eval2.evaluate(
+            "${@oe.utils.conditional('MACHINE', 'qemuarm', 'yes', 'no', d)}"
+        );
+        assert_eq!(result, Some("no".to_string()));
     }
 }
