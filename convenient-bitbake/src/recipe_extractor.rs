@@ -664,8 +664,20 @@ impl RecipeExtractor {
 
         // Get dependencies for each class
         for class_name in classes {
-            let class_build_deps = class_dependencies::get_class_build_deps(&class_name, distro_features);
-            let class_runtime_deps = class_dependencies::get_class_runtime_deps(&class_name, distro_features);
+            // Try dynamic .bbclass parsing first (Phase 7b), fall back to hardcoded
+            let (class_build_deps, class_runtime_deps) = if !self.config.class_search_paths.is_empty() {
+                class_dependencies::get_class_deps_dynamic(
+                    &class_name,
+                    distro_features,
+                    &self.config.class_search_paths,
+                )
+            } else {
+                // No search paths configured - use hardcoded mappings only
+                (
+                    class_dependencies::get_class_build_deps(&class_name, distro_features),
+                    class_dependencies::get_class_runtime_deps(&class_name, distro_features),
+                )
+            };
 
             // Add build dependencies
             for dep in class_build_deps {

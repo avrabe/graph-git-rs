@@ -33,7 +33,8 @@ fn main() {
         resolve_includes: true, // Phase 5: Resolve require/include directives
         resolve_inherit: true,   // Resolve inherit classes for task extraction
         extract_class_deps: true, // Phase 6: Extract dependencies from inherited classes
-        ..Default::default() // Use defaults for use_python_executor, default_variables, class_search_paths
+        class_search_paths: vec![poky_meta.clone()], // Phase 7b: Parse .bbclass files dynamically
+        ..Default::default() // Use defaults for use_python_executor, default_variables
     };
 
     let extractor = RecipeExtractor::new(config);
