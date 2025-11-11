@@ -33,3 +33,4 @@ python-execution = ["rustpython", "rustpython-vm"]
 [dev-dependencies]
 tracing-test = "0.2.4"
 tempfile = "3.8.0"
+walkdir = "2"
