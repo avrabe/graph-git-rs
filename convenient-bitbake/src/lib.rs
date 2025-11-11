@@ -10,6 +10,7 @@ pub mod layer_context;
 pub mod override_resolver;
 pub mod python_analysis;
 pub mod task_parser;
+pub mod recipe_graph;
 
 #[cfg(feature = "python-execution")]
 pub mod python_executor;
@@ -28,6 +29,7 @@ pub use layer_context::{BuildContext, LayerConfig};
 pub use override_resolver::{OverrideResolver, OverrideOp, OverrideAssignment};
 pub use python_analysis::{PythonAnalyzer, PythonBlock, PythonBlockType, PythonVariableOp, PythonOpType, PythonAnalysisSummary};
 pub use task_parser::{Task, TaskDependency, TaskCollection, parse_addtask_statement, parse_task_flag};
+pub use recipe_graph::{RecipeId, TaskId, Recipe, TaskNode, RecipeGraph, GraphStatistics};
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
