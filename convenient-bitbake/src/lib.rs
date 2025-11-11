@@ -8,6 +8,7 @@ pub mod resolver;
 pub mod include_resolver;
 pub mod layer_context;
 pub mod override_resolver;
+pub mod python_analysis;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}};
@@ -21,6 +22,7 @@ pub use resolver::SimpleResolver;
 pub use include_resolver::IncludeResolver;
 pub use layer_context::{BuildContext, LayerConfig};
 pub use override_resolver::{OverrideResolver, OverrideOp, OverrideAssignment};
+pub use python_analysis::{PythonAnalyzer, PythonBlock, PythonBlockType, PythonVariableOp, PythonOpType, PythonAnalysisSummary};
 
 // === Data Models ===
 
@@ -56,6 +58,9 @@ pub struct BitbakeRecipe {
     // All variables
     pub variables: HashMap<String, String>,
 
+    // Python code blocks
+    pub python_blocks: Vec<PythonBlock>,
+
     // Parse information
     pub parse_errors: Vec<String>,
     pub parse_warnings: Vec<String>,
@@ -77,6 +82,7 @@ impl Default for BitbakeRecipe {
             inherits: Vec::new(),
             includes: Vec::new(),
             variables: HashMap::new(),
+            python_blocks: Vec::new(),
             parse_errors: Vec::new(),
             parse_warnings: Vec::new(),
         }
