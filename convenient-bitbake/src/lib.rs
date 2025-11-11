@@ -278,12 +278,32 @@ fn extract_from_cst(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
         recipe.license = Some(license.clone());
     }
 
-    // Extract DEPENDS
-    if let Some(depends_str) = recipe.variables.get("DEPENDS") {
-        recipe.build_depends = depends_str.split_whitespace()
-            .map(|s| s.to_string())
-            .collect();
+    // Extract DEPENDS (including :append, :prepend variants)
+    // Collect all DEPENDS* variables
+    let mut depends_vars: Vec<String> = Vec::new();
+    for (key, value) in &recipe.variables {
+        if key == "DEPENDS" || key.starts_with("DEPENDS:") {
+            for dep in value.split_whitespace() {
+                if !depends_vars.contains(&dep.to_string()) {
+                    depends_vars.push(dep.to_string());
+                }
+            }
+        }
     }
+    recipe.build_depends = depends_vars;
+
+    // Extract RDEPENDS (runtime dependencies)
+    let mut rdepends_vars: Vec<String> = Vec::new();
+    for (key, value) in &recipe.variables {
+        if key.starts_with("RDEPENDS") {
+            for dep in value.split_whitespace() {
+                if !rdepends_vars.contains(&dep.to_string()) {
+                    rdepends_vars.push(dep.to_string());
+                }
+            }
+        }
+    }
+    recipe.runtime_depends = rdepends_vars;
 }
 
 fn extract_variable_assignment(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
@@ -293,14 +313,18 @@ fn extract_variable_assignment(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
     for child in node.children() {
         match child.kind() {
             SyntaxKind::VARIABLE_NAME => {
-                // Get the identifier text - collect token info immediately
+                // Get the full variable name including override qualifiers
+                // E.g., "PV:append" or "DEPENDS:append:arm"
+                let mut full_name = String::new();
                 for elem in child.descendants_with_tokens() {
                     if let Some(token) = elem.as_token() {
-                        if token.kind() == SyntaxKind::IDENT {
-                            var_name = Some(token.text().to_string());
-                            break;
+                        if !token.kind().is_trivia() {
+                            full_name.push_str(token.text());
                         }
                     }
+                }
+                if !full_name.is_empty() {
+                    var_name = Some(full_name);
                 }
             }
             SyntaxKind::VARIABLE_VALUE => {
