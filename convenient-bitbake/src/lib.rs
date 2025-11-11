@@ -11,6 +11,7 @@ pub mod override_resolver;
 pub mod python_analysis;
 pub mod task_parser;
 pub mod recipe_graph;
+pub mod recipe_extractor;
 
 #[cfg(feature = "python-execution")]
 pub mod python_executor;
@@ -30,6 +31,7 @@ pub use override_resolver::{OverrideResolver, OverrideOp, OverrideAssignment};
 pub use python_analysis::{PythonAnalyzer, PythonBlock, PythonBlockType, PythonVariableOp, PythonOpType, PythonAnalysisSummary};
 pub use task_parser::{Task, TaskDependency, TaskCollection, parse_addtask_statement, parse_task_flag};
 pub use recipe_graph::{RecipeId, TaskId, Recipe, TaskNode, RecipeGraph, GraphStatistics};
+pub use recipe_extractor::{RecipeExtractor, RecipeExtraction, ExtractionConfig};
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
