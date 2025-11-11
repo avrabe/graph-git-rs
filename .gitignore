@@ -3,3 +3,8 @@ mine
 .DS_Store
 1.txt
 .vscode
+
+# KAS checkout directories
+/build
+/poky
+/meta-openembedded

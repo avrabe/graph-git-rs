@@ -18,14 +18,14 @@ repos:
   # Here we include a list of layers from the poky repository to the
   # bblayers.conf:
   poky:
-    url: "https://git.yoctoproject.org/git/poky"
-    refspec: master
+    url: "https://github.com/yoctoproject/poky.git"
+    refspec: scarthgap
     layers:
       meta:
       meta-poky:
   meta-openembedded:
     url: "https://github.com/openembedded/meta-openembedded.git"
-    refspec: master 
+    refspec: scarthgap 
     layers:
       meta-oe:
 local_conf_header:
