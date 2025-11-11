@@ -48,9 +48,13 @@ impl SimpleResolver {
             variables.entry("BPN".to_string()).or_insert(bpn);
         }
 
-        // PV (package version) - extract from package name or use default
-        // Find the first '-' or '_' followed by a digit
-        if let Some(pn) = &recipe.package_name {
+        // PV (package version) - use recipe.package_version if available
+        // Otherwise try to extract from package name
+        if let Some(pv) = &recipe.package_version {
+            variables.entry("PV".to_string()).or_insert(pv.clone());
+        } else if let Some(pn) = &recipe.package_name {
+            // Fallback: try to extract version from package name
+            // Find the first '-' or '_' followed by a digit
             for (i, c) in pn.char_indices() {
                 if (c == '-' || c == '_') && i + 1 < pn.len() {
                     let rest = &pn[i + 1..];
