@@ -30,7 +30,9 @@ fn main() {
         use_python_executor: false, // Most recipes don't need Python execution for basic deps
         extract_tasks: true,
         resolve_providers: true,
-        resolve_includes: true, // NEW: Resolve require/include directives
+        resolve_includes: true, // Resolve require/include directives
+        resolve_inherit: true,   // NEW Phase 1.2: Resolve inherit classes
+        class_search_paths: vec![], // Auto-detected from recipe location
     };
 
     let extractor = RecipeExtractor::new(config);
