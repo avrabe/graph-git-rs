@@ -21,6 +21,10 @@ pub struct ExtractionConfig {
     pub resolve_providers: bool,
     /// Resolve include/require directives
     pub resolve_includes: bool,
+    /// Resolve inherit classes for task extraction
+    pub resolve_inherit: bool,
+    /// Search paths for .bbclass files
+    pub class_search_paths: Vec<std::path::PathBuf>,
 }
 
 /// Result of extracting a single recipe
@@ -120,7 +124,7 @@ impl RecipeExtractor {
 
     /// Parse simple variable assignments from recipe content
     fn parse_variables(&self, content: &str) -> HashMap<String, String> {
-        let mut vars = HashMap::new();
+        let mut vars: HashMap<String, String> = HashMap::new();
 
         for line in content.lines() {
             let line = line.trim();
@@ -135,20 +139,34 @@ impl RecipeExtractor {
                 let var_name = left.trim();
                 let value = right.trim().trim_matches('"').trim_matches('\'');
 
-                // Skip complex assignments for now
-                if var_name.contains('[') || var_name.contains(':') {
+                // Skip flag assignments like VAR[flag]
+                if var_name.contains('[') {
                     continue;
                 }
 
-                // Handle different assignment operators
-                let (clean_name, should_store) = if var_name.ends_with("?") {
+                // Handle package-specific variables: RDEPENDS:${PN} or RDEPENDS:${PN}-ptest
+                // Extract the base variable name
+                let (clean_name, should_store) = if var_name.contains(':') {
+                    // RDEPENDS:${PN} -> RDEPENDS
+                    // RDEPENDS:${PN}-ptest -> RDEPENDS (merge all package variants)
+                    let base_name = var_name.split(':').next().unwrap_or(var_name);
+                    (base_name, true)
+                } else if var_name.ends_with("?") {
                     (var_name.trim_end_matches('?').trim(), true)
                 } else {
                     (var_name, true)
                 };
 
                 if should_store && !clean_name.is_empty() {
-                    vars.insert(clean_name.to_string(), value.to_string());
+                    // If variable already exists, append to it (for multiple package variants)
+                    if let Some(existing) = vars.get(clean_name) {
+                        let mut combined = existing.clone();
+                        combined.push(' ');
+                        combined.push_str(value);
+                        vars.insert(clean_name.to_string(), combined);
+                    } else {
+                        vars.insert(clean_name.to_string(), value.to_string());
+                    }
                 }
             }
         }
@@ -303,6 +321,11 @@ impl RecipeExtractor {
             content = self.resolve_includes_in_content(&content, file_path, &recipe_name)?;
         }
 
+        // Resolve inherit classes if enabled
+        if self.config.resolve_inherit {
+            content = self.resolve_inherit_in_content(&content, file_path)?;
+        }
+
         let extraction = self.extract_from_content(graph, recipe_name, &content)?;
 
         // Update file path
@@ -437,6 +460,116 @@ impl RecipeExtractor {
             let candidate = recipe_dir.join(include_path);
             if candidate.exists() {
                 return Some(candidate);
+            }
+        }
+
+        None
+    }
+
+    /// Resolve inherit statements to extract tasks from classes
+    fn resolve_inherit_in_content(
+        &self,
+        content: &str,
+        recipe_path: &Path,
+    ) -> Result<String, String> {
+        let mut resolved = String::from(content);
+        let mut class_content = String::new();
+
+        // Parse inherit statements
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            if let Some(classes) = self.parse_inherit_statement(trimmed) {
+                // Process each class
+                for class_name in classes {
+                    if let Some(class_path) = self.find_class_file(&class_name, recipe_path) {
+                        match std::fs::read_to_string(&class_path) {
+                            Ok(content) => {
+                                // Extract just the addtask statements and task flags
+                                for line in content.lines() {
+                                    let line_trimmed = line.trim();
+                                    if line_trimmed.starts_with("addtask ") ||
+                                       (line_trimmed.starts_with("do_") && line_trimmed.contains('[')) {
+                                        class_content.push_str(line);
+                                        class_content.push('\n');
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Class file not readable, skip
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Append class tasks to the resolved content
+        if !class_content.is_empty() {
+            resolved.push_str("\n# Tasks from inherited classes\n");
+            resolved.push_str(&class_content);
+        }
+
+        Ok(resolved)
+    }
+
+    /// Parse inherit statement
+    fn parse_inherit_statement<'a>(&self, line: &'a str) -> Option<Vec<&'a str>> {
+        let trimmed = line.trim();
+
+        if let Some(rest) = trimmed.strip_prefix("inherit ") {
+            // Split class names: inherit autotools gettext ptest
+            Some(rest.split_whitespace().collect())
+        } else {
+            None
+        }
+    }
+
+    /// Find .bbclass file in search paths
+    fn find_class_file(&self, class_name: &str, recipe_path: &Path) -> Option<std::path::PathBuf> {
+        let class_filename = format!("{}.bbclass", class_name);
+
+        // Try configured search paths first
+        for search_path in &self.config.class_search_paths {
+            let candidate = search_path.join(&class_filename);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+
+        // Try to find classes relative to recipe (common Yocto structure)
+        // Recipe is typically in: meta/recipes-*/category/recipe.bb
+        // Classes are in: meta/classes-recipe/*.bbclass or meta/classes/*.bbclass
+        if let Some(recipe_dir) = recipe_path.parent() {
+            // Go up until we find 'meta' directory
+            let mut current = recipe_dir;
+            for _ in 0..5 {  // Max 5 levels up
+                if let Some(parent) = current.parent() {
+                    if current.file_name().and_then(|n| n.to_str()) == Some("meta") ||
+                       parent.file_name().and_then(|n| n.to_str()) == Some("meta") {
+                        // Found meta directory, check for classes
+                        let meta_dir = if current.file_name().and_then(|n| n.to_str()) == Some("meta") {
+                            current
+                        } else {
+                            parent
+                        };
+
+                        // Try classes-recipe/ first (newer Yocto)
+                        let classes_recipe = meta_dir.join("classes-recipe").join(&class_filename);
+                        if classes_recipe.exists() {
+                            return Some(classes_recipe);
+                        }
+
+                        // Try classes/ (older Yocto)
+                        let classes = meta_dir.join("classes").join(&class_filename);
+                        if classes.exists() {
+                            return Some(classes);
+                        }
+                    }
+                    current = parent;
+                } else {
+                    break;
+                }
             }
         }
 
