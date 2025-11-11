@@ -3,6 +3,7 @@
 
 use crate::recipe_graph::{RecipeGraph, RecipeId, TaskId};
 use crate::task_parser::{parse_addtask_statement, parse_task_flag};
+use crate::simple_python_eval::SimplePythonEvaluator;
 use std::collections::HashMap;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
@@ -11,10 +12,14 @@ use serde::{Deserialize, Serialize};
 use crate::python_executor::PythonExecutor;
 
 /// Configuration for recipe extraction
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ExtractionConfig {
     /// Use Python executor for variable resolution (requires python-execution feature)
     pub use_python_executor: bool,
+    /// Use simple Python expression evaluator (handles bb.utils.contains, bb.utils.filter)
+    pub use_simple_python_eval: bool,
+    /// Default build-time variables (e.g., DISTRO_FEATURES) for Python expression evaluation
+    pub default_variables: HashMap<String, String>,
     /// Extract task dependencies
     pub extract_tasks: bool,
     /// Resolve virtual providers
@@ -25,6 +30,27 @@ pub struct ExtractionConfig {
     pub resolve_inherit: bool,
     /// Search paths for .bbclass files
     pub class_search_paths: Vec<std::path::PathBuf>,
+}
+
+impl Default for ExtractionConfig {
+    fn default() -> Self {
+        let mut default_variables = HashMap::new();
+        // Provide sensible defaults for common build-time variables
+        default_variables.insert("DISTRO_FEATURES".to_string(), "systemd pam ipv6 usrmerge".to_string());
+        default_variables.insert("PACKAGECONFIG".to_string(), "".to_string());
+        default_variables.insert("MACHINE_FEATURES".to_string(), "".to_string());
+
+        Self {
+            use_python_executor: false,
+            use_simple_python_eval: false,
+            default_variables,
+            extract_tasks: false,
+            resolve_providers: false,
+            resolve_includes: false,
+            resolve_inherit: false,
+            class_search_paths: Vec::new(),
+        }
+    }
 }
 
 /// Result of extracting a single recipe
@@ -171,13 +197,19 @@ impl RecipeExtractor {
             if let Some((left, right)) = line.split_once('=') {
                 let var_name = left.trim();
                 // Clean up value: trim whitespace, remove quotes, trim any remaining backslashes
-                let value = right
+                let mut value = right
                     .trim()
                     .trim_matches('"')
                     .trim_matches('\'')
                     .trim()
                     .trim_end_matches('\\')
-                    .trim();
+                    .trim()
+                    .to_string();
+
+                // Evaluate Python expressions if enabled
+                if self.config.use_simple_python_eval {
+                    value = self.eval_python_expressions_in_string(&value, &vars);
+                }
 
                 // Skip flag assignments like VAR[flag]
                 if var_name.contains('[') {
@@ -202,16 +234,77 @@ impl RecipeExtractor {
                     if let Some(existing) = vars.get(clean_name) {
                         let mut combined = existing.clone();
                         combined.push(' ');
-                        combined.push_str(value);
+                        combined.push_str(&value);
                         vars.insert(clean_name.to_string(), combined);
                     } else {
-                        vars.insert(clean_name.to_string(), value.to_string());
+                        vars.insert(clean_name.to_string(), value);
                     }
                 }
             }
         }
 
         vars
+    }
+
+    /// Evaluate Python expressions in a string value
+    /// Replaces ${@...} expressions with their evaluated results
+    fn eval_python_expressions_in_string(&self, value: &str, vars: &HashMap<String, String>) -> String {
+        // Find all ${@...} expressions
+        let mut result = value.to_string();
+        let mut start = 0;
+
+        while let Some(pos) = result[start..].find("${@") {
+            let abs_pos = start + pos;
+
+            // Find matching }
+            if let Some(end_pos) = self.find_closing_brace(&result[abs_pos..]) {
+                let expr = &result[abs_pos..abs_pos + end_pos + 1];
+
+                // Try to evaluate it
+                // Merge default variables with recipe variables (recipe vars take precedence)
+                let mut eval_vars = self.config.default_variables.clone();
+                eval_vars.extend(vars.clone());
+
+                let evaluator = SimplePythonEvaluator::new(eval_vars);
+                if let Some(evaluated) = evaluator.evaluate(expr) {
+                    // Replace the expression with the evaluated result
+                    result.replace_range(abs_pos..abs_pos + end_pos + 1, &evaluated);
+                    start = abs_pos + evaluated.len();
+                } else {
+                    // Can't evaluate, keep original and move past it
+                    start = abs_pos + end_pos + 1;
+                }
+            } else {
+                // No matching }, move past this occurrence
+                start = abs_pos + 3;
+            }
+        }
+
+        result
+    }
+
+    /// Find the closing brace for a ${@...} expression
+    fn find_closing_brace(&self, s: &str) -> Option<usize> {
+        let mut depth = 0;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+
+        for (i, ch) in s.chars().enumerate() {
+            match ch {
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                '{' if !in_single_quote && !in_double_quote => depth += 1,
+                '}' if !in_single_quote && !in_double_quote => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     /// Extract a space-separated list from variables

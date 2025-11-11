@@ -25,14 +25,14 @@ fn main() {
     let recipes = find_recipes(&poky_meta);
     println!("Discovered {} recipe files\n", recipes.len());
 
-    // Configure extractor
+    // Configure extractor with defaults and customizations
     let config = ExtractionConfig {
-        use_python_executor: false, // Most recipes don't need Python execution for basic deps
+        use_simple_python_eval: true, // Phase 2: Use simple Python expression evaluator (bb.utils.contains, bb.utils.filter)
         extract_tasks: true,
         resolve_providers: true,
         resolve_includes: true, // Resolve require/include directives
-        resolve_inherit: true,   // NEW Phase 1.2: Resolve inherit classes
-        class_search_paths: vec![], // Auto-detected from recipe location
+        resolve_inherit: true,   // Phase 1.2: Resolve inherit classes
+        ..Default::default() // Use defaults for use_python_executor, default_variables, class_search_paths
     };
 
     let extractor = RecipeExtractor::new(config);
