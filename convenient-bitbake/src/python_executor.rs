@@ -3,14 +3,60 @@
 
 #![cfg(feature = "python-execution")]
 
-use rustpython_vm::{
-    builtins::{PyDict, PyStr, PyStrRef},
-    AsObject, Interpreter, PyObjectRef, PyResult, VirtualMachine,
+use rustpython::{
+    vm::{builtins::PyStrRef, pyclass, pymodule, PyObjectRef, PyPayload, PyResult, VirtualMachine},
+    InterpreterConfig,
 };
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+// Module containing the DataStore class
+#[pymodule]
+mod bitbake_internal {
+    use super::*;
+
+    #[pyattr]
+    #[pyclass(module = "bitbake_internal", name = "DataStore")]
+    #[derive(Debug, Clone, PyPayload)]
+    pub(super) struct DataStore {
+        pub(super) inner: Arc<Mutex<DataStoreInner>>,
+    }
+
+    #[pyclass]
+    impl DataStore {
+        #[pymethod]
+        fn getVar(&self, name: PyStrRef, expand: Option<bool>, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let name_str = name.as_str();
+            let expand_val = expand.unwrap_or(true);
+
+            let result = self.inner.lock().unwrap().get_var(name_str, expand_val);
+
+            match result {
+                Some(value) => Ok(vm.ctx.new_str(value).into()),
+                None => Ok(vm.ctx.none()),
+            }
+        }
+
+        #[pymethod]
+        fn setVar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
+            self.inner.lock().unwrap().set_var(name.as_str().to_string(), value.as_str().to_string());
+            Ok(())
+        }
+
+        #[pymethod]
+        fn appendVar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
+            self.inner.lock().unwrap().append_var(name.as_str().to_string(), value.as_str().to_string());
+            Ok(())
+        }
+
+        #[pymethod]
+        fn prependVar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
+            self.inner.lock().unwrap().prepend_var(name.as_str().to_string(), value.as_str().to_string());
+            Ok(())
+        }
+    }
+}
 
 /// Result of executing Python code
 #[derive(Debug, Clone)]
@@ -139,48 +185,6 @@ impl Default for DataStoreInner {
     }
 }
 
-/// Python-accessible DataStore object
-pub struct MockDataStore {
-    inner: Rc<RefCell<DataStoreInner>>,
-}
-
-impl MockDataStore {
-    pub fn new(inner: Rc<RefCell<DataStoreInner>>) -> Self {
-        Self { inner }
-    }
-
-    /// Python method: d.getVar(name, expand=True)
-    pub fn py_getvar(&self, name: PyStrRef, expand: Option<bool>, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-        let name_str = name.as_str();
-        let expand_val = expand.unwrap_or(true);
-
-        let result = self.inner.borrow_mut().get_var(name_str, expand_val);
-
-        match result {
-            Some(value) => Ok(vm.ctx.new_str(value).into()),
-            None => Ok(vm.ctx.none()),
-        }
-    }
-
-    /// Python method: d.setVar(name, value)
-    pub fn py_setvar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
-        self.inner.borrow_mut().set_var(name.as_str().to_string(), value.as_str().to_string());
-        Ok(())
-    }
-
-    /// Python method: d.appendVar(name, value)
-    pub fn py_appendvar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
-        self.inner.borrow_mut().append_var(name.as_str().to_string(), value.as_str().to_string());
-        Ok(())
-    }
-
-    /// Python method: d.prependVar(name, value)
-    pub fn py_prependvar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
-        self.inner.borrow_mut().prepend_var(name.as_str().to_string(), value.as_str().to_string());
-        Ok(())
-    }
-}
-
 /// Python executor for BitBake code
 pub struct PythonExecutor {
     /// Timeout for Python execution
@@ -211,10 +215,16 @@ impl PythonExecutor {
         python_code: &str,
         initial_vars: &HashMap<String, String>,
     ) -> PythonExecutionResult {
-        // Create interpreter with minimal initialization
-        let interp = Interpreter::with_init(Default::default(), |_vm| {
-            // Minimal init - no stdlib needed
-        });
+        // Create interpreter with module registration using InterpreterConfig
+        let interp = InterpreterConfig::new()
+            .init_hook(Box::new(|vm| {
+                // Register our bitbake_internal module with the DataStore class
+                vm.add_native_module(
+                    "bitbake_internal".to_owned(),
+                    Box::new(bitbake_internal::make_module),
+                );
+            }))
+            .interpreter();
 
         // Execute in VM context
         match interp.enter(|vm| {
@@ -231,19 +241,23 @@ impl PythonExecutor {
         python_code: &str,
         initial_vars: &HashMap<String, String>,
     ) -> PyResult<PythonExecutionResult> {
-        // Create inner DataStore
-        let inner = Rc::new(RefCell::new(DataStoreInner::new()));
+        // Create inner DataStoreInner
+        let inner = Arc::new(Mutex::new(DataStoreInner::new()));
 
         // Populate with initial variables
         for (key, value) in initial_vars {
-            inner.borrow_mut().set_initial(key.clone(), value.clone());
+            inner.lock().unwrap().set_initial(key.clone(), value.clone());
         }
 
-        // Create Python object with methods
-        let d_obj = create_datastore_object(vm, inner.clone())?;
+        // Create DataStore as a Python object using our registered class
+        let datastore = bitbake_internal::DataStore {
+            inner: inner.clone(),
+        };
+        let d_obj = datastore.into_pyobject(vm);
 
-        // Set 'd' as a global in builtins
-        vm.builtins.set_attr("d", d_obj, vm)?;
+        // Create a new scope and add 'd' as a global
+        let scope = vm.new_scope_with_builtins();
+        scope.globals.set_item("d", d_obj, vm)?;
 
         // Execute the Python code
         let code_obj = match vm.compile(python_code, rustpython_vm::compiler::Mode::Exec, "<bitbake>".to_owned()) {
@@ -251,11 +265,14 @@ impl PythonExecutor {
             Err(e) => return Ok(PythonExecutionResult::failure(format!("Compile error: {:?}", e))),
         };
 
-        match vm.run_code_obj(code_obj, vm.new_scope_with_builtins()) {
+        match vm.run_code_obj(code_obj, scope) {
             Ok(_) => {
                 // Extract final state from inner DataStore
-                let inner_clone = Rc::try_unwrap(inner).unwrap_or_else(|rc| (*rc).clone());
-                let result = inner_clone.into_inner().into_result();
+                // Try to unwrap Arc, if it fails (still has references), clone the data
+                let result = match Arc::try_unwrap(inner) {
+                    Ok(mutex) => mutex.into_inner().unwrap().into_result(),
+                    Err(arc) => arc.lock().unwrap().clone().into_result(),
+                };
                 Ok(result)
             }
             Err(e) => {
@@ -270,73 +287,6 @@ impl Default for PythonExecutor {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// Helper to create mock DataStore object with methods
-fn create_datastore_object(
-    vm: &VirtualMachine,
-    inner: Rc<RefCell<DataStoreInner>>,
-) -> PyResult<PyObjectRef> {
-    // Create an object using builtins.object
-    let obj = vm.ctx.new_base_object(vm.ctx.types.object_type.to_owned(), None);
-
-    // Create closures that capture the inner DataStore
-    let inner_getvar = inner.clone();
-    let getvar_fn = vm.new_function(
-        "getVar",
-        move |name: PyStrRef, expand: Option<bool>, vm: &VirtualMachine| -> PyResult<PyObjectRef> {
-            let expand_val = expand.unwrap_or(true);
-            let result = inner_getvar.borrow_mut().get_var(name.as_str(), expand_val);
-            match result {
-                Some(value) => Ok(vm.ctx.new_str(value).into()),
-                None => Ok(vm.ctx.none()),
-            }
-        },
-    );
-
-    let inner_setvar = inner.clone();
-    let setvar_fn = vm.new_function(
-        "setVar",
-        move |name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine| -> PyResult<()> {
-            inner_setvar.borrow_mut().set_var(
-                name.as_str().to_string(),
-                value.as_str().to_string(),
-            );
-            Ok(())
-        },
-    );
-
-    let inner_appendvar = inner.clone();
-    let appendvar_fn = vm.new_function(
-        "appendVar",
-        move |name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine| -> PyResult<()> {
-            inner_appendvar.borrow_mut().append_var(
-                name.as_str().to_string(),
-                value.as_str().to_string(),
-            );
-            Ok(())
-        },
-    );
-
-    let inner_prependvar = inner.clone();
-    let prependvar_fn = vm.new_function(
-        "prependVar",
-        move |name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine| -> PyResult<()> {
-            inner_prependvar.borrow_mut().prepend_var(
-                name.as_str().to_string(),
-                value.as_str().to_string(),
-            );
-            Ok(())
-        },
-    );
-
-    // Add methods as attributes
-    obj.set_attr("getVar", getvar_fn, vm)?;
-    obj.set_attr("setVar", setvar_fn, vm)?;
-    obj.set_attr("appendVar", appendvar_fn, vm)?;
-    obj.set_attr("prependVar", prependvar_fn, vm)?;
-
-    Ok(obj.into())
 }
 
 #[cfg(test)]
