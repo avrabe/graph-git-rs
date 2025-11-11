@@ -10,6 +10,9 @@ pub mod layer_context;
 pub mod override_resolver;
 pub mod python_analysis;
 
+#[cfg(feature = "python-execution")]
+pub mod python_executor;
+
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}};
 use tracing::{info, warn};
@@ -23,6 +26,9 @@ pub use include_resolver::IncludeResolver;
 pub use layer_context::{BuildContext, LayerConfig};
 pub use override_resolver::{OverrideResolver, OverrideOp, OverrideAssignment};
 pub use python_analysis::{PythonAnalyzer, PythonBlock, PythonBlockType, PythonVariableOp, PythonOpType, PythonAnalysisSummary};
+
+#[cfg(feature = "python-execution")]
+pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
 
 // === Data Models ===
 
