@@ -5,6 +5,7 @@ pub mod syntax_kind;
 pub mod lexer;
 pub mod parser;
 pub mod resolver;
+pub mod include_resolver;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}};
@@ -15,6 +16,7 @@ use walkdir::{DirEntry, WalkDir};
 pub use parser::{parse, Parse, ParseError};
 pub use syntax_kind::{SyntaxKind, SyntaxNode};
 pub use resolver::SimpleResolver;
+pub use include_resolver::IncludeResolver;
 
 // === Data Models ===
 
@@ -139,9 +141,39 @@ impl BitbakeRecipe {
             RecipeType::Recipe
         };
 
+        // Derive package name from filename (BitBake convention)
+        // e.g., "fmu-rs_0.2.0.bb" -> PN="fmu-rs", PV="0.2.0"
+        let package_name = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|stem| {
+                // Split on underscore to separate name from version
+                if let Some(underscore_pos) = stem.rfind('_') {
+                    // Return the part before the underscore (the package name)
+                    stem[..underscore_pos].to_string()
+                } else {
+                    // No version suffix, use the whole stem
+                    stem.to_string()
+                }
+            });
+
+        let package_version = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|stem| {
+                // Split on underscore to get version
+                if let Some(underscore_pos) = stem.rfind('_') {
+                    Some(stem[underscore_pos + 1..].to_string())
+                } else {
+                    None
+                }
+            });
+
         Self {
             file_path,
             recipe_type,
+            package_name,
+            package_version,
             ..Default::default()
         }
     }

@@ -21,3 +21,4 @@ logos = "0.14.0"
 
 [dev-dependencies]
 tracing-test = "0.2.4"
+tempfile = "3.8.0"
