@@ -226,57 +226,181 @@ impl RecipeExtractor {
                 continue;
             }
 
-            // Look for simple assignments: VAR = "value"
-            if let Some((left, right)) = line.split_once('=') {
-                let var_name = left.trim();
-                // Clean up value: trim whitespace, remove quotes, trim any remaining backslashes
-                let mut value = right
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .trim()
-                    .trim_end_matches('\\')
-                    .trim()
-                    .to_string();
-
-                // Evaluate Python expressions if enabled
-                if self.config.use_simple_python_eval {
-                    value = self.eval_python_expressions_in_string(&value, &vars);
-                }
-
+            // Parse assignment with operator detection
+            if let Some((var_name, operator, value)) = self.parse_assignment(line) {
                 // Skip flag assignments like VAR[flag]
                 if var_name.contains('[') {
                     continue;
                 }
 
+                // Evaluate Python expressions if enabled
+                let mut value = value;
+                if self.config.use_simple_python_eval {
+                    value = self.eval_python_expressions_in_string(&value, &vars);
+                }
+
                 // Handle package-specific variables: RDEPENDS:${PN} or RDEPENDS:${PN}-ptest
-                // Extract the base variable name
-                let (clean_name, should_store) = if var_name.contains(':') {
-                    // RDEPENDS:${PN} -> RDEPENDS
-                    // RDEPENDS:${PN}-ptest -> RDEPENDS (merge all package variants)
-                    let base_name = var_name.split(':').next().unwrap_or(var_name);
-                    (base_name, true)
-                } else if var_name.ends_with("?") {
-                    (var_name.trim_end_matches('?').trim(), true)
+                // Extract the base variable name and override
+                let (clean_name, override_suffix) = if var_name.contains(':') {
+                    // RDEPENDS:${PN} -> ("RDEPENDS", Some("${PN}"))
+                    // DEPENDS:append -> ("DEPENDS", Some("append"))
+                    let parts: Vec<&str> = var_name.splitn(2, ':').collect();
+                    (parts[0], parts.get(1).copied())
                 } else {
-                    (var_name, true)
+                    (var_name.as_str(), None)
                 };
 
-                if should_store && !clean_name.is_empty() {
-                    // If variable already exists, append to it (for multiple package variants)
-                    if let Some(existing) = vars.get(clean_name) {
-                        let mut combined = existing.clone();
-                        combined.push(' ');
-                        combined.push_str(&value);
-                        vars.insert(clean_name.to_string(), combined);
-                    } else {
-                        vars.insert(clean_name.to_string(), value);
-                    }
+                if !clean_name.is_empty() {
+                    // Apply operator
+                    self.apply_variable_operator(&mut vars, clean_name, &operator, &value, override_suffix);
                 }
             }
         }
 
         vars
+    }
+
+    /// Parse an assignment line and extract variable name, operator, and value
+    /// Returns: (var_name, operator, value)
+    fn parse_assignment(&self, line: &str) -> Option<(String, String, String)> {
+        // Try to find assignment operators (in order of specificity)
+        // Handle :append, :prepend, :remove first (they contain :)
+        if let Some(pos) = line.find(":append") {
+            let before = &line[..pos];
+            if let Some(eq_pos) = line[pos..].find('=') {
+                let var_name = before.trim().to_string();
+                let value = self.clean_value(&line[pos + eq_pos + 1..]);
+                return Some((var_name, ":append".to_string(), value));
+            }
+        }
+
+        if let Some(pos) = line.find(":prepend") {
+            let before = &line[..pos];
+            if let Some(eq_pos) = line[pos..].find('=') {
+                let var_name = before.trim().to_string();
+                let value = self.clean_value(&line[pos + eq_pos + 1..]);
+                return Some((var_name, ":prepend".to_string(), value));
+            }
+        }
+
+        if let Some(pos) = line.find(":remove") {
+            let before = &line[..pos];
+            if let Some(eq_pos) = line[pos..].find('=') {
+                let var_name = before.trim().to_string();
+                let value = self.clean_value(&line[pos + eq_pos + 1..]);
+                return Some((var_name, ":remove".to_string(), value));
+            }
+        }
+
+        // Handle +=, ?=, .=, =+, =. operators
+        for (op, op_str) in &[("+=", "+="), ("?=", "?="), (".=", ".="), ("=+", "=+"), ("=.", "=.")] {
+            if let Some(pos) = line.find(op) {
+                let var_name = line[..pos].trim().to_string();
+                let value = self.clean_value(&line[pos + op.len()..]);
+                return Some((var_name, op_str.to_string(), value));
+            }
+        }
+
+        // Handle simple assignment =
+        if let Some((left, right)) = line.split_once('=') {
+            let var_name = left.trim().to_string();
+            let value = self.clean_value(right);
+            return Some((var_name, "=".to_string(), value));
+        }
+
+        None
+    }
+
+    /// Clean value: trim whitespace, remove quotes, trim backslashes
+    fn clean_value(&self, value: &str) -> String {
+        value
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim()
+            .trim_end_matches('\\')
+            .trim()
+            .to_string()
+    }
+
+    /// Apply variable operator (=, +=, :append, :prepend, :remove, ?=, etc.)
+    fn apply_variable_operator(
+        &self,
+        vars: &mut HashMap<String, String>,
+        var_name: &str,
+        operator: &str,
+        value: &str,
+        override_suffix: Option<&str>,
+    ) {
+        match operator {
+            "=" => {
+                // Simple assignment - replace or append based on override
+                if let Some(_override) = override_suffix {
+                    // For now, treat overrides as append (simplified)
+                    // TODO: Proper override resolution in Phase 7
+                    if let Some(existing) = vars.get(var_name) {
+                        let mut combined = existing.clone();
+                        if !combined.is_empty() && !value.is_empty() {
+                            combined.push(' ');
+                        }
+                        combined.push_str(value);
+                        vars.insert(var_name.to_string(), combined);
+                    } else {
+                        vars.insert(var_name.to_string(), value.to_string());
+                    }
+                } else {
+                    vars.insert(var_name.to_string(), value.to_string());
+                }
+            }
+            "+=" | ":append" | ".=" => {
+                // Append to existing value
+                if let Some(existing) = vars.get(var_name) {
+                    let mut combined = existing.clone();
+                    if !combined.is_empty() && !value.is_empty() {
+                        combined.push(' ');
+                    }
+                    combined.push_str(value);
+                    vars.insert(var_name.to_string(), combined);
+                } else {
+                    vars.insert(var_name.to_string(), value.to_string());
+                }
+            }
+            "=+" | ":prepend" => {
+                // Prepend to existing value
+                if let Some(existing) = vars.get(var_name) {
+                    let mut combined = value.to_string();
+                    if !combined.is_empty() && !existing.is_empty() {
+                        combined.push(' ');
+                    }
+                    combined.push_str(existing);
+                    vars.insert(var_name.to_string(), combined);
+                } else {
+                    vars.insert(var_name.to_string(), value.to_string());
+                }
+            }
+            ":remove" => {
+                // Remove items from existing value
+                if let Some(existing) = vars.get(var_name) {
+                    let items_to_remove: Vec<&str> = value.split_whitespace().collect();
+                    let filtered: Vec<&str> = existing
+                        .split_whitespace()
+                        .filter(|item| !items_to_remove.contains(item))
+                        .collect();
+                    vars.insert(var_name.to_string(), filtered.join(" "));
+                }
+                // If variable doesn't exist, :remove does nothing
+            }
+            "?=" => {
+                // Conditional assignment - only set if not already set
+                if !vars.contains_key(var_name) {
+                    vars.insert(var_name.to_string(), value.to_string());
+                }
+            }
+            _ => {
+                // Unknown operator - treat as simple assignment
+                vars.insert(var_name.to_string(), value.to_string());
+            }
+        }
     }
 
     /// Evaluate Python expressions in a string value
