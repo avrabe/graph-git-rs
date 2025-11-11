@@ -13,6 +13,7 @@ pub mod task_parser;
 pub mod recipe_graph;
 pub mod recipe_extractor;
 pub mod simple_python_eval;
+pub mod class_dependencies;
 
 #[cfg(feature = "python-execution")]
 pub mod python_executor;

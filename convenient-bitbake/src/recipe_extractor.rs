@@ -4,6 +4,7 @@
 use crate::recipe_graph::{RecipeGraph, RecipeId, TaskId};
 use crate::task_parser::{parse_addtask_statement, parse_task_flag};
 use crate::simple_python_eval::SimplePythonEvaluator;
+use crate::class_dependencies;
 use std::collections::HashMap;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,8 @@ pub struct ExtractionConfig {
     pub resolve_includes: bool,
     /// Resolve inherit classes for task extraction
     pub resolve_inherit: bool,
+    /// Extract dependencies from inherited classes (Phase 6)
+    pub extract_class_deps: bool,
     /// Search paths for .bbclass files
     pub class_search_paths: Vec<std::path::PathBuf>,
 }
@@ -48,6 +51,7 @@ impl Default for ExtractionConfig {
             resolve_providers: false,
             resolve_includes: false,
             resolve_inherit: false,
+            extract_class_deps: false,
             class_search_paths: Vec::new(),
         }
     }
@@ -144,6 +148,13 @@ impl RecipeExtractor {
         // Merge PACKAGECONFIG dependencies
         depends.extend(pkg_build_deps);
         rdepends.extend(pkg_runtime_deps);
+
+        // Extract class dependencies (Phase 6)
+        if self.config.extract_class_deps {
+            let (class_build_deps, class_runtime_deps) = self.extract_class_dependencies(content, &variables);
+            depends.extend(class_build_deps);
+            rdepends.extend(class_runtime_deps);
+        }
 
         // Update recipe metadata
         if let Some(recipe) = graph.get_recipe_mut(recipe_id) {
@@ -630,6 +641,48 @@ impl RecipeExtractor {
         }
 
         result
+    }
+
+    /// Extract dependencies from inherited classes (Phase 6)
+    fn extract_class_dependencies(
+        &self,
+        content: &str,
+        variables: &HashMap<String, String>,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut build_deps = Vec::new();
+        let mut runtime_deps = Vec::new();
+
+        // Extract inherited classes
+        let classes = class_dependencies::extract_inherited_classes(content);
+
+        // Get DISTRO_FEATURES for conditional class dependencies
+        let distro_features = variables
+            .get("DISTRO_FEATURES")
+            .or_else(|| self.config.default_variables.get("DISTRO_FEATURES"))
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        // Get dependencies for each class
+        for class_name in classes {
+            let class_build_deps = class_dependencies::get_class_build_deps(&class_name, distro_features);
+            let class_runtime_deps = class_dependencies::get_class_runtime_deps(&class_name, distro_features);
+
+            // Add build dependencies
+            for dep in class_build_deps {
+                if !dep.is_empty() && !build_deps.contains(&dep) {
+                    build_deps.push(dep);
+                }
+            }
+
+            // Add runtime dependencies
+            for dep in class_runtime_deps {
+                if !dep.is_empty() && !runtime_deps.contains(&dep) {
+                    runtime_deps.push(dep);
+                }
+            }
+        }
+
+        (build_deps, runtime_deps)
     }
 
     /// Extract and parse dependency list, handling version constraints

@@ -27,11 +27,12 @@ fn main() {
 
     // Configure extractor with defaults and customizations
     let config = ExtractionConfig {
-        use_simple_python_eval: true, // Phase 2: Use simple Python expression evaluator (bb.utils.contains, bb.utils.filter)
+        use_simple_python_eval: true, // Phase 1: Use simple Python expression evaluator (bb.utils.contains, bb.utils.filter)
         extract_tasks: true,
         resolve_providers: true,
-        resolve_includes: true, // Resolve require/include directives
-        resolve_inherit: true,   // Phase 1.2: Resolve inherit classes
+        resolve_includes: true, // Phase 5: Resolve require/include directives
+        resolve_inherit: true,   // Resolve inherit classes for task extraction
+        extract_class_deps: true, // Phase 6: Extract dependencies from inherited classes
         ..Default::default() // Use defaults for use_python_executor, default_variables, class_search_paths
     };
 
