@@ -19,6 +19,8 @@ pub struct ExtractionConfig {
     pub extract_tasks: bool,
     /// Resolve virtual providers
     pub resolve_providers: bool,
+    /// Resolve include/require directives
+    pub resolve_includes: bool,
 }
 
 /// Result of extracting a single recipe
@@ -284,14 +286,22 @@ impl RecipeExtractor {
         graph: &mut RecipeGraph,
         file_path: &Path,
     ) -> Result<RecipeExtraction, String> {
-        let content = std::fs::read_to_string(file_path)
+        let mut content = std::fs::read_to_string(file_path)
             .map_err(|e| format!("Failed to read file: {}", e))?;
 
         let recipe_name = file_path
             .file_stem()
             .and_then(|s| s.to_str())
             .ok_or_else(|| "Invalid file name".to_string())?
+            .split('_')
+            .next()
+            .unwrap_or("")
             .to_string();
+
+        // Resolve includes if enabled
+        if self.config.resolve_includes {
+            content = self.resolve_includes_in_content(&content, file_path, &recipe_name)?;
+        }
 
         let extraction = self.extract_from_content(graph, recipe_name, &content)?;
 
@@ -301,6 +311,136 @@ impl RecipeExtractor {
         }
 
         Ok(extraction)
+    }
+
+    /// Resolve include/require directives in content
+    fn resolve_includes_in_content(
+        &self,
+        content: &str,
+        recipe_path: &Path,
+        recipe_name: &str,
+    ) -> Result<String, String> {
+        let mut resolved = String::new();
+        let mut seen_files = std::collections::HashSet::new();
+
+        let recipe_dir = recipe_path
+            .parent()
+            .ok_or_else(|| "Recipe has no parent directory".to_string())?;
+
+        // Get base name for variable expansion: bash_5.2.21.bb -> bash
+        let base_name = recipe_name.to_string();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            // Check for include/require directives
+            if let Some(include_path) = self.parse_include_directive(trimmed) {
+                // Expand simple variables like ${BPN}
+                let expanded = include_path.replace("${BPN}", &base_name);
+
+                // Try to find and read the include file
+                match self.find_include_file(&expanded, recipe_dir, &base_name) {
+                    Some(include_file_path) => {
+                        // Avoid circular includes
+                        if seen_files.contains(&include_file_path) {
+                            resolved.push_str("# ");
+                            resolved.push_str(line);
+                            resolved.push('\n');
+                            continue;
+                        }
+                        seen_files.insert(include_file_path.clone());
+
+                        // Read the include file
+                        match std::fs::read_to_string(&include_file_path) {
+                            Ok(include_content) => {
+                                // Recursively resolve includes in the included file
+                                match self.resolve_includes_in_content(
+                                    &include_content,
+                                    &include_file_path,
+                                    &base_name,
+                                ) {
+                                    Ok(resolved_include) => {
+                                        resolved.push_str(&resolved_include);
+                                        resolved.push('\n');
+                                    }
+                                    Err(_) => {
+                                        // If recursive resolution fails, just use the content
+                                        resolved.push_str(&include_content);
+                                        resolved.push('\n');
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Include file not readable - comment it out
+                                resolved.push_str("# ");
+                                resolved.push_str(line);
+                                resolved.push('\n');
+                            }
+                        }
+                    }
+                    None => {
+                        // Include file not found - check if required
+                        if trimmed.starts_with("require ") {
+                            // require is fatal if file not found, but we'll be lenient
+                            resolved.push_str("# ");
+                            resolved.push_str(line);
+                            resolved.push('\n');
+                        } else {
+                            // include is non-fatal
+                            resolved.push_str("# ");
+                            resolved.push_str(line);
+                            resolved.push('\n');
+                        }
+                    }
+                }
+            } else {
+                // Not an include directive - keep as is
+                resolved.push_str(line);
+                resolved.push('\n');
+            }
+        }
+
+        Ok(resolved)
+    }
+
+    /// Parse include/require directive from a line
+    fn parse_include_directive<'a>(&self, line: &'a str) -> Option<&'a str> {
+        let trimmed = line.trim();
+
+        if let Some(rest) = trimmed.strip_prefix("require ") {
+            return Some(rest.trim());
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("include ") {
+            return Some(rest.trim());
+        }
+
+        None
+    }
+
+    /// Find include file by searching relative to recipe directory
+    fn find_include_file(
+        &self,
+        include_path: &str,
+        recipe_dir: &Path,
+        base_name: &str,
+    ) -> Option<std::path::PathBuf> {
+        // Try relative to recipe directory
+        let candidate = recipe_dir.join(include_path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+
+        // Try with base name prefix if include path is simple
+        // Example: bash_5.2.21.bb + "bash.inc" -> bash.inc in same dir
+        if include_path.ends_with(".inc") && include_path.starts_with(base_name) {
+            let candidate = recipe_dir.join(include_path);
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+
+        None
     }
 
     /// Extract multiple recipes and populate dependencies

@@ -30,6 +30,7 @@ fn main() {
         use_python_executor: false, // Most recipes don't need Python execution for basic deps
         extract_tasks: true,
         resolve_providers: true,
+        resolve_includes: true, // NEW: Resolve require/include directives
     };
 
     let extractor = RecipeExtractor::new(config);
@@ -81,12 +82,8 @@ fn main() {
             continue;
         }
 
-        let Ok(content) = fs::read_to_string(recipe_path) else {
-            skip_count += 1;
-            continue;
-        };
-
-        match extractor.extract_from_content(&mut graph, &recipe_name, &content) {
+        // Use extract_from_file to enable include resolution
+        match extractor.extract_from_file(&mut graph, recipe_path) {
             Ok(extraction) => {
                 println!("  ✓ {}", recipe_name);
                 println!("      Path: {}", recipe_path.display());
@@ -175,32 +172,47 @@ fn main() {
     );
     println!();
 
-    // Analyze specific well-known recipes
-    println!("=== Well-Known Recipe Analysis ===\n");
+    // Test specific well-known recipes to validate include resolution
+    println!("=== Well-Known Recipe Test (with include resolution) ===\n");
 
-    let known_recipes = vec![
-        "bash", "glibc", "openssl", "curl", "zlib", "linux-yocto", "busybox"
+    let known_recipe_paths = vec![
+        ("bash", "/home/user/graph-git-rs/poky/meta/recipes-extended/bash/bash_5.2.21.bb"),
+        ("glibc", "/home/user/graph-git-rs/poky/meta/recipes-core/glibc/glibc_2.39.bb"),
+        ("openssl", "/home/user/graph-git-rs/poky/meta/recipes-connectivity/openssl/openssl_3.2.6.bb"),
+        ("zlib", "/home/user/graph-git-rs/poky/meta/recipes-core/zlib/zlib_1.3.1.bb"),
     ];
 
-    for name in known_recipes {
-        if let Some(recipe_id) = graph.find_recipe(name) {
-            let recipe = graph.get_recipe(recipe_id).unwrap();
-            let deps = graph.get_dependencies(recipe_id);
-            let tasks = graph.get_recipe_tasks(recipe_id);
+    let mut known_graph = RecipeGraph::new();
+    let mut known_extractions = Vec::new();
 
-            println!("{}", name);
-            if !recipe.provides.is_empty() {
-                println!("  Provides: {}", recipe.provides.join(", "));
+    for (name, path_str) in &known_recipe_paths {
+        let path = PathBuf::from(path_str);
+        if path.exists() {
+            match extractor.extract_from_file(&mut known_graph, &path) {
+                Ok(extraction) => {
+                    println!("✓ {}", name);
+                    if !extraction.depends.is_empty() {
+                        println!("  DEPENDS: {}", extraction.depends.join(", "));
+                    }
+                    if !extraction.rdepends.is_empty() {
+                        println!("  RDEPENDS: {}", extraction.rdepends.join(", "));
+                    }
+                    if !extraction.provides.is_empty() {
+                        println!("  PROVIDES: {}", extraction.provides.join(", "));
+                    }
+                    if let Some(summary) = extraction.variables.get("SUMMARY") {
+                        println!("  Summary: {}", summary);
+                    }
+                    println!("  Variables extracted: {}", extraction.variables.len());
+                    println!();
+                    known_extractions.push(extraction);
+                }
+                Err(e) => {
+                    println!("✗ {} - {}\n", name, e);
+                }
             }
-            if !deps.is_empty() {
-                let dep_names: Vec<String> = deps
-                    .iter()
-                    .filter_map(|&id| graph.get_recipe(id).map(|r| r.name.clone()))
-                    .collect();
-                println!("  Depends on: {}", dep_names.join(", "));
-            }
-            println!("  Tasks: {} defined", tasks.len());
-            println!();
+        } else {
+            println!("⊘ {} - not found\n", name);
         }
     }
 
