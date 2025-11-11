@@ -66,6 +66,17 @@ pub struct RecipeExtraction {
     pub variables: HashMap<String, String>,
 }
 
+/// PACKAGECONFIG option declaration
+#[derive(Debug, Clone)]
+struct PackageConfigOption {
+    name: String,
+    enable_flags: String,
+    disable_flags: String,
+    build_deps: Vec<String>,
+    runtime_deps: Vec<String>,
+    runtime_recommends: Vec<String>,
+}
+
 /// Extracts dependencies from BitBake recipe content
 pub struct RecipeExtractor {
     config: ExtractionConfig,
@@ -106,11 +117,22 @@ impl RecipeExtractor {
         // Parse variables from content
         let variables = self.parse_variables(content);
 
+        // Parse PACKAGECONFIG declarations
+        let packageconfig_opts = self.parse_packageconfig(content);
+
+        // Extract PACKAGECONFIG dependencies
+        let (pkg_build_deps, pkg_runtime_deps) =
+            self.extract_packageconfig_deps(&variables, &packageconfig_opts);
+
         // Extract dependencies
-        let depends = self.extract_dependency_list(&variables, "DEPENDS");
-        let rdepends = self.extract_dependency_list(&variables, "RDEPENDS");
+        let mut depends = self.extract_dependency_list(&variables, "DEPENDS");
+        let mut rdepends = self.extract_dependency_list(&variables, "RDEPENDS");
         let provides = self.extract_list(&variables, "PROVIDES");
         let rprovides = self.extract_list(&variables, "RPROVIDES");
+
+        // Merge PACKAGECONFIG dependencies
+        depends.extend(pkg_build_deps);
+        rdepends.extend(pkg_runtime_deps);
 
         // Update recipe metadata
         if let Some(recipe) = graph.get_recipe_mut(recipe_id) {
@@ -318,6 +340,102 @@ impl RecipeExtractor {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Parse PACKAGECONFIG declarations and return a map of option -> (enable, disable, bdeps, rdeps, rrecommends)
+    fn parse_packageconfig(&self, content: &str) -> HashMap<String, PackageConfigOption> {
+        let mut configs = HashMap::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+
+            // Look for PACKAGECONFIG[option] = "..."
+            if line.starts_with("PACKAGECONFIG[") {
+                if let Some(bracket_end) = line.find(']') {
+                    let option_name = &line[14..bracket_end]; // Skip "PACKAGECONFIG["
+
+                    // Find the assignment
+                    if let Some(eq_pos) = line[bracket_end..].find('=') {
+                        let value_start = bracket_end + eq_pos + 1;
+                        let value = line[value_start..]
+                            .trim()
+                            .trim_matches('"')
+                            .trim_matches('\'');
+
+                        // Parse comma-separated fields
+                        let fields: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
+
+                        let enable = fields.get(0).unwrap_or(&"").to_string();
+                        let disable = fields.get(1).unwrap_or(&"").to_string();
+                        let build_deps: Vec<String> = fields
+                            .get(2)
+                            .unwrap_or(&"")
+                            .split_whitespace()
+                            .map(String::from)
+                            .collect();
+                        let runtime_deps: Vec<String> = fields
+                            .get(3)
+                            .unwrap_or(&"")
+                            .split_whitespace()
+                            .map(String::from)
+                            .collect();
+                        let runtime_recommends: Vec<String> = fields
+                            .get(4)
+                            .unwrap_or(&"")
+                            .split_whitespace()
+                            .map(String::from)
+                            .collect();
+
+                        configs.insert(
+                            option_name.to_string(),
+                            PackageConfigOption {
+                                name: option_name.to_string(),
+                                enable_flags: enable,
+                                disable_flags: disable,
+                                build_deps,
+                                runtime_deps,
+                                runtime_recommends,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        configs
+    }
+
+    /// Extract dependencies from PACKAGECONFIG
+    fn extract_packageconfig_deps(
+        &self,
+        variables: &HashMap<String, String>,
+        configs: &HashMap<String, PackageConfigOption>,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut build_deps = Vec::new();
+        let mut runtime_deps = Vec::new();
+
+        // Get the active PACKAGECONFIG options
+        if let Some(active_options) = variables.get("PACKAGECONFIG") {
+            for option in active_options.split_whitespace() {
+                if let Some(config) = configs.get(option) {
+                    // Add build dependencies
+                    for dep in &config.build_deps {
+                        if !dep.is_empty() && !build_deps.contains(dep) {
+                            build_deps.push(dep.clone());
+                        }
+                    }
+
+                    // Add runtime dependencies
+                    for dep in &config.runtime_deps {
+                        if !dep.is_empty() && !runtime_deps.contains(dep) {
+                            runtime_deps.push(dep.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        (build_deps, runtime_deps)
     }
 
     /// Extract and parse dependency list, handling version constraints
