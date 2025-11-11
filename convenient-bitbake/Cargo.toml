@@ -19,6 +19,12 @@ glob = "0.3.1"
 rowan = "0.15.15"
 logos = "0.14.0"
 
+# RustPython for executing Python code (optional feature)
+rustpython-vm = { version = "0.3", optional = true }
+
+[features]
+default = []
+python-execution = ["rustpython-vm"]
 
 [dev-dependencies]
 tracing-test = "0.2.4"
