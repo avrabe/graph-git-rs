@@ -12,6 +12,7 @@ pub mod python_analysis;
 pub mod task_parser;
 pub mod recipe_graph;
 pub mod recipe_extractor;
+pub mod simple_python_eval;
 
 #[cfg(feature = "python-execution")]
 pub mod python_executor;
@@ -32,6 +33,7 @@ pub use python_analysis::{PythonAnalyzer, PythonBlock, PythonBlockType, PythonVa
 pub use task_parser::{Task, TaskDependency, TaskCollection, parse_addtask_statement, parse_task_flag};
 pub use recipe_graph::{RecipeId, TaskId, Recipe, TaskNode, RecipeGraph, GraphStatistics};
 pub use recipe_extractor::{RecipeExtractor, RecipeExtraction, ExtractionConfig};
+pub use simple_python_eval::SimplePythonEvaluator;
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
