@@ -288,6 +288,7 @@ dependencies = [
  "regex",
  "rowan",
  "serde",
+ "tempfile",
  "thiserror",
  "tracing",
  "tracing-test",
