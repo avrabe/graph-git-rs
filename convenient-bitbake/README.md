@@ -161,23 +161,29 @@ cargo run --example test_validation
 
 ## Python Execution (Optional Feature)
 
-For recipes with complex Python code, enable RustPython-based execution:
+**Status**: Foundation complete, currently disabled by default
 
-```bash
-# Add to Cargo.toml:
-# convenient-bitbake = { features = ["python-execution"] }
+For recipes with complex Python code, RustPython-based execution can achieve 95%+ accuracy (vs 80% with static analysis).
 
-# Achieves 95%+ accuracy vs 80% with static analysis
-cargo run --example test_rustpython_concept --features python-execution
+**To Enable**:
+1. Uncomment rustpython-vm dependency in `Cargo.toml`
+2. Uncomment the `python-execution` feature
+3. Run `cargo deny check licenses --allow-incompatible` if using cargo-deny
+
+```toml
+# In Cargo.toml, uncomment:
+# rustpython-vm = { version = "0.3", optional = true }
+# [features]
+# python-execution = ["rustpython-vm"]
 ```
 
-**Benefits**:
+**Note**: RustPython is currently commented out due to transitive dependency license restrictions in some projects. The implementation foundation, design docs, and roadmap are complete. See `docs/PYTHON_EXECUTION_ROADMAP.md`.
+
+**Benefits** (when enabled):
 - ✅ Resolve computed values: `d.setVar('BUILD_DIR', workdir + '/build')`
 - ✅ Handle conditional logic: `if 'systemd' in features: d.appendVar(...)`
 - ✅ Pure Rust - no external Python dependency
 - ✅ Sandboxed execution - safe and secure
-
-See `docs/PYTHON_EXECUTION_ROADMAP.md` for implementation status.
 
 ## Examples
 

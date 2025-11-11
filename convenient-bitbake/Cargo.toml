@@ -20,11 +20,14 @@ rowan = "0.15.15"
 logos = "0.14.0"
 
 # RustPython for executing Python code (optional feature)
-rustpython-vm = { version = "0.3", optional = true }
+# Commented out by default due to transitive dependency licenses.
+# To enable Python execution, uncomment the following lines and run:
+# cargo deny check licenses --allow-incompatible
+# rustpython-vm = { version = "0.3", optional = true }
 
-[features]
-default = []
-python-execution = ["rustpython-vm"]
+# [features]
+# default = []
+# python-execution = ["rustpython-vm"]
 
 [dev-dependencies]
 tracing-test = "0.2.4"
