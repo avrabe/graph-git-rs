@@ -122,11 +122,44 @@ impl RecipeExtractor {
         })
     }
 
+    /// Handle BitBake line continuations (backslash at end of line)
+    fn join_continued_lines(&self, content: &str) -> String {
+        let mut result = String::new();
+        let mut current_line = String::new();
+
+        for line in content.lines() {
+            // Check if line ends with backslash (continuation)
+            let trimmed = line.trim_end();
+            if trimmed.ends_with('\\') {
+                // Remove backslash and append to current line
+                current_line.push_str(trimmed.trim_end_matches('\\'));
+                current_line.push(' '); // Add space between continued parts
+            } else {
+                // Complete line - append any continuation and add to result
+                current_line.push_str(line);
+                result.push_str(&current_line);
+                result.push('\n');
+                current_line.clear();
+            }
+        }
+
+        // Handle any remaining partial line
+        if !current_line.is_empty() {
+            result.push_str(&current_line);
+            result.push('\n');
+        }
+
+        result
+    }
+
     /// Parse simple variable assignments from recipe content
     fn parse_variables(&self, content: &str) -> HashMap<String, String> {
         let mut vars: HashMap<String, String> = HashMap::new();
 
-        for line in content.lines() {
+        // First, handle line continuations
+        let joined_content = self.join_continued_lines(content);
+
+        for line in joined_content.lines() {
             let line = line.trim();
 
             // Skip comments and empty lines
@@ -137,7 +170,14 @@ impl RecipeExtractor {
             // Look for simple assignments: VAR = "value"
             if let Some((left, right)) = line.split_once('=') {
                 let var_name = left.trim();
-                let value = right.trim().trim_matches('"').trim_matches('\'');
+                // Clean up value: trim whitespace, remove quotes, trim any remaining backslashes
+                let value = right
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .trim()
+                    .trim_end_matches('\\')
+                    .trim();
 
                 // Skip flag assignments like VAR[flag]
                 if var_name.contains('[') {
@@ -225,6 +265,25 @@ impl RecipeExtractor {
         let mut task_names = Vec::new();
         let mut task_constraints = Vec::new();
         let mut task_flags = Vec::new();
+
+        // Add base tasks that all BitBake recipes inherit from base.bbclass
+        // These are standard tasks defined in meta/classes-global/base.bbclass
+        let base_tasks = vec![
+            "fetch",
+            "unpack",
+            "patch",
+            "configure",
+            "compile",
+            "install",
+            "package",
+            "populate_sysroot",
+            "build",
+        ];
+
+        for task_name in base_tasks {
+            graph.add_task(recipe_id, task_name);
+            task_names.push(task_name.to_string());
+        }
 
         for line in content.lines() {
             let line = line.trim();

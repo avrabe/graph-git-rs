@@ -54,9 +54,9 @@ fn main() {
     let sample_recipes: Vec<_> = recipes
         .iter()
         .enumerate()
-        .filter(|(i, _)| i % 100 == 0) // Every 100th recipe
+        .filter(|(i, _)| i % 20 == 0) // Every 20th recipe
         .map(|(_, r)| r)
-        .take(20)
+        .take(50)
         .collect();
 
     let sample_count = sample_recipes.len();
