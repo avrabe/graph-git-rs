@@ -435,4 +435,206 @@ else:
         assert_eq!(result.variables_set.get("PF"), Some(&"myapp-1.2.3-r0".to_string()));
         assert_eq!(result.variables_set.get("MAJOR_VERSION"), Some(&"1".to_string()));
     }
+
+    #[test]
+    fn test_compile_error() {
+        let executor = PythonExecutor::new();
+
+        let code = r#"
+# Invalid Python syntax
+if True
+    x = 1
+"#;
+
+        let result = executor.execute(code, &HashMap::new());
+        assert!(!result.success, "Execution should fail");
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("Compile error"));
+    }
+
+    #[test]
+    fn test_runtime_error() {
+        let executor = PythonExecutor::new();
+
+        let code = r#"
+# This will cause a runtime error
+x = undefined_variable
+"#;
+
+        let result = executor.execute(code, &HashMap::new());
+        assert!(!result.success, "Execution should fail");
+        assert!(result.error.is_some());
+    }
+
+    #[test]
+    fn test_getvar_nonexistent() {
+        let executor = PythonExecutor::new();
+
+        let code = r#"
+# Getting non-existent variable should return None
+val = d.getVar("NONEXISTENT")
+if val is None:
+    d.setVar("RESULT", "was_none")
+else:
+    d.setVar("RESULT", "was_not_none")
+"#;
+
+        let result = executor.execute(code, &HashMap::new());
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("RESULT"), Some(&"was_none".to_string()));
+    }
+
+    #[test]
+    fn test_getvar_no_expand() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("BASE".to_string(), "/usr".to_string());
+
+        let code = r#"
+d.setVar("PATH", "${BASE}/bin")
+# Get without expansion
+unexpanded = d.getVar("PATH", False)
+d.setVar("UNEXPANDED", unexpanded)
+# Get with expansion (default)
+expanded = d.getVar("PATH")
+d.setVar("EXPANDED", expanded)
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("UNEXPANDED"), Some(&"${BASE}/bin".to_string()));
+        assert_eq!(result.variables_set.get("EXPANDED"), Some(&"/usr/bin".to_string()));
+    }
+
+    #[test]
+    fn test_getvar_explicit_expand() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("PREFIX".to_string(), "/opt".to_string());
+
+        let code = r#"
+d.setVar("INSTALL_DIR", "${PREFIX}/myapp")
+expanded = d.getVar("INSTALL_DIR", True)
+d.setVar("RESULT", expanded)
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("RESULT"), Some(&"/opt/myapp".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_variable_operations() {
+        let executor = PythonExecutor::new();
+
+        let code = r#"
+# Test multiple operations on same variable
+d.setVar("FLAGS", "a")
+d.appendVar("FLAGS", " b")
+d.appendVar("FLAGS", " c")
+d.prependVar("FLAGS", "0 ")
+"#;
+
+        let result = executor.execute(code, &HashMap::new());
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("FLAGS"), Some(&"0 a b c".to_string()));
+    }
+
+    #[test]
+    fn test_nested_variable_expansion() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("BASE".to_string(), "/usr".to_string());
+        initial.insert("SUBDIR".to_string(), "local".to_string());
+
+        let code = r#"
+d.setVar("PATH1", "${BASE}/${SUBDIR}")
+d.setVar("PATH2", "${PATH1}/bin")
+result = d.getVar("PATH2")
+d.setVar("FINAL", result)
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("FINAL"), Some(&"/usr/local/bin".to_string()));
+    }
+
+    #[test]
+    fn test_empty_code() {
+        let executor = PythonExecutor::new();
+
+        let result = executor.execute("", &HashMap::new());
+        assert!(result.success, "Empty code should succeed");
+        assert!(result.variables_set.is_empty());
+    }
+
+    #[test]
+    fn test_default_trait() {
+        let executor1 = PythonExecutor::new();
+        let executor2 = PythonExecutor::default();
+
+        let code = "d.setVar('TEST', 'value')";
+
+        let result1 = executor1.execute(code, &HashMap::new());
+        let result2 = executor2.execute(code, &HashMap::new());
+
+        assert!(result1.success);
+        assert!(result2.success);
+        assert_eq!(result1.variables_set.get("TEST"), result2.variables_set.get("TEST"));
+    }
+
+    #[test]
+    fn test_variable_tracking() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("VAR1".to_string(), "val1".to_string());
+        initial.insert("VAR2".to_string(), "val2".to_string());
+        initial.insert("VAR3".to_string(), "val3".to_string());
+
+        let code = r#"
+# Read some variables
+v1 = d.getVar("VAR1")
+v2 = d.getVar("VAR2")
+v3 = d.getVar("VAR3")
+# Set some variables
+d.setVar("OUT1", v1)
+d.setVar("OUT2", v2)
+# Append and prepend
+d.appendVar("VAR3", " extra")
+d.prependVar("VAR3", "prefix ")
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert!(result.variables_read.contains(&"VAR1".to_string()));
+        assert!(result.variables_read.contains(&"VAR2".to_string()));
+        assert!(result.variables_read.contains(&"VAR3".to_string()));
+        // OUT1, OUT2, VAR3 (from setVar), VAR3 (from appendVar), VAR3 (from prependVar)
+        // But since they're the same key, should be 3 unique keys in the map
+        assert!(result.variables_set.contains_key("OUT1"));
+        assert!(result.variables_set.contains_key("OUT2"));
+        assert!(result.variables_set.contains_key("VAR3"));
+    }
+
+    #[test]
+    fn test_python_stdlib_available() {
+        let executor = PythonExecutor::new();
+
+        let code = r#"
+import os
+import sys
+# Test that stdlib is available
+d.setVar("HAS_OS", "yes" if hasattr(os, 'path') else "no")
+d.setVar("HAS_SYS", "yes" if hasattr(sys, 'version') else "no")
+"#;
+
+        let result = executor.execute(code, &HashMap::new());
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("HAS_OS"), Some(&"yes".to_string()));
+        assert_eq!(result.variables_set.get("HAS_SYS"), Some(&"yes".to_string()));
+    }
 }
