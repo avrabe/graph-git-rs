@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
 /// Resolves and caches include files
+#[derive(Debug)]
 pub struct IncludeResolver {
     /// Search paths for include files (in priority order)
     search_paths: Vec<PathBuf>,
