@@ -694,7 +694,47 @@ impl RecipeExtractor {
                             None
                         }
                     }
-                    // Keep other variables as-is (e.g., VIRTUAL-RUNTIME_*, TARGET_*, etc.)
+                    // Enhanced variable expansion (Phase 7e)
+                    // Try to get from variables first, then from default_variables, then use sensible defaults
+                    "TARGET_ARCH" => variables.get("TARGET_ARCH")
+                        .or_else(|| self.config.default_variables.get("TARGET_ARCH"))
+                        .cloned()
+                        .or_else(|| Some(self.config.build_context.arch.clone())),
+                    "MACHINE" => variables.get("MACHINE")
+                        .or_else(|| self.config.default_variables.get("MACHINE"))
+                        .cloned(),
+                    "TARGET_OS" => variables.get("TARGET_OS")
+                        .or_else(|| self.config.default_variables.get("TARGET_OS"))
+                        .cloned()
+                        .or_else(|| Some("linux".to_string())),
+                    "HOST_ARCH" => variables.get("HOST_ARCH")
+                        .or_else(|| self.config.default_variables.get("HOST_ARCH"))
+                        .cloned()
+                        .or_else(|| Some("x86_64".to_string())),
+                    "BUILD_ARCH" => variables.get("BUILD_ARCH")
+                        .or_else(|| self.config.default_variables.get("BUILD_ARCH"))
+                        .cloned()
+                        .or_else(|| Some("x86_64".to_string())),
+                    "TUNE_ARCH" => variables.get("TUNE_ARCH")
+                        .or_else(|| self.config.default_variables.get("TUNE_ARCH"))
+                        .cloned()
+                        .or_else(|| Some(self.config.build_context.arch.clone())),
+                    "TRANSLATED_TARGET_ARCH" => variables.get("TRANSLATED_TARGET_ARCH")
+                        .or_else(|| self.config.default_variables.get("TRANSLATED_TARGET_ARCH"))
+                        .or_else(|| variables.get("TARGET_ARCH"))
+                        .cloned()
+                        .or_else(|| Some(self.config.build_context.arch.clone())),
+                    "MLPREFIX" => variables.get("MLPREFIX")
+                        .or_else(|| self.config.default_variables.get("MLPREFIX"))
+                        .cloned()
+                        .or_else(|| Some("".to_string())),
+                    "TARGET_PREFIX" => variables.get("TARGET_PREFIX")
+                        .or_else(|| self.config.default_variables.get("TARGET_PREFIX"))
+                        .cloned(),
+                    "STAGING_LIBDIR" => variables.get("STAGING_LIBDIR")
+                        .or_else(|| self.config.default_variables.get("STAGING_LIBDIR"))
+                        .cloned(),
+                    // Keep other variables as-is (e.g., VIRTUAL-RUNTIME_*, complex expressions, etc.)
                     _ => None,
                 };
 
