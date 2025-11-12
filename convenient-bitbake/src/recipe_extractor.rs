@@ -95,6 +95,10 @@ pub struct RecipeExtraction {
     pub rprovides: Vec<String>,
     pub tasks: Vec<String>,
     pub variables: HashMap<String, String>,
+    /// Phase 9c: Variable flags - VAR[flag] = value
+    /// Outer key: variable name, inner HashMap: flag name -> value
+    #[serde(default)]
+    pub variable_flags: HashMap<String, HashMap<String, String>>,
 }
 
 /// PACKAGECONFIG option declaration
@@ -207,6 +211,15 @@ impl RecipeExtractor {
             task_names = self.extract_tasks(graph, recipe_id, content);
         }
 
+        // Phase 9c: Parse variable flags
+        let variable_flags = self.parse_variable_flags(content);
+
+        // Phase 9c: Extract task dependencies from do_*[depends] flags
+        let task_depends = self.extract_task_flag_depends(&variable_flags);
+        depends.extend(task_depends);
+        depends.sort();
+        depends.dedup();
+
         Ok(RecipeExtraction {
             recipe_id,
             name: recipe_name,
@@ -216,6 +229,7 @@ impl RecipeExtractor {
             rprovides,
             tasks: task_names,
             variables,
+            variable_flags,
         })
     }
 
@@ -296,6 +310,80 @@ impl RecipeExtractor {
         }
 
         vars
+    }
+
+    /// Phase 9c: Parse variable flags from content
+    /// Extracts VAR[flag] = value statements
+    /// Returns: HashMap<var_name, HashMap<flag_name, flag_value>>
+    fn parse_variable_flags(&self, content: &str) -> HashMap<String, HashMap<String, String>> {
+        let mut flags: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+        let joined_content = self.join_continued_lines(content);
+
+        for line in joined_content.lines() {
+            let line = line.trim();
+
+            // Skip comments and empty lines
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            // Match VAR[flag] = value or VAR[flag] += value patterns
+            if let Some((var_part, flag_value)) = line.split_once('=') {
+                let var_part = var_part.trim();
+
+                // Check if this is a flag assignment: VAR[flag]
+                if let Some(open_bracket) = var_part.find('[') {
+                    if let Some(close_bracket) = var_part.find(']') {
+                        if open_bracket < close_bracket {
+                            let var_name = var_part[..open_bracket].trim().to_string();
+                            let flag_name = var_part[open_bracket + 1..close_bracket].trim().to_string();
+                            let value = self.clean_value(flag_value);
+
+                            // Store the flag
+                            flags
+                                .entry(var_name)
+                                .or_insert_with(HashMap::new)
+                                .insert(flag_name, value);
+                        }
+                    }
+                }
+            }
+        }
+
+        flags
+    }
+
+    /// Phase 9c: Extract task dependencies from do_*[depends] flags
+    /// Parses dependencies like: do_compile[depends] = "virtual/kernel:do_shared_workdir"
+    /// Returns: Vec of recipe dependencies extracted from task flags
+    fn extract_task_flag_depends(&self, flags: &HashMap<String, HashMap<String, String>>) -> Vec<String> {
+        let mut depends = Vec::new();
+
+        for (var_name, var_flags) in flags {
+            // Look for do_* tasks with depends flags
+            if var_name.starts_with("do_") {
+                if let Some(depends_value) = var_flags.get("depends") {
+                    // Parse dependencies: "recipe1:do_task1 recipe2:do_task2"
+                    for dep in depends_value.split_whitespace() {
+                        // Extract recipe name before the colon
+                        if let Some(colon_pos) = dep.find(':') {
+                            let recipe = dep[..colon_pos].trim();
+                            if !recipe.is_empty() {
+                                depends.push(recipe.to_string());
+                            }
+                        } else {
+                            // No colon, treat entire string as recipe name
+                            if !dep.is_empty() {
+                                depends.push(dep.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        depends
     }
 
     /// Parse an assignment line and extract variable name, operator, and value
@@ -1488,4 +1576,151 @@ PROVIDES = "virtual/kernel"
         let resolved = graph.resolve_provider("virtual/kernel");
         assert_eq!(resolved, Some(extraction.recipe_id));
     }
+
+    // Phase 9c: Variable flags tests
+
+    #[test]
+    fn test_parse_variable_flags() {
+        let extractor = RecipeExtractor::new_default();
+
+        let content = r#"
+SRC_URI[md5sum] = "abc123"
+SRC_URI[sha256sum] = "def456"
+do_compile[depends] = "virtual/kernel:do_shared_workdir"
+do_install[cleandirs] = "${D}"
+PACKAGECONFIG[ssl] = "--enable-ssl,--disable-ssl,openssl"
+"#;
+
+        let flags = extractor.parse_variable_flags(content);
+
+        // Check SRC_URI flags
+        assert!(flags.contains_key("SRC_URI"));
+        let src_uri_flags = &flags["SRC_URI"];
+        assert_eq!(src_uri_flags.get("md5sum"), Some(&"abc123".to_string()));
+        assert_eq!(src_uri_flags.get("sha256sum"), Some(&"def456".to_string()));
+
+        // Check do_compile flags
+        assert!(flags.contains_key("do_compile"));
+        let compile_flags = &flags["do_compile"];
+        assert_eq!(
+            compile_flags.get("depends"),
+            Some(&"virtual/kernel:do_shared_workdir".to_string())
+        );
+
+        // Check do_install flags
+        assert!(flags.contains_key("do_install"));
+        let install_flags = &flags["do_install"];
+        assert_eq!(install_flags.get("cleandirs"), Some(&"${D}".to_string()));
+
+        // Check PACKAGECONFIG flags
+        assert!(flags.contains_key("PACKAGECONFIG"));
+        let pkg_flags = &flags["PACKAGECONFIG"];
+        assert_eq!(
+            pkg_flags.get("ssl"),
+            Some(&"--enable-ssl,--disable-ssl,openssl".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_task_flag_depends() {
+        let extractor = RecipeExtractor::new_default();
+
+        let mut flags: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+        // Single dependency
+        let mut do_compile = HashMap::new();
+        do_compile.insert(
+            "depends".to_string(),
+            "virtual/kernel:do_shared_workdir".to_string(),
+        );
+        flags.insert("do_compile".to_string(), do_compile);
+
+        // Multiple dependencies
+        let mut do_install = HashMap::new();
+        do_install.insert(
+            "depends".to_string(),
+            "recipe-a:do_populate_sysroot recipe-b:do_configure".to_string(),
+        );
+        flags.insert("do_install".to_string(), do_install);
+
+        // Non-task flag (should be ignored)
+        let mut src_uri = HashMap::new();
+        src_uri.insert("md5sum".to_string(), "abc123".to_string());
+        flags.insert("SRC_URI".to_string(), src_uri);
+
+        let task_depends = extractor.extract_task_flag_depends(&flags);
+
+        // Should extract recipe names from task dependencies
+        assert!(task_depends.contains(&"virtual/kernel".to_string()));
+        assert!(task_depends.contains(&"recipe-a".to_string()));
+        assert!(task_depends.contains(&"recipe-b".to_string()));
+        assert_eq!(task_depends.len(), 3);
+    }
+
+    #[test]
+    fn test_variable_flags_integration() {
+        let mut graph = RecipeGraph::new();
+        let extractor = RecipeExtractor::new_default();
+
+        let content = r#"
+SUMMARY = "Test recipe with task dependencies"
+PV = "1.0"
+DEPENDS = "base-dep"
+
+# Task-level dependencies
+do_compile[depends] = "virtual/kernel:do_shared_workdir"
+do_install[depends] = "other-recipe:do_populate_sysroot"
+
+# Other flags (non-dependency)
+SRC_URI[md5sum] = "abc123"
+PACKAGECONFIG[feature] = "--enable-feature,--disable-feature,feature-dep"
+"#;
+
+        let extraction = extractor
+            .extract_from_content(&mut graph, "test-recipe", content)
+            .unwrap();
+
+        // Check that task dependencies were extracted
+        assert!(extraction.depends.contains(&"base-dep".to_string()));
+        assert!(extraction.depends.contains(&"virtual/kernel".to_string()));
+        assert!(extraction.depends.contains(&"other-recipe".to_string()));
+
+        // Check variable flags were captured
+        assert!(extraction.variable_flags.contains_key("SRC_URI"));
+        assert!(extraction.variable_flags.contains_key("do_compile"));
+        assert!(extraction.variable_flags.contains_key("do_install"));
+        assert!(extraction.variable_flags.contains_key("PACKAGECONFIG"));
+    }
+
+    #[test]
+    fn test_real_world_task_dependencies() {
+        let mut graph = RecipeGraph::new();
+        let extractor = RecipeExtractor::new_default();
+
+        // Real-world pattern from linux-yocto recipe
+        let content = r#"
+SUMMARY = "Linux Kernel"
+DEPENDS = "bc-native bison-native"
+
+do_compile[depends] += "virtual/${TARGET_PREFIX}gcc:do_populate_sysroot"
+do_compile[depends] += "virtual/${TARGET_PREFIX}binutils:do_populate_sysroot"
+do_install[depends] = "depmodwrapper-cross:do_populate_sysroot"
+"#;
+
+        let extraction = extractor
+            .extract_from_content(&mut graph, "linux-yocto", content)
+            .unwrap();
+
+        // Check base dependencies
+        assert!(extraction.depends.contains(&"bc-native".to_string()));
+        assert!(extraction.depends.contains(&"bison-native".to_string()));
+
+        // Check task-level dependencies were extracted
+        // Note: variable expansion isn't done in this test, so we get literal ${...}
+        assert!(extraction
+            .depends
+            .iter()
+            .any(|d| d.contains("gcc") || d == "depmodwrapper-cross"));
+    }
 }
+
