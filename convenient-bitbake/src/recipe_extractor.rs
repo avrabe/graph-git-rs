@@ -330,8 +330,9 @@ impl RecipeExtractor {
             }
         }
 
-        // Handle +=, ?=, .=, =+, =. operators
-        for (op, op_str) in &[("+=", "+="), ("?=", "?="), (".=", ".="), ("=+", "=+"), ("=.", "=.")] {
+        // Handle +=, ?=, ??=, .=, =+, =. operators
+        // Phase 7g: Add ??= (weak default) support
+        for (op, op_str) in &[("??=", "??="), ("+=", "+="), ("?=", "?="), (".=", ".="), ("=+", "=+"), ("=.", "=.")] {
             if let Some(pos) = line.find(op) {
                 let var_name = line[..pos].trim().to_string();
                 let value = self.clean_value(&line[pos + op.len()..]);
@@ -479,6 +480,14 @@ impl RecipeExtractor {
                     vars.insert(var_name.to_string(), value.to_string());
                 }
             }
+            "??=" => {
+                // Phase 7g: Weak default assignment - lowest precedence
+                // Only set if not already set (like ?=, but even weaker)
+                // For static analysis, treat same as ?=
+                if !vars.contains_key(var_name) {
+                    vars.insert(var_name.to_string(), value.to_string());
+                }
+            }
             _ => {
                 // Unknown operator - treat as simple assignment
                 vars.insert(var_name.to_string(), value.to_string());
@@ -561,6 +570,7 @@ impl RecipeExtractor {
     }
 
     /// Parse PACKAGECONFIG declarations and return a map of option -> (enable, disable, bdeps, rdeps, rrecommends)
+    /// Phase 7g: Now expands variable references in dependency lists
     fn parse_packageconfig(&self, content: &str) -> HashMap<String, PackageConfigOption> {
         let mut configs = HashMap::new();
 
@@ -585,24 +595,16 @@ impl RecipeExtractor {
 
                         let enable = fields.get(0).unwrap_or(&"").to_string();
                         let disable = fields.get(1).unwrap_or(&"").to_string();
-                        let build_deps: Vec<String> = fields
-                            .get(2)
-                            .unwrap_or(&"")
-                            .split_whitespace()
-                            .map(String::from)
-                            .collect();
-                        let runtime_deps: Vec<String> = fields
-                            .get(3)
-                            .unwrap_or(&"")
-                            .split_whitespace()
-                            .map(String::from)
-                            .collect();
-                        let runtime_recommends: Vec<String> = fields
-                            .get(4)
-                            .unwrap_or(&"")
-                            .split_whitespace()
-                            .map(String::from)
-                            .collect();
+
+                        // Phase 7g: Parse build_deps field and handle variable references
+                        let build_deps_str = fields.get(2).unwrap_or(&"");
+                        let build_deps: Vec<String> = self.expand_packageconfig_deps(build_deps_str);
+
+                        let runtime_deps_str = fields.get(3).unwrap_or(&"");
+                        let runtime_deps: Vec<String> = self.expand_packageconfig_deps(runtime_deps_str);
+
+                        let runtime_recommends_str = fields.get(4).unwrap_or(&"");
+                        let runtime_recommends: Vec<String> = self.expand_packageconfig_deps(runtime_recommends_str);
 
                         configs.insert(
                             option_name.to_string(),
@@ -621,6 +623,29 @@ impl RecipeExtractor {
         }
 
         configs
+    }
+
+    /// Phase 7g: Expand variable references in PACKAGECONFIG dependency fields
+    /// Handles patterns like ${PACKAGECONFIG_X11} or direct deps like "libx11"
+    fn expand_packageconfig_deps(&self, deps_str: &str) -> Vec<String> {
+        // For now, split by whitespace and keep both variable refs and direct deps
+        // In a full implementation, we'd resolve ${PACKAGECONFIG_*} from default_variables
+        deps_str
+            .split_whitespace()
+            .map(|dep| {
+                // Phase 7g: Try to expand simple ${VAR} references from default_variables
+                if dep.starts_with("${") && dep.ends_with("}") {
+                    let var_name = &dep[2..dep.len() - 1];
+                    self.config.default_variables
+                        .get(var_name)
+                        .cloned()
+                        .unwrap_or_else(|| dep.to_string())
+                } else {
+                    dep.to_string()
+                }
+            })
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 
     /// Extract dependencies from PACKAGECONFIG
@@ -658,12 +683,30 @@ impl RecipeExtractor {
 
     /// Expand simple variable references in a string
     /// Expands ${PN}, ${PV}, ${BPN}, ${P} while keeping complex variables like ${VIRTUAL-RUNTIME_*}
+    /// Phase 7h: Now supports nested variable expansion with depth limiting
     fn expand_simple_variables(
         &self,
         value: &str,
         recipe_name: &str,
         variables: &HashMap<String, String>,
     ) -> String {
+        // Phase 7h: Recursively expand up to depth 5 to handle nested references
+        self.expand_simple_variables_recursive(value, recipe_name, variables, 0)
+    }
+
+    /// Phase 7h: Recursive helper for nested variable expansion
+    fn expand_simple_variables_recursive(
+        &self,
+        value: &str,
+        recipe_name: &str,
+        variables: &HashMap<String, String>,
+        depth: usize,
+    ) -> String {
+        // Prevent infinite loops with depth limit
+        if depth >= 5 {
+            return value.to_string();
+        }
+
         let mut result = value.to_string();
         let mut start = 0;
 
@@ -734,14 +777,74 @@ impl RecipeExtractor {
                     "STAGING_LIBDIR" => variables.get("STAGING_LIBDIR")
                         .or_else(|| self.config.default_variables.get("STAGING_LIBDIR"))
                         .cloned(),
+
+                    // Phase 7h: Additional standard BitBake variables
+                    "WORKDIR" => variables.get("WORKDIR")
+                        .or_else(|| self.config.default_variables.get("WORKDIR"))
+                        .cloned(),
+                    "S" => variables.get("S")
+                        .or_else(|| self.config.default_variables.get("S"))
+                        .cloned(),
+                    "B" => variables.get("B")
+                        .or_else(|| self.config.default_variables.get("B"))
+                        .cloned(),
+                    "D" => variables.get("D")
+                        .or_else(|| self.config.default_variables.get("D"))
+                        .cloned(),
+                    "STAGING_DIR" => variables.get("STAGING_DIR")
+                        .or_else(|| self.config.default_variables.get("STAGING_DIR"))
+                        .cloned(),
+                    "STAGING_DIR_HOST" => variables.get("STAGING_DIR_HOST")
+                        .or_else(|| self.config.default_variables.get("STAGING_DIR_HOST"))
+                        .cloned(),
+                    "STAGING_DIR_TARGET" => variables.get("STAGING_DIR_TARGET")
+                        .or_else(|| self.config.default_variables.get("STAGING_DIR_TARGET"))
+                        .cloned(),
+                    "STAGING_DIR_NATIVE" => variables.get("STAGING_DIR_NATIVE")
+                        .or_else(|| self.config.default_variables.get("STAGING_DIR_NATIVE"))
+                        .cloned(),
+                    "STAGING_INCDIR" => variables.get("STAGING_INCDIR")
+                        .or_else(|| self.config.default_variables.get("STAGING_INCDIR"))
+                        .cloned(),
+                    "STAGING_BINDIR" => variables.get("STAGING_BINDIR")
+                        .or_else(|| self.config.default_variables.get("STAGING_BINDIR"))
+                        .cloned(),
+                    "STAGING_DATADIR" => variables.get("STAGING_DATADIR")
+                        .or_else(|| self.config.default_variables.get("STAGING_DATADIR"))
+                        .cloned(),
+                    "includedir" => variables.get("includedir")
+                        .or_else(|| self.config.default_variables.get("includedir"))
+                        .cloned()
+                        .or_else(|| Some("/usr/include".to_string())),
+                    "libdir" => variables.get("libdir")
+                        .or_else(|| self.config.default_variables.get("libdir"))
+                        .cloned()
+                        .or_else(|| Some("/usr/lib".to_string())),
+                    "bindir" => variables.get("bindir")
+                        .or_else(|| self.config.default_variables.get("bindir"))
+                        .cloned()
+                        .or_else(|| Some("/usr/bin".to_string())),
+                    "datadir" => variables.get("datadir")
+                        .or_else(|| self.config.default_variables.get("datadir"))
+                        .cloned()
+                        .or_else(|| Some("/usr/share".to_string())),
+
                     // Keep other variables as-is (e.g., VIRTUAL-RUNTIME_*, complex expressions, etc.)
                     _ => None,
                 };
 
                 if let Some(repl) = replacement {
+                    // Phase 7h: Recursively expand the replacement in case it contains variables
+                    let expanded_repl = self.expand_simple_variables_recursive(
+                        &repl,
+                        recipe_name,
+                        variables,
+                        depth + 1,
+                    );
+
                     // Replace the variable reference
-                    result.replace_range(abs_pos..abs_pos + end_pos + 3, &repl);
-                    start = abs_pos + repl.len();
+                    result.replace_range(abs_pos..abs_pos + end_pos + 3, &expanded_repl);
+                    start = abs_pos + expanded_repl.len();
                 } else {
                     // Keep the variable as-is, move past it
                     start = abs_pos + end_pos + 3;
