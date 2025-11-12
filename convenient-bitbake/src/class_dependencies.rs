@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::fs;
+use crate::simple_python_eval::SimplePythonEvaluator;
 
 /// Get build dependencies added by a class
 pub fn get_class_build_deps(class_name: &str, distro_features: &str) -> Vec<String> {
@@ -182,10 +183,17 @@ pub struct ClassDependencies {
 }
 
 /// Parse a .bbclass file and extract dependencies
-pub fn parse_class_file(class_path: &Path) -> Option<ClassDependencies> {
+/// Phase 7f: Now supports Python expression evaluation in .bbclass files
+pub fn parse_class_file(
+    class_path: &Path,
+    variables: &HashMap<String, String>,
+) -> Option<ClassDependencies> {
     let content = fs::read_to_string(class_path).ok()?;
 
     let mut deps = ClassDependencies::default();
+
+    // Create Python evaluator with recipe context
+    let evaluator = SimplePythonEvaluator::new(variables.clone());
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -195,13 +203,13 @@ pub fn parse_class_file(class_path: &Path) -> Option<ClassDependencies> {
             continue;
         }
 
-        // Parse DEPENDS lines
-        if let Some(extracted) = extract_depends_from_line(trimmed, "DEPENDS") {
+        // Parse DEPENDS lines (Phase 7f: with Python evaluation)
+        if let Some(extracted) = extract_depends_from_line(trimmed, "DEPENDS", &evaluator) {
             deps.build_deps.extend(extracted);
         }
 
-        // Parse RDEPENDS lines
-        if let Some(extracted) = extract_depends_from_line(trimmed, "RDEPENDS") {
+        // Parse RDEPENDS lines (Phase 7f: with Python evaluation)
+        if let Some(extracted) = extract_depends_from_line(trimmed, "RDEPENDS", &evaluator) {
             deps.runtime_deps.extend(extracted);
         }
     }
@@ -211,12 +219,18 @@ pub fn parse_class_file(class_path: &Path) -> Option<ClassDependencies> {
 
 /// Extract dependencies from a single line
 /// Handles: DEPENDS = "foo", DEPENDS += "foo", DEPENDS:append = "foo", etc.
-fn extract_depends_from_line(line: &str, var_name: &str) -> Option<Vec<String>> {
+/// Phase 7f: Now evaluates Python expressions using SimplePythonEvaluator
+fn extract_depends_from_line(
+    line: &str,
+    var_name: &str,
+    evaluator: &SimplePythonEvaluator,
+) -> Option<Vec<String>> {
     // Handle various forms:
     // DEPENDS = "foo bar"
     // DEPENDS += "foo"
     // DEPENDS:append = " foo"
     // DEPENDS:prepend = "foo "
+    // Phase 7f: DEPENDS:append = "${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'libsystemd', '', d)}"
 
     let trimmed = line.trim();
 
@@ -241,15 +255,21 @@ fn extract_depends_from_line(line: &str, var_name: &str) -> Option<Vec<String>> 
     };
 
     // Extract value from quotes or direct assignment
-    let value = clean_value(after_var);
+    let mut value = clean_value(after_var);
 
     if value.is_empty() {
         return None;
     }
 
-    // Skip lines with Python expressions (we can't evaluate those statically)
+    // Phase 7f: Evaluate Python expressions if present
     if value.contains("${@") {
-        return None;
+        // Try to evaluate the Python expression
+        value = eval_python_in_value(&value, evaluator);
+
+        // If evaluation resulted in empty string, no dependencies
+        if value.is_empty() {
+            return None;
+        }
     }
 
     // Split by whitespace and filter out empty strings
@@ -264,6 +284,70 @@ fn extract_depends_from_line(line: &str, var_name: &str) -> Option<Vec<String>> 
     } else {
         Some(deps)
     }
+}
+
+/// Evaluate Python expressions in a value string (Phase 7f)
+/// Finds all ${@...} expressions and evaluates them using SimplePythonEvaluator
+fn eval_python_in_value(value: &str, evaluator: &SimplePythonEvaluator) -> String {
+    let mut result = String::new();
+    let mut start = 0;
+
+    while let Some(expr_start) = value[start..].find("${@") {
+        let abs_start = start + expr_start;
+
+        // Add text before the expression
+        result.push_str(&value[start..abs_start]);
+
+        // Find the closing brace
+        if let Some(expr_end) = find_matching_brace(&value[abs_start + 2..]) {
+            let expr = &value[abs_start..abs_start + 3 + expr_end]; // Include ${@ and }
+
+            // Try to evaluate the expression
+            if let Some(evaluated) = evaluator.evaluate(expr) {
+                result.push_str(&evaluated);
+            } else {
+                // Evaluation failed - keep original expression
+                // But return empty to signal we can't process this
+                return String::new();
+            }
+
+            start = abs_start + 3 + expr_end;
+        } else {
+            // No closing brace - keep original and continue
+            result.push_str(&value[abs_start..]);
+            break;
+        }
+    }
+
+    // Add remaining text
+    result.push_str(&value[start..]);
+
+    result
+}
+
+/// Find the matching closing brace for a ${...} expression
+/// Returns the position relative to the start (after ${@)
+fn find_matching_brace(s: &str) -> Option<usize> {
+    let mut depth = 1;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    for (i, ch) in s.chars().enumerate() {
+        match ch {
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            '{' if !in_single_quote && !in_double_quote => depth += 1,
+            '}' if !in_single_quote && !in_double_quote => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 /// Clean a value by removing quotes and extra whitespace
@@ -311,14 +395,16 @@ pub fn find_class_file(class_name: &str, search_paths: &[PathBuf]) -> Option<Pat
 
 /// Get dependencies for a class, trying to parse .bbclass file first,
 /// falling back to hardcoded mappings
+/// Phase 7f: Now accepts variables for Python expression evaluation
 pub fn get_class_deps_dynamic(
     class_name: &str,
     distro_features: &str,
     search_paths: &[PathBuf],
+    variables: &HashMap<String, String>,
 ) -> (Vec<String>, Vec<String>) {
-    // Try to parse .bbclass file first
+    // Try to parse .bbclass file first (Phase 7f: with Python evaluation)
     if let Some(class_path) = find_class_file(class_name, search_paths) {
-        if let Some(parsed) = parse_class_file(&class_path) {
+        if let Some(parsed) = parse_class_file(&class_path, variables) {
             // Successfully parsed - use those dependencies
             if !parsed.build_deps.is_empty() || !parsed.runtime_deps.is_empty() {
                 return (parsed.build_deps, parsed.runtime_deps);
@@ -385,31 +471,63 @@ mod tests {
 
     #[test]
     fn test_extract_depends_simple() {
+        let vars = HashMap::new();
+        let evaluator = SimplePythonEvaluator::new(vars);
         let line = "DEPENDS = \"cmake-native ninja-native\"";
-        let deps = extract_depends_from_line(line, "DEPENDS").unwrap();
+        let deps = extract_depends_from_line(line, "DEPENDS", &evaluator).unwrap();
         assert_eq!(deps, vec!["cmake-native", "ninja-native"]);
     }
 
     #[test]
     fn test_extract_depends_append() {
+        let vars = HashMap::new();
+        let evaluator = SimplePythonEvaluator::new(vars);
         let line = "DEPENDS:append = \" meson-native ninja-native\"";
-        let deps = extract_depends_from_line(line, "DEPENDS").unwrap();
+        let deps = extract_depends_from_line(line, "DEPENDS", &evaluator).unwrap();
         assert_eq!(deps, vec!["meson-native", "ninja-native"]);
     }
 
     #[test]
     fn test_extract_depends_prepend() {
+        let vars = HashMap::new();
+        let evaluator = SimplePythonEvaluator::new(vars);
         let line = "DEPENDS:prepend = \"cmake-native \"";
-        let deps = extract_depends_from_line(line, "DEPENDS").unwrap();
+        let deps = extract_depends_from_line(line, "DEPENDS", &evaluator).unwrap();
         assert_eq!(deps, vec!["cmake-native"]);
     }
 
     #[test]
-    fn test_extract_depends_with_python() {
-        // Should skip Python expressions
+    fn test_extract_depends_with_python_no_context() {
+        // Without proper context, Python expression can't be evaluated
+        let vars = HashMap::new();
+        let evaluator = SimplePythonEvaluator::new(vars);
         let line = "DEPENDS:append = \"${@'qemu-native' if d.getVar('FOO') else ''}\"";
-        let deps = extract_depends_from_line(line, "DEPENDS");
-        assert_eq!(deps, None);
+        let deps = extract_depends_from_line(line, "DEPENDS", &evaluator);
+        assert_eq!(deps, None); // Can't evaluate without FOO variable
+    }
+
+    #[test]
+    fn test_extract_depends_with_python_evaluated() {
+        // Phase 7f: With proper context, Python expression IS evaluated
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam".to_string());
+        let evaluator = SimplePythonEvaluator::new(vars);
+
+        let line = "DEPENDS:append = \" ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'libsystemd', '', d)}\"";
+        let deps = extract_depends_from_line(line, "DEPENDS", &evaluator).unwrap();
+        assert_eq!(deps, vec!["libsystemd"]);
+    }
+
+    #[test]
+    fn test_extract_depends_with_python_empty_result() {
+        // Python expression evaluates to empty string
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "pam ipv6".to_string());
+        let evaluator = SimplePythonEvaluator::new(vars);
+
+        let line = "DEPENDS:append = \"${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'libsystemd', '', d)}\"";
+        let deps = extract_depends_from_line(line, "DEPENDS", &evaluator);
+        assert_eq!(deps, None); // Empty result = no dependencies
     }
 
     #[test]
@@ -426,7 +544,8 @@ RDEPENDS:${PN} = "bash"
         let temp_file = temp_dir.join("test.bbclass");
         std::fs::write(&temp_file, content).unwrap();
 
-        let parsed = parse_class_file(&temp_file).unwrap();
+        let vars = HashMap::new();
+        let parsed = parse_class_file(&temp_file, &vars).unwrap();
 
         assert_eq!(parsed.build_deps.len(), 2);
         assert!(parsed.build_deps.contains(&"cmake-native".to_string()));
@@ -435,5 +554,76 @@ RDEPENDS:${PN} = "bash"
 
         // Clean up
         std::fs::remove_file(&temp_file).ok();
+    }
+
+    #[test]
+    fn test_parse_class_with_python_expressions() {
+        // Phase 7f: Test Python expression evaluation in .bbclass files
+        let content = r#"
+# Conditional dependencies based on DISTRO_FEATURES
+DEPENDS:append = " ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'libsystemd', '', d)}"
+DEPENDS:append = " ${@bb.utils.contains('DISTRO_FEATURES', 'pam', 'libpam', '', d)}"
+RDEPENDS:${PN} = "${@bb.utils.filter('DISTRO_FEATURES', 'systemd pam wayland', d)}"
+"#;
+
+        // Create a temporary file
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_python.bbclass");
+        std::fs::write(&temp_file, content).unwrap();
+
+        // Test with systemd in DISTRO_FEATURES
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam ipv6".to_string());
+        let parsed = parse_class_file(&temp_file, &vars).unwrap();
+
+        // Should include libsystemd and libpam
+        assert!(parsed.build_deps.contains(&"libsystemd".to_string()));
+        assert!(parsed.build_deps.contains(&"libpam".to_string()));
+
+        // Runtime deps should be filtered list
+        assert!(parsed.runtime_deps.contains(&"systemd".to_string()));
+        assert!(parsed.runtime_deps.contains(&"pam".to_string()));
+
+        // Test without systemd in DISTRO_FEATURES
+        let mut vars2 = HashMap::new();
+        vars2.insert("DISTRO_FEATURES".to_string(), "ipv6 bluetooth".to_string());
+        let parsed2 = parse_class_file(&temp_file, &vars2).unwrap();
+
+        // Should NOT include systemd deps
+        assert!(!parsed2.build_deps.contains(&"libsystemd".to_string()));
+        assert!(!parsed2.build_deps.contains(&"libpam".to_string()));
+
+        // Clean up
+        std::fs::remove_file(&temp_file).ok();
+    }
+
+    #[test]
+    fn test_find_matching_brace() {
+        assert_eq!(find_matching_brace("test}"), Some(4));
+        assert_eq!(find_matching_brace("test{nested}end}"), Some(15));
+        assert_eq!(find_matching_brace("'}'} more"), Some(3));
+        assert_eq!(find_matching_brace("test"), None);
+    }
+
+    #[test]
+    fn test_eval_python_in_value() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam".to_string());
+        let evaluator = SimplePythonEvaluator::new(vars);
+
+        // Test single expression
+        let value = "${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'yes', 'no', d)}";
+        let result = eval_python_in_value(value, &evaluator);
+        assert_eq!(result, "yes");
+
+        // Test with surrounding text
+        let value = "before ${@bb.utils.contains('DISTRO_FEATURES', 'pam', 'middle', 'skip', d)} after";
+        let result = eval_python_in_value(value, &evaluator);
+        assert_eq!(result, "before middle after");
+
+        // Test multiple expressions
+        let value = "${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'sys', '', d)} ${@bb.utils.contains('DISTRO_FEATURES', 'pam', 'auth', '', d)}";
+        let result = eval_python_in_value(value, &evaluator);
+        assert_eq!(result, "sys auth");
     }
 }
