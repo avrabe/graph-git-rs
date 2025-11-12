@@ -258,7 +258,7 @@ impl SimplePythonEvaluator {
     /// Phase 8a: Apply chained string operations to a value
     /// Supports: .replace(old, new), .strip()/.lstrip()/.rstrip(), .upper()/.lower(), [index], [start:end]
     /// Example: "foo-bar".replace('-', '_').upper() -> "FOO_BAR"
-    fn apply_string_operations(&self, mut value: &str, operations: &str) -> Option<String> {
+    fn apply_string_operations(&self, value: &str, operations: &str) -> Option<String> {
         debug!("Applying string operations: {} to value: {}", operations, value);
 
         let mut result = value.to_string();
@@ -568,13 +568,143 @@ impl SimplePythonEvaluator {
         result
     }
 
-    /// Evaluate a condition to boolean
-    /// Handles:
-    ///   - d.getVar('VAR') == 'value'
-    ///   - d.getVar('VAR') != 'value'  ///   - 'item' in d.getVar('VAR').split()
-    ///   - d.getVar('VAR') (truthiness check)
-    fn eval_condition(&self, condition: &str) -> Option<bool> {
-        debug!("Evaluating condition: {}", condition);
+    /// Phase 8c: Evaluate logical expression with and, or, not operators
+    /// Operator precedence: not > and > or (standard Python precedence)
+    /// Supports parentheses for grouping
+    fn eval_logical_expression(&self, expr: &str) -> Option<bool> {
+        debug!("Evaluating logical expression: {}", expr);
+
+        let trimmed = expr.trim();
+
+        // Handle parentheses first - evaluate innermost expressions
+        if let Some(open_paren) = trimmed.find('(') {
+            // Find matching closing paren
+            let mut depth = 0;
+            let mut close_paren = None;
+
+            for (i, ch) in trimmed[open_paren..].chars().enumerate() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_paren = Some(open_paren + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some(close_pos) = close_paren {
+                // Evaluate the parenthesized expression
+                let inner_expr = &trimmed[open_paren + 1..close_pos];
+                let inner_result = self.eval_logical_expression(inner_expr)?;
+
+                // Replace the parenthesized part with its result
+                let before = &trimmed[..open_paren];
+                let after = &trimmed[close_pos + 1..];
+                let result_str = if inner_result { "True" } else { "False" };
+
+                let new_expr = format!("{}{}{}", before, result_str, after);
+                return self.eval_logical_expression(&new_expr);
+            }
+        }
+
+        // Handle 'or' operator (lowest precedence)
+        // Find ' or ' at the top level (not inside parens or quotes)
+        if let Some(or_pos) = self.find_operator(trimmed, " or ") {
+            let left_part = &trimmed[..or_pos];
+            let right_part = &trimmed[or_pos + 4..]; // Skip " or "
+
+            debug!("  OR expression: {} or {}", left_part, right_part);
+
+            let left_result = self.eval_logical_expression(left_part)?;
+
+            // Short-circuit: if left is true, return true without evaluating right
+            if left_result {
+                return Some(true);
+            }
+
+            let right_result = self.eval_logical_expression(right_part)?;
+            return Some(right_result);
+        }
+
+        // Handle 'and' operator (medium precedence)
+        if let Some(and_pos) = self.find_operator(trimmed, " and ") {
+            let left_part = &trimmed[..and_pos];
+            let right_part = &trimmed[and_pos + 5..]; // Skip " and "
+
+            debug!("  AND expression: {} and {}", left_part, right_part);
+
+            let left_result = self.eval_logical_expression(left_part)?;
+
+            // Short-circuit: if left is false, return false without evaluating right
+            if !left_result {
+                return Some(false);
+            }
+
+            let right_result = self.eval_logical_expression(right_part)?;
+            return Some(right_result);
+        }
+
+        // Handle 'not' operator (highest precedence)
+        if trimmed.starts_with("not ") {
+            let inner_expr = &trimmed[4..]; // Skip "not "
+            debug!("  NOT expression: not {}", inner_expr);
+
+            let inner_result = self.eval_logical_expression(inner_expr)?;
+            return Some(!inner_result);
+        }
+
+        // Handle True/False literals (from parenthesis evaluation)
+        if trimmed == "True" {
+            return Some(true);
+        }
+        if trimmed == "False" {
+            return Some(false);
+        }
+
+        // Base case: evaluate as simple condition (comparison, membership, etc.)
+        self.eval_simple_condition(trimmed)
+    }
+
+    /// Helper: Find operator at top level (not inside parens or quotes)
+    fn find_operator(&self, expr: &str, operator: &str) -> Option<usize> {
+        let mut paren_depth = 0;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let op_bytes = operator.as_bytes();
+        let expr_bytes = expr.as_bytes();
+
+        for i in 0..expr_bytes.len() {
+            let ch = expr_bytes[i] as char;
+
+            match ch {
+                '(' if !in_single_quote && !in_double_quote => paren_depth += 1,
+                ')' if !in_single_quote && !in_double_quote => paren_depth -= 1,
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                _ => {}
+            }
+
+            // Check for operator at this position (only at top level)
+            if paren_depth == 0 && !in_single_quote && !in_double_quote {
+                if i + op_bytes.len() <= expr_bytes.len() {
+                    if &expr_bytes[i..i + op_bytes.len()] == op_bytes {
+                        return Some(i);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Evaluate a simple condition (no logical operators)
+    /// This is the base case for eval_logical_expression
+    fn eval_simple_condition(&self, condition: &str) -> Option<bool> {
+        debug!("Evaluating simple condition: {}", condition);
 
         let trimmed = condition.trim();
 
@@ -619,7 +749,8 @@ impl SimplePythonEvaluator {
         }
 
         // Handle: 'item' in d.getVar('VAR').split() or 'item' in ['item1', 'item2']
-        if let Some(in_pos) = trimmed.find(" in ") {
+        // Use find_operator to avoid matching ' in ' inside method calls
+        if let Some(in_pos) = self.find_operator(trimmed, " in ") {
             let item_part = trimmed[..in_pos].trim();
             let container_part = trimmed[in_pos + 4..].trim();
 
@@ -661,8 +792,30 @@ impl SimplePythonEvaluator {
             }
         }
 
-        debug!("  Can't evaluate condition: {}", trimmed);
+        debug!("  Can't evaluate simple condition: {}", trimmed);
         None
+    }
+
+    /// Evaluate a condition to boolean
+    /// Phase 8c: Now supports logical operators (and, or, not) and parentheses
+    /// This is the main entry point for condition evaluation
+    fn eval_condition(&self, condition: &str) -> Option<bool> {
+        debug!("Evaluating condition: {}", condition);
+
+        let trimmed = condition.trim();
+
+        // Phase 8c: Check for logical operators
+        // If present, use eval_logical_expression which handles precedence and grouping
+        // Note: We check for logical grouping parens (starts with '('), not function call parens
+        if trimmed.starts_with("not ")
+            || trimmed.contains(" and ")
+            || trimmed.contains(" or ")
+            || trimmed.starts_with('(') {
+            return self.eval_logical_expression(trimmed);
+        }
+
+        // Otherwise, it's a simple condition
+        self.eval_simple_condition(trimmed)
     }
 
     /// Extract a string literal from quotes, or return the trimmed value if no quotes
@@ -1458,6 +1611,187 @@ mod tests {
         // Pattern 3: Architecture checks
         let result = eval.evaluate("${@'arm-specific' if 'arm' in ['arm', 'aarch64', 'armv7'] else 'generic'}");
         assert_eq!(result, Some("arm-specific".to_string()));
+    }
+
+    // Phase 8c: Logical Operators Tests
+
+    #[test]
+    fn test_logical_basic_comparison() {
+        let mut vars = HashMap::new();
+        vars.insert("ARCH".to_string(), "arm".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // First, test that a simple comparison works
+        let result = eval.evaluate("${@'yes' if d.getVar('ARCH') == 'arm' else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn test_logical_and_simple() {
+        let mut vars = HashMap::new();
+        vars.insert("ARCH".to_string(), "arm".to_string());
+        vars.insert("OS".to_string(), "linux".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Simple: both true
+        let result = eval.evaluate("${@'yes' if d.getVar('ARCH') == 'arm' and d.getVar('OS') == 'linux' else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // Simple: first true, second false
+        let result = eval.evaluate("${@'yes' if d.getVar('ARCH') == 'arm' and d.getVar('OS') == 'windows' else 'no'}");
+        assert_eq!(result, Some("no".to_string()));
+    }
+
+    #[test]
+    fn test_logical_and_operator() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Both conditions true
+        let result = eval.evaluate("${@'deps' if 'systemd' in d.getVar('DISTRO_FEATURES').split() and 'pam' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("deps".to_string()));
+
+        // First true, second false
+        let result = eval.evaluate("${@'deps' if 'systemd' in d.getVar('DISTRO_FEATURES').split() and 'bluetooth' in d.getVar('DISTRO_FEATURES').split() else 'no-deps'}");
+        assert_eq!(result, Some("no-deps".to_string()));
+
+        // Both false
+        let result = eval.evaluate("${@'deps' if 'bluetooth' in d.getVar('DISTRO_FEATURES').split() and 'wayland' in d.getVar('DISTRO_FEATURES').split() else 'no-deps'}");
+        assert_eq!(result, Some("no-deps".to_string()));
+    }
+
+    #[test]
+    fn test_logical_or_operator() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // First true
+        let result = eval.evaluate("${@'init-deps' if 'systemd' in d.getVar('DISTRO_FEATURES').split() or 'sysvinit' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("init-deps".to_string()));
+
+        // Second true
+        let mut vars2 = HashMap::new();
+        vars2.insert("DISTRO_FEATURES".to_string(), "sysvinit".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars2);
+
+        let result = eval2.evaluate("${@'init-deps' if 'systemd' in d.getVar('DISTRO_FEATURES').split() or 'sysvinit' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("init-deps".to_string()));
+
+        // Both false
+        let mut vars3 = HashMap::new();
+        vars3.insert("DISTRO_FEATURES".to_string(), "x11".to_string());
+        let eval3 = SimplePythonEvaluator::new(vars3);
+
+        let result = eval3.evaluate("${@'init-deps' if 'systemd' in d.getVar('DISTRO_FEATURES').split() or 'sysvinit' in d.getVar('DISTRO_FEATURES').split() else 'no-init'}");
+        assert_eq!(result, Some("no-init".to_string()));
+    }
+
+    #[test]
+    fn test_logical_not_operator() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "x11 wayland".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Not (condition false) = true
+        let result = eval.evaluate("${@'legacy' if not 'systemd' in d.getVar('DISTRO_FEATURES').split() else 'modern'}");
+        assert_eq!(result, Some("legacy".to_string()));
+
+        // Not (condition true) = false
+        let mut vars2 = HashMap::new();
+        vars2.insert("DISTRO_FEATURES".to_string(), "systemd wayland".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars2);
+
+        let result = eval2.evaluate("${@'legacy' if not 'systemd' in d.getVar('DISTRO_FEATURES').split() else 'modern'}");
+        assert_eq!(result, Some("modern".to_string()));
+    }
+
+    #[test]
+    fn test_logical_parentheses() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "x11 opengl".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // (true or false) and true = true
+        let result = eval.evaluate("${@'graphics' if ('x11' in d.getVar('DISTRO_FEATURES').split() or 'wayland' in d.getVar('DISTRO_FEATURES').split()) and 'opengl' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("graphics".to_string()));
+
+        // (false or false) and true = false
+        let mut vars2 = HashMap::new();
+        vars2.insert("DISTRO_FEATURES".to_string(), "opengl".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars2);
+
+        let result = eval2.evaluate("${@'graphics' if ('x11' in d.getVar('DISTRO_FEATURES').split() or 'wayland' in d.getVar('DISTRO_FEATURES').split()) and 'opengl' in d.getVar('DISTRO_FEATURES').split() else 'no-graphics'}");
+        assert_eq!(result, Some("no-graphics".to_string()));
+    }
+
+    #[test]
+    fn test_logical_complex_expressions() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam x11".to_string());
+        vars.insert("MACHINE".to_string(), "qemux86".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Multiple and operators
+        let result = eval.evaluate("${@'full-deps' if 'systemd' in d.getVar('DISTRO_FEATURES').split() and 'pam' in d.getVar('DISTRO_FEATURES').split() and 'x11' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("full-deps".to_string()));
+
+        // not with and
+        let result = eval.evaluate("${@'result' if not 'wayland' in d.getVar('DISTRO_FEATURES').split() and 'x11' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("result".to_string()));
+
+        // Complex: not (A and B) or C
+        let result = eval.evaluate("${@'deps' if not ('bluetooth' in d.getVar('DISTRO_FEATURES').split() and 'wifi' in d.getVar('DISTRO_FEATURES').split()) or 'systemd' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("deps".to_string()));
+    }
+
+    #[test]
+    fn test_logical_with_comparisons() {
+        let mut vars = HashMap::new();
+        vars.insert("ARCH".to_string(), "arm".to_string());
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Comparison and membership
+        let result = eval.evaluate("${@'arm-systemd' if d.getVar('ARCH') == 'arm' and 'systemd' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("arm-systemd".to_string()));
+
+        // Comparison or comparison
+        let result = eval.evaluate("${@'arm-or-x86' if d.getVar('ARCH') == 'arm' or d.getVar('ARCH') == 'x86_64' else 'other'}");
+        assert_eq!(result, Some("arm-or-x86".to_string()));
+
+        // not with comparison
+        let result = eval.evaluate("${@'not-x86' if not d.getVar('ARCH') == 'x86_64' else 'x86'}");
+        assert_eq!(result, Some("not-x86".to_string()));
+    }
+
+    #[test]
+    fn test_real_world_logical_patterns() {
+        // Pattern 1: Multiple feature dependencies
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam x11 opengl".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        let result = eval.evaluate("${@'full-graphics' if ('x11' in d.getVar('DISTRO_FEATURES').split() or 'wayland' in d.getVar('DISTRO_FEATURES').split()) and 'opengl' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("full-graphics".to_string()));
+
+        // Pattern 2: Platform-specific with feature check
+        let mut vars2 = HashMap::new();
+        vars2.insert("TARGET_ARCH".to_string(), "aarch64".to_string());
+        vars2.insert("DISTRO_FEATURES".to_string(), "systemd".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars2);
+
+        let result = eval2.evaluate("${@'arm-systemd-deps' if (d.getVar('TARGET_ARCH') == 'arm' or d.getVar('TARGET_ARCH') == 'aarch64') and 'systemd' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("arm-systemd-deps".to_string()));
+
+        // Pattern 3: Exclusion pattern (not X and Y)
+        let mut vars3 = HashMap::new();
+        vars3.insert("DISTRO_FEATURES".to_string(), "pam x11".to_string());
+        let eval3 = SimplePythonEvaluator::new(vars3);
+
+        let result = eval3.evaluate("${@'sysvinit-compat' if not 'systemd' in d.getVar('DISTRO_FEATURES').split() and 'pam' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("sysvinit-compat".to_string()));
     }
 }
 
