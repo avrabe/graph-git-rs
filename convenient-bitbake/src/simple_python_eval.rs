@@ -201,7 +201,8 @@ impl SimplePythonEvaluator {
     }
 
     /// Evaluate d.getVar('VAR') or d.getVar('VAR', True/False)
-    /// Returns the value of the variable from our context
+    /// Phase 8a: Now supports chained string operations
+    /// Returns the value of the variable from our context, with operations applied
     fn eval_getvar(&self, expr: &str) -> Option<String> {
         debug!("Evaluating d.getVar: {}", expr);
 
@@ -228,10 +229,219 @@ impl SimplePythonEvaluator {
         debug!("  Extracting variable: {}", var_name);
 
         // Look up the variable
-        let result = self.variables.get(var_name)?;
-        debug!("  Result: {}", result);
+        let mut result = self.variables.get(var_name)?.clone();
+        debug!("  Initial value: {}", result);
 
-        Some(result.clone())
+        // Phase 8a: Check for chained operations after d.getVar()
+        // Find the closing paren of d.getVar(...)
+        let full_getvar_call = &expr[start..];
+        if let Some(close_paren_pos) = self.find_matching_paren(&after[open_paren + 1..]) {
+            let after_getvar = &after[open_paren + 1 + close_paren_pos + 1..];
+
+            // Apply any chained string operations
+            result = self.apply_string_operations(&result, after_getvar)?;
+        }
+
+        debug!("  Final result: {}", result);
+        Some(result)
+    }
+
+    /// Phase 8a: Apply chained string operations to a value
+    /// Supports: .replace(old, new), .strip()/.lstrip()/.rstrip(), .upper()/.lower(), [index], [start:end]
+    /// Example: "foo-bar".replace('-', '_').upper() -> "FOO_BAR"
+    fn apply_string_operations(&self, mut value: &str, operations: &str) -> Option<String> {
+        debug!("Applying string operations: {} to value: {}", operations, value);
+
+        let mut result = value.to_string();
+        let mut remaining = operations.trim();
+
+        // Process operations left-to-right
+        while !remaining.is_empty() {
+            // Skip whitespace
+            remaining = remaining.trim_start();
+
+            if remaining.is_empty() {
+                break;
+            }
+
+            // Check for indexing/slicing: [...]
+            if remaining.starts_with('[') {
+                // Find matching close bracket
+                let close_bracket = remaining.find(']')?;
+                let index_expr = &remaining[1..close_bracket];
+
+                debug!("  Indexing/slicing: [{}]", index_expr);
+
+                // Check if it's slicing (contains ':') or indexing (just number)
+                if index_expr.contains(':') {
+                    // Slicing: [start:end]
+                    let parts: Vec<&str> = index_expr.split(':').collect();
+
+                    let start: usize = if parts[0].trim().is_empty() {
+                        0
+                    } else {
+                        parts[0].trim().parse().ok()?
+                    };
+
+                    let end: usize = if parts.len() > 1 && !parts[1].trim().is_empty() {
+                        parts[1].trim().parse().ok()?
+                    } else {
+                        result.len()
+                    };
+
+                    // Apply slice
+                    if start <= result.len() && end <= result.len() && start <= end {
+                        result = result[start..end].to_string();
+                        debug!("  After slice [{}:{}]: {}", start, end, result);
+                    } else {
+                        debug!("  Invalid slice indices");
+                        return None;
+                    }
+                } else {
+                    // Indexing: [n]
+                    let index: usize = index_expr.trim().parse().ok()?;
+
+                    if index < result.len() {
+                        result = result.chars().nth(index)?.to_string();
+                        debug!("  After index [{}]: {}", index, result);
+                    } else {
+                        debug!("  Index out of bounds");
+                        return None;
+                    }
+                }
+
+                remaining = &remaining[close_bracket + 1..];
+                continue;
+            }
+
+            // Check for method calls: .method(...)
+            if remaining.starts_with('.') {
+                let method_start = &remaining[1..];
+
+                // Find method name (up to '(' or end)
+                let method_end = method_start
+                    .find('(')
+                    .unwrap_or(method_start.len());
+                let method_name = &method_start[..method_end].trim();
+
+                debug!("  Method call: .{}", method_name);
+
+                match *method_name {
+                    "strip" => {
+                        result = result.trim().to_string();
+                        debug!("  After strip: {}", result);
+
+                        // Skip past method call
+                        if method_start.len() > method_end && method_start.chars().nth(method_end) == Some('(') {
+                            // Find matching close paren
+                            let after_paren = &method_start[method_end + 1..];
+                            let close_paren = self.find_matching_paren(after_paren)?;
+                            remaining = &after_paren[close_paren + 1..];
+                        } else {
+                            remaining = &method_start[method_end..];
+                        }
+                    }
+                    "lstrip" => {
+                        result = result.trim_start().to_string();
+                        debug!("  After lstrip: {}", result);
+
+                        if method_start.len() > method_end && method_start.chars().nth(method_end) == Some('(') {
+                            let after_paren = &method_start[method_end + 1..];
+                            let close_paren = self.find_matching_paren(after_paren)?;
+                            remaining = &after_paren[close_paren + 1..];
+                        } else {
+                            remaining = &method_start[method_end..];
+                        }
+                    }
+                    "rstrip" => {
+                        result = result.trim_end().to_string();
+                        debug!("  After rstrip: {}", result);
+
+                        if method_start.len() > method_end && method_start.chars().nth(method_end) == Some('(') {
+                            let after_paren = &method_start[method_end + 1..];
+                            let close_paren = self.find_matching_paren(after_paren)?;
+                            remaining = &after_paren[close_paren + 1..];
+                        } else {
+                            remaining = &method_start[method_end..];
+                        }
+                    }
+                    "upper" => {
+                        result = result.to_uppercase();
+                        debug!("  After upper: {}", result);
+
+                        if method_start.len() > method_end && method_start.chars().nth(method_end) == Some('(') {
+                            let after_paren = &method_start[method_end + 1..];
+                            let close_paren = self.find_matching_paren(after_paren)?;
+                            remaining = &after_paren[close_paren + 1..];
+                        } else {
+                            remaining = &method_start[method_end..];
+                        }
+                    }
+                    "lower" => {
+                        result = result.to_lowercase();
+                        debug!("  After lower: {}", result);
+
+                        if method_start.len() > method_end && method_start.chars().nth(method_end) == Some('(') {
+                            let after_paren = &method_start[method_end + 1..];
+                            let close_paren = self.find_matching_paren(after_paren)?;
+                            remaining = &after_paren[close_paren + 1..];
+                        } else {
+                            remaining = &method_start[method_end..];
+                        }
+                    }
+                    "replace" => {
+                        // .replace(old, new)
+                        if method_start.len() <= method_end || method_start.chars().nth(method_end) != Some('(') {
+                            debug!("  replace() requires arguments");
+                            return None;
+                        }
+
+                        let after_paren = &method_start[method_end + 1..];
+                        let close_paren = self.find_matching_paren(after_paren)?;
+                        let args_str = &after_paren[..close_paren];
+
+                        // Parse the two arguments
+                        let args = self.parse_args(args_str)?;
+                        if args.len() != 2 {
+                            debug!("  replace() requires exactly 2 arguments, got {}", args.len());
+                            return None;
+                        }
+
+                        let old_str = &args[0];
+                        let new_str = &args[1];
+
+                        result = result.replace(old_str, new_str);
+                        debug!("  After replace({}, {}): {}", old_str, new_str, result);
+
+                        remaining = &after_paren[close_paren + 1..];
+                    }
+                    "split" => {
+                        // .split() returns a list, but for string operations we'll join back
+                        // This is mainly used in conditionals, but we support it here
+                        if method_start.len() > method_end && method_start.chars().nth(method_end) == Some('(') {
+                            let after_paren = &method_start[method_end + 1..];
+                            let close_paren = self.find_matching_paren(after_paren)?;
+                            remaining = &after_paren[close_paren + 1..];
+                        } else {
+                            remaining = &method_start[method_end..];
+                        }
+
+                        // For now, keep the result as-is since split() typically used in conditionals
+                        debug!("  After split: {} (no change)", result);
+                    }
+                    _ => {
+                        debug!("  Unknown method: {}", method_name);
+                        return None;
+                    }
+                }
+            } else {
+                // No more operations to process
+                break;
+            }
+        }
+
+        debug!("  Final result after all operations: {}", result);
+        Some(result)
     }
 
     /// Evaluate oe.utils.conditional(var, value, true_val, false_val, d)
@@ -599,20 +809,27 @@ impl SimplePythonEvaluator {
         let mut in_single_quote = false;
         let mut in_double_quote = false;
         let mut paren_depth = 0;
+        let mut arg_started = false; // Track if we've seen non-whitespace content
+        let mut had_quotes = false; // Track if this argument had quotes (don't trim whitespace-only quoted args)
 
         for ch in args_str.chars() {
             match ch {
                 '\'' if !in_double_quote => {
                     in_single_quote = !in_single_quote;
+                    arg_started = true;
+                    had_quotes = true;
                     // Don't include the quote in the result
                 }
                 '"' if !in_single_quote => {
                     in_double_quote = !in_double_quote;
+                    arg_started = true;
+                    had_quotes = true;
                     // Don't include the quote in the result
                 }
                 '(' if !in_single_quote && !in_double_quote => {
                     paren_depth += 1;
                     current_arg.push(ch);
+                    arg_started = true;
                 }
                 ')' if !in_single_quote && !in_double_quote => {
                     paren_depth -= 1;
@@ -620,18 +837,43 @@ impl SimplePythonEvaluator {
                 }
                 ',' if !in_single_quote && !in_double_quote && paren_depth == 0 => {
                     // End of argument
-                    args.push(current_arg.trim().to_string());
+                    // Only trim if not entirely from quotes (preserve significant whitespace)
+                    let result = if had_quotes && current_arg.trim().is_empty() {
+                        // Whitespace-only quoted string - preserve it
+                        current_arg.clone()
+                    } else {
+                        // Normal argument - trim trailing whitespace
+                        current_arg.trim_end().to_string()
+                    };
+                    args.push(result);
                     current_arg.clear();
+                    arg_started = false;
+                    had_quotes = false;
+                }
+                ' ' | '\t' if !in_single_quote && !in_double_quote && !arg_started => {
+                    // Skip leading whitespace outside of quotes
                 }
                 _ => {
                     current_arg.push(ch);
+                    arg_started = true;
                 }
             }
         }
 
         // Add final argument
-        if !current_arg.trim().is_empty() || !args.is_empty() {
-            args.push(current_arg.trim().to_string());
+        if !current_arg.is_empty() || !args.is_empty() {
+            let result = if had_quotes && current_arg.trim().is_empty() {
+                // Whitespace-only quoted string - preserve it
+                current_arg
+            } else {
+                // Normal argument - trim trailing whitespace
+                let trimmed = current_arg.trim_end().to_string();
+                if trimmed.is_empty() && args.is_empty() {
+                    return Some(args);
+                }
+                trimmed
+            };
+            args.push(result);
         }
 
         Some(args)
@@ -944,6 +1186,157 @@ mod tests {
 
         let result = eval3.evaluate("${@'arm-toolchain' if d.getVar('TARGET_ARCH') != 'x86_64' else 'x86-toolchain'}");
         assert_eq!(result, Some("arm-toolchain".to_string()));
+    }
+
+    // Phase 8a: String Operations Tests
+
+    #[test]
+    fn test_string_replace() {
+        let mut vars = HashMap::new();
+        vars.insert("PACKAGE_NAME".to_string(), "foo-bar-baz".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test .replace() with d.getVar()
+        let result = eval.evaluate("${@d.getVar('PACKAGE_NAME').replace('-', '_')}");
+        assert_eq!(result, Some("foo_bar_baz".to_string()));
+
+        // Test multiple replacements
+        let result = eval.evaluate("${@d.getVar('PACKAGE_NAME').replace('-', ' ')}");
+        assert_eq!(result, Some("foo bar baz".to_string()));
+    }
+
+    #[test]
+    fn test_string_case_conversion() {
+        let mut vars = HashMap::new();
+        vars.insert("ARCH".to_string(), "x86_64".to_string());
+        vars.insert("FLAG".to_string(), "ENABLE_FEATURE".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test .upper()
+        let result = eval.evaluate("${@d.getVar('ARCH').upper()}");
+        assert_eq!(result, Some("X86_64".to_string()));
+
+        // Test .lower()
+        let result = eval.evaluate("${@d.getVar('FLAG').lower()}");
+        assert_eq!(result, Some("enable_feature".to_string()));
+    }
+
+    #[test]
+    fn test_string_strip() {
+        let mut vars = HashMap::new();
+        vars.insert("VALUE1".to_string(), "  trim-me  ".to_string());
+        vars.insert("VALUE2".to_string(), "  left-space".to_string());
+        vars.insert("VALUE3".to_string(), "right-space  ".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test .strip()
+        let result = eval.evaluate("${@d.getVar('VALUE1').strip()}");
+        assert_eq!(result, Some("trim-me".to_string()));
+
+        // Test .lstrip()
+        let result = eval.evaluate("${@d.getVar('VALUE2').lstrip()}");
+        assert_eq!(result, Some("left-space".to_string()));
+
+        // Test .rstrip()
+        let result = eval.evaluate("${@d.getVar('VALUE3').rstrip()}");
+        assert_eq!(result, Some("right-space".to_string()));
+    }
+
+    #[test]
+    fn test_string_indexing() {
+        let mut vars = HashMap::new();
+        vars.insert("VERSION".to_string(), "1.2.3".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test indexing [0] - first character
+        let result = eval.evaluate("${@d.getVar('VERSION')[0]}");
+        assert_eq!(result, Some("1".to_string()));
+
+        // Test indexing [1] - second character
+        let result = eval.evaluate("${@d.getVar('VERSION')[1]}");
+        assert_eq!(result, Some(".".to_string()));
+
+        // Test indexing [2] - third character
+        let result = eval.evaluate("${@d.getVar('VERSION')[2]}");
+        assert_eq!(result, Some("2".to_string()));
+    }
+
+    #[test]
+    fn test_string_slicing() {
+        let mut vars = HashMap::new();
+        vars.insert("PACKAGE".to_string(), "libfoo-1.2.3".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test slicing [0:6] (libfoo)
+        let result = eval.evaluate("${@d.getVar('PACKAGE')[0:6]}");
+        assert_eq!(result, Some("libfoo".to_string()));
+
+        // Test slicing [:3] (from start)
+        let result = eval.evaluate("${@d.getVar('PACKAGE')[:3]}");
+        assert_eq!(result, Some("lib".to_string()));
+
+        // Test slicing [7:] (to end)
+        let result = eval.evaluate("${@d.getVar('PACKAGE')[7:]}");
+        assert_eq!(result, Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn test_chained_string_operations() {
+        let mut vars = HashMap::new();
+        vars.insert("RAW_NAME".to_string(), "  Foo-Bar  ".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test chaining: .strip().replace('-', '_').lower()
+        let result = eval.evaluate("${@d.getVar('RAW_NAME').strip().replace('-', '_').lower()}");
+        assert_eq!(result, Some("foo_bar".to_string()));
+
+        // Test chaining: .upper().replace('FOO', 'BAZ')
+        let result = eval.evaluate("${@d.getVar('RAW_NAME').strip().upper().replace('FOO', 'BAZ')}");
+        assert_eq!(result, Some("BAZ-BAR".to_string()));
+    }
+
+    #[test]
+    fn test_real_world_string_operations() {
+        // Pattern 1: Normalize package names (common in DEPENDS)
+        let mut vars = HashMap::new();
+        vars.insert("PN".to_string(), "libfoo-bar".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        let result = eval.evaluate("${@d.getVar('PN').replace('-', '_')}");
+        assert_eq!(result, Some("libfoo_bar".to_string()));
+
+        // Pattern 2: Extract major version
+        let mut vars2 = HashMap::new();
+        vars2.insert("PV".to_string(), "2.4.15".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars2);
+
+        let result = eval2.evaluate("${@d.getVar('PV')[0]}");
+        assert_eq!(result, Some("2".to_string()));
+
+        // Pattern 3: Architecture normalization
+        let mut vars3 = HashMap::new();
+        vars3.insert("TARGET_ARCH".to_string(), "aarch64".to_string());
+        let eval3 = SimplePythonEvaluator::new(vars3);
+
+        let result = eval3.evaluate("${@d.getVar('TARGET_ARCH').replace('aarch64', 'arm64')}");
+        assert_eq!(result, Some("arm64".to_string()));
+    }
+
+    #[test]
+    fn test_string_operations_with_conditionals() {
+        // Test combining string operations with conditionals
+        let mut vars = HashMap::new();
+        vars.insert("MACHINE".to_string(), "qemu-x86-64".to_string());
+        vars.insert("ENABLE".to_string(), "yes".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Pattern: Use string operation result in conditional
+        let result = eval.evaluate("${@'x86-deps' if d.getVar('MACHINE').replace('-', '_').upper() == 'QEMU_X86_64' else 'other'}");
+        assert_eq!(result, Some("x86-deps".to_string()));
+
+        // Pattern: Conditional result with string operation
+        let result = eval.evaluate("${@d.getVar('ENABLE').upper() if d.getVar('ENABLE') else 'NO'}");
+        assert_eq!(result, Some("YES".to_string()));
     }
 }
 
