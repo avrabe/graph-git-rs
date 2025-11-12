@@ -85,8 +85,56 @@ impl SimplePythonEvaluator {
             return self.eval_getvar(inner);
         }
 
+        // Phase 9d: Handle string literals with methods: 'string'.method()
+        if (inner.contains("'") || inner.contains("\"")) && inner.contains('.') {
+            return self.eval_string_literal_with_methods(inner);
+        }
+
         // Can't handle this expression
         None
+    }
+
+    /// Phase 9d: Evaluate string literal with method calls
+    /// Example: 'hello-world'.startswith('hello') -> "True"
+    fn eval_string_literal_with_methods(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating string literal with methods: {}", expr);
+
+        let trimmed = expr.trim();
+
+        // Find the string literal (quoted part)
+        let quote_char = if trimmed.starts_with('\'') { '\'' } else if trimmed.starts_with('"') { '"' } else { return None; };
+
+        // Find the end of the string literal
+        let mut end_quote = None;
+        let mut escaped = false;
+        for (i, ch) in trimmed[1..].chars().enumerate() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote_char {
+                end_quote = Some(i + 1);
+                break;
+            }
+        }
+
+        let end_quote_pos = end_quote?;
+        let string_value = &trimmed[1..end_quote_pos]; // Extract without quotes
+        let after_string = &trimmed[end_quote_pos + 1..];
+
+        debug!("  String value: {}, After: {}", string_value, after_string);
+
+        // Apply any methods after the string
+        if after_string.starts_with('.') {
+            self.apply_string_operations(string_value, after_string)
+        } else {
+            // Just return the string value
+            Some(string_value.to_string())
+        }
     }
 
     /// Evaluate bb.utils.contains(var, item, true_val, false_val, d)
@@ -255,9 +303,11 @@ impl SimplePythonEvaluator {
         Some(result)
     }
 
-    /// Phase 8a: Apply chained string operations to a value
+    /// Phase 8a + 9d: Apply chained string operations to a value
     /// Supports: .replace(old, new), .strip()/.lstrip()/.rstrip(), .upper()/.lower(), [index], [start:end]
+    /// Phase 9d: .startswith(prefix), .endswith(suffix), .find(substring), .rfind(substring)
     /// Example: "foo-bar".replace('-', '_').upper() -> "FOO_BAR"
+    /// Example: "hello".startswith('hel') -> "True"
     fn apply_string_operations(&self, value: &str, operations: &str) -> Option<String> {
         debug!("Applying string operations: {} to value: {}", operations, value);
 
@@ -437,6 +487,115 @@ impl SimplePythonEvaluator {
 
                         // For now, keep the result as-is since split() typically used in conditionals
                         debug!("  After split: {} (no change)", result);
+                    }
+                    // Phase 9d: Additional string methods
+                    "startswith" => {
+                        // .startswith(prefix)
+                        if method_start.len() <= method_end || method_start.chars().nth(method_end) != Some('(') {
+                            debug!("  startswith() requires arguments");
+                            return None;
+                        }
+
+                        let after_paren = &method_start[method_end + 1..];
+                        let close_paren = self.find_matching_paren(after_paren)?;
+                        let args_str = &after_paren[..close_paren];
+
+                        let args = self.parse_args(args_str)?;
+                        if args.is_empty() {
+                            debug!("  startswith() requires at least 1 argument");
+                            return None;
+                        }
+
+                        let prefix = &args[0];
+                        // Return "True" or "False" as string (for use in conditionals)
+                        result = if result.starts_with(prefix) {
+                            "True".to_string()
+                        } else {
+                            "False".to_string()
+                        };
+                        debug!("  After startswith({}): {}", prefix, result);
+
+                        remaining = &after_paren[close_paren + 1..];
+                    }
+                    "endswith" => {
+                        // .endswith(suffix)
+                        if method_start.len() <= method_end || method_start.chars().nth(method_end) != Some('(') {
+                            debug!("  endswith() requires arguments");
+                            return None;
+                        }
+
+                        let after_paren = &method_start[method_end + 1..];
+                        let close_paren = self.find_matching_paren(after_paren)?;
+                        let args_str = &after_paren[..close_paren];
+
+                        let args = self.parse_args(args_str)?;
+                        if args.is_empty() {
+                            debug!("  endswith() requires at least 1 argument");
+                            return None;
+                        }
+
+                        let suffix = &args[0];
+                        // Return "True" or "False" as string (for use in conditionals)
+                        result = if result.ends_with(suffix) {
+                            "True".to_string()
+                        } else {
+                            "False".to_string()
+                        };
+                        debug!("  After endswith({}): {}", suffix, result);
+
+                        remaining = &after_paren[close_paren + 1..];
+                    }
+                    "find" => {
+                        // .find(substring) - returns index or -1
+                        if method_start.len() <= method_end || method_start.chars().nth(method_end) != Some('(') {
+                            debug!("  find() requires arguments");
+                            return None;
+                        }
+
+                        let after_paren = &method_start[method_end + 1..];
+                        let close_paren = self.find_matching_paren(after_paren)?;
+                        let args_str = &after_paren[..close_paren];
+
+                        let args = self.parse_args(args_str)?;
+                        if args.is_empty() {
+                            debug!("  find() requires at least 1 argument");
+                            return None;
+                        }
+
+                        let substring = &args[0];
+                        result = match result.find(substring) {
+                            Some(pos) => pos.to_string(),
+                            None => "-1".to_string(),
+                        };
+                        debug!("  After find({}): {}", substring, result);
+
+                        remaining = &after_paren[close_paren + 1..];
+                    }
+                    "rfind" => {
+                        // .rfind(substring) - returns rightmost index or -1
+                        if method_start.len() <= method_end || method_start.chars().nth(method_end) != Some('(') {
+                            debug!("  rfind() requires arguments");
+                            return None;
+                        }
+
+                        let after_paren = &method_start[method_end + 1..];
+                        let close_paren = self.find_matching_paren(after_paren)?;
+                        let args_str = &after_paren[..close_paren];
+
+                        let args = self.parse_args(args_str)?;
+                        if args.is_empty() {
+                            debug!("  rfind() requires at least 1 argument");
+                            return None;
+                        }
+
+                        let substring = &args[0];
+                        result = match result.rfind(substring) {
+                            Some(pos) => pos.to_string(),
+                            None => "-1".to_string(),
+                        };
+                        debug!("  After rfind({}): {}", substring, result);
+
+                        remaining = &after_paren[close_paren + 1..];
                     }
                     _ => {
                         debug!("  Unknown method: {}", method_name);
@@ -866,6 +1025,29 @@ impl SimplePythonEvaluator {
             }
         }
 
+        // Phase 9d: Handle "True"/"False" string literals (from .startswith(), .endswith())
+        if trimmed == "True" || trimmed == "'True'" || trimmed == "\"True\"" {
+            debug!("  Boolean literal: True");
+            return Some(true);
+        }
+        if trimmed == "False" || trimmed == "'False'" || trimmed == "\"False\"" {
+            debug!("  Boolean literal: False");
+            return Some(false);
+        }
+
+        // Phase 9d: Try to evaluate as string method that returns boolean
+        // e.g., 'hello'.startswith('hel') -> "True"
+        if trimmed.contains(".startswith(") || trimmed.contains(".endswith(") {
+            if let Some(result) = self.evaluate(trimmed) {
+                debug!("  String method result: {}", result);
+                if result == "True" {
+                    return Some(true);
+                } else if result == "False" {
+                    return Some(false);
+                }
+            }
+        }
+
         debug!("  Can't evaluate simple condition: {}", trimmed);
         None
     }
@@ -939,6 +1121,15 @@ impl SimplePythonEvaluator {
         // Try to evaluate as d.getVar and parse result
         if trimmed.contains("d.getVar") {
             if let Some(value) = self.eval_getvar(trimmed) {
+                if let Ok(num) = value.parse::<i32>() {
+                    return Some(num);
+                }
+            }
+        }
+
+        // Phase 9d: Try to evaluate as string method that returns numeric (.find(), .rfind())
+        if trimmed.contains(".find(") || trimmed.contains(".rfind(") {
+            if let Some(value) = self.evaluate(trimmed) {
                 if let Ok(num) = value.parse::<i32>() {
                     return Some(num);
                 }
@@ -2167,6 +2358,101 @@ mod tests {
         // Conditional dependency based on feature count
         let result = eval.evaluate("${@'extra-deps' if len(d.getVar('DISTRO_FEATURES').split()) >= 2 else ''}");
         assert_eq!(result, Some("extra-deps".to_string()));
+    }
+
+    // Phase 9d: Additional string methods tests
+
+    #[test]
+    fn test_string_startswith() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Basic startswith
+        let result = eval.evaluate("${@'yes' if 'hello-world'.startswith('hello') else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // Negative case
+        let result = eval.evaluate("${@'yes' if 'hello-world'.startswith('world') else 'no'}");
+        assert_eq!(result, Some("no".to_string()));
+    }
+
+    #[test]
+    fn test_string_endswith() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Basic endswith
+        let result = eval.evaluate("${@'yes' if 'hello-world'.endswith('world') else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // Negative case
+        let result = eval.evaluate("${@'yes' if 'hello-world'.endswith('hello') else 'no'}");
+        assert_eq!(result, Some("no".to_string()));
+    }
+
+    #[test]
+    fn test_string_find() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Find returns index
+        let result = eval.evaluate("${@'found' if 'hello-world'.find('world') >= 0 else 'not-found'}");
+        assert_eq!(result, Some("found".to_string()));
+
+        // Not found returns -1
+        let result = eval.evaluate("${@'found' if 'hello-world'.find('xyz') >= 0 else 'not-found'}");
+        assert_eq!(result, Some("not-found".to_string()));
+    }
+
+    #[test]
+    fn test_string_rfind() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // rfind returns rightmost index
+        let result = eval.evaluate("${@'found' if 'hello-world-world'.rfind('world') > 6 else 'not-found'}");
+        assert_eq!(result, Some("found".to_string()));
+    }
+
+    #[test]
+    fn test_string_methods_with_variables() {
+        let mut vars = HashMap::new();
+        vars.insert("PACKAGECONFIG".to_string(), "ssl-support crypto".to_string());
+        vars.insert("PN".to_string(), "libfoo-dev".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // startswith with variable
+        let result = eval.evaluate("${@'yes' if d.getVar('PN').startswith('lib') else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // endswith with variable
+        let result = eval.evaluate("${@'dev' if d.getVar('PN').endswith('-dev') else 'normal'}");
+        assert_eq!(result, Some("dev".to_string()));
+
+        // find with variable
+        let result = eval.evaluate("${@'has-ssl' if d.getVar('PACKAGECONFIG').find('ssl') >= 0 else 'no-ssl'}");
+        assert_eq!(result, Some("has-ssl".to_string()));
+    }
+
+    #[test]
+    fn test_real_world_string_method_patterns() {
+        let mut vars = HashMap::new();
+        vars.insert("PN".to_string(), "python3-numpy".to_string());
+        vars.insert("SRC_URI".to_string(), "https://example.com/file.tar.gz".to_string());
+        vars.insert("DISTRO".to_string(), "poky".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Python package detection
+        let result = eval.evaluate("${@'python-pkg' if d.getVar('PN').startswith('python') else 'other'}");
+        assert_eq!(result, Some("python-pkg".to_string()));
+
+        // Archive type detection
+        let result = eval.evaluate("${@'tarball' if d.getVar('SRC_URI').endswith('.tar.gz') else 'other'}");
+        assert_eq!(result, Some("tarball".to_string()));
+
+        // Distro-specific handling
+        let result = eval.evaluate("${@'poky-distro' if d.getVar('DISTRO').find('poky') >= 0 else 'other-distro'}");
+        assert_eq!(result, Some("poky-distro".to_string()));
     }
 }
 
