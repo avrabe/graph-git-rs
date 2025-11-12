@@ -10,6 +10,7 @@ pub mod layer_context;
 pub mod override_resolver;
 pub mod python_analysis;
 pub mod python_ir;
+pub mod python_ir_executor;
 pub mod task_parser;
 pub mod recipe_graph;
 pub mod recipe_extractor;
@@ -37,6 +38,7 @@ pub use recipe_graph::{RecipeId, TaskId, Recipe, TaskNode, RecipeGraph, GraphSta
 pub use recipe_extractor::{RecipeExtractor, RecipeExtraction, ExtractionConfig};
 pub use simple_python_eval::SimplePythonEvaluator;
 pub use python_ir::{PythonIR, PythonIRBuilder, Operation, OpKind, ExecutionStrategy};
+pub use python_ir_executor::{IRExecutor, IRExecutionResult};
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
