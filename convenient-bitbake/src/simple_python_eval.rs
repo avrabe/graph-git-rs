@@ -31,6 +31,28 @@ impl SimplePythonEvaluator {
             trimmed
         };
 
+        // Handle inline Python conditionals (ternary): value1 if condition else value2
+        // IMPORTANT: Check this FIRST to avoid false matches with functions in the condition
+        if inner.contains(" if ") && inner.contains(" else ") {
+            return self.eval_inline_conditional(inner);
+        }
+
+        // Phase 8b: Handle list literals before other checks
+        // Check for list literals: ['item1', 'item2'] or ["item1", "item2"]
+        let trimmed_inner = inner.trim();
+        if trimmed_inner.starts_with('[') && trimmed_inner.contains(']') {
+            // Phase 9e: Check for list comprehension first: [x for x in list if condition]
+            if trimmed_inner.contains(" for ") && trimmed_inner.contains(" in ") {
+                if let Some(comp_result) = self.eval_list_comprehension(trimmed_inner) {
+                    return Some(comp_result);
+                }
+            }
+
+            if let Some(list_result) = self.eval_list_literal(trimmed_inner) {
+                return Some(list_result);
+            }
+        }
+
         // Handle bb.utils.contains
         if inner.contains("bb.utils.contains_any") {
             return self.eval_contains_any(inner);
@@ -55,6 +77,11 @@ impl SimplePythonEvaluator {
             return self.eval_to_boolean(inner);
         }
 
+        // Phase 9f: Handle bb.utils.which()
+        if inner.contains("bb.utils.which") {
+            return self.eval_which(inner);
+        }
+
         // Handle oe.utils.any_distro_features()
         if inner.contains("oe.utils.any_distro_features") {
             return self.eval_any_distro_features(inner);
@@ -63,28 +90,6 @@ impl SimplePythonEvaluator {
         // Handle oe.utils.all_distro_features()
         if inner.contains("oe.utils.all_distro_features") {
             return self.eval_all_distro_features(inner);
-        }
-
-        // Phase 8b: Handle list literals before conditionals
-        // Check for list literals: ['item1', 'item2'] or ["item1", "item2"]
-        let trimmed_inner = inner.trim();
-        if trimmed_inner.starts_with('[') && trimmed_inner.contains(']') {
-            // Phase 9e: Check for list comprehension first: [x for x in list if condition]
-            if trimmed_inner.contains(" for ") && trimmed_inner.contains(" in ") {
-                if let Some(comp_result) = self.eval_list_comprehension(trimmed_inner) {
-                    return Some(comp_result);
-                }
-            }
-
-            if let Some(list_result) = self.eval_list_literal(trimmed_inner) {
-                return Some(list_result);
-            }
-        }
-
-        // Handle inline Python conditionals (ternary): value1 if condition else value2
-        // IMPORTANT: Check this BEFORE d.getVar() to avoid false matches
-        if inner.contains(" if ") && inner.contains(" else ") {
-            return self.eval_inline_conditional(inner);
         }
 
         // Handle d.getVar()
@@ -1171,6 +1176,18 @@ impl SimplePythonEvaluator {
             }
         }
 
+        // Phase 9f: Try to evaluate as bb.utils function and check truthiness
+        // e.g., bb.utils.which('PATH', 'gcc') returns 'gcc' (truthy) or '' (falsy)
+        if trimmed.contains("bb.utils.") || trimmed.contains("oe.utils.") {
+            if let Some(result) = self.evaluate(trimmed) {
+                debug!("  bb.utils/oe.utils function result: {}", result);
+                // Non-empty string is truthy (like Python)
+                let is_truthy = !result.is_empty() && result != "0" && result.to_lowercase() != "false";
+                debug!("  is_truthy={}", is_truthy);
+                return Some(is_truthy);
+            }
+        }
+
         debug!("  Can't evaluate simple condition: {}", trimmed);
         None
     }
@@ -1403,6 +1420,53 @@ impl SimplePythonEvaluator {
         debug!("  actual_value={}, result={}", actual_value, result);
 
         Some(result.to_string())
+    }
+
+    /// Phase 9f: Evaluate bb.utils.which(path, item, d)
+    /// Searches for item in path (colon or space separated) and returns item if found, empty otherwise
+    /// Example: bb.utils.which('PATH', 'gcc') -> 'gcc' if gcc is in PATH, '' otherwise
+    fn eval_which(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating bb.utils.which: {}", expr);
+
+        let args = self.parse_function_args(expr, "bb.utils.which")?;
+
+        if args.len() < 2 {
+            debug!("bb.utils.which: Expected 2+ args, got {}", args.len());
+            return None;
+        }
+
+        let path_var = &args[0];
+        let item = &args[1];
+        debug!("  path_var={}, item={}", path_var, item);
+
+        // Get the path value from variables
+        let path_value = self.variables.get(path_var)?;
+        debug!("  path_value={}", path_value);
+
+        // Split by colon (PATH-style) or space (BitBake-style)
+        let path_items: Vec<&str> = if path_value.contains(':') {
+            path_value.split(':').collect()
+        } else {
+            path_value.split_whitespace().collect()
+        };
+
+        debug!("  path_items={:?}", path_items);
+
+        // Check if item is in path
+        let found = path_items.iter().any(|&p| {
+            // Check for exact match or if path ends with item
+            p == item || p.ends_with(&format!("/{}", item))
+        });
+
+        let result = if found {
+            item.to_string()
+        } else {
+            String::new()
+        };
+
+        debug!("  found={}, result={}", found, result);
+
+        Some(result)
     }
 
     /// Evaluate oe.utils.any_distro_features(d, features, *args)
@@ -2667,6 +2731,68 @@ mod tests {
         // Filter that matches nothing
         let result = eval.evaluate("${@[x for x in ['foo', 'bar', 'baz'] if x.startswith('qux')]}");
         assert_eq!(result, Some("".to_string()));
+    }
+
+    /// Phase 9f: bb.utils.which() tests
+    #[test]
+    fn test_bb_utils_which_colon_separated() {
+        let mut vars = HashMap::new();
+        vars.insert("PATH".to_string(), "/usr/bin:/usr/local/bin:/bin".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Check if an item exists in PATH (colon-separated)
+        let result = eval.evaluate("${@bb.utils.which('PATH', 'bin', d)}");
+        assert_eq!(result, Some("bin".to_string()));
+    }
+
+    #[test]
+    fn test_bb_utils_which_space_separated() {
+        let mut vars = HashMap::new();
+        vars.insert("TOOLCHAIN".to_string(), "gcc g++ clang".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Check if gcc exists in space-separated list
+        let result = eval.evaluate("${@bb.utils.which('TOOLCHAIN', 'gcc', d)}");
+        assert_eq!(result, Some("gcc".to_string()));
+
+        // Check for non-existent item
+        let result = eval.evaluate("${@bb.utils.which('TOOLCHAIN', 'rust', d)}");
+        assert_eq!(result, Some("".to_string()));
+    }
+
+    #[test]
+    fn test_bb_utils_which_with_conditional() {
+        let mut vars = HashMap::new();
+        vars.insert("DEPENDS".to_string(), "python3 openssl zlib".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // First test: bb.utils.which() returns non-empty (truthy)
+        // Use bb.utils.which() in a conditional - explicit test first
+        let which_result = eval.evaluate("${@bb.utils.which('DEPENDS', 'python3', d)}");
+        assert_eq!(which_result, Some("python3".to_string()));
+
+        // Now test in conditional
+        let result = eval.evaluate("${@'yes' if bb.utils.which('DEPENDS', 'python3', d) else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        let result = eval.evaluate("${@'yes' if bb.utils.which('DEPENDS', 'rust', d) else 'no'}");
+        assert_eq!(result, Some("no".to_string()));
+    }
+
+    #[test]
+    fn test_bb_utils_which_real_world() {
+        let mut vars = HashMap::new();
+        vars.insert("PACKAGECONFIG".to_string(), "ssl crypto x11".to_string());
+        vars.insert("RDEPENDS".to_string(), "glibc libfoo libbar".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Check if SSL is in package config
+        let result = eval.evaluate("${@bb.utils.which('PACKAGECONFIG', 'ssl', d)}");
+        assert_eq!(result, Some("ssl".to_string()));
+
+        // Check if glibc is in runtime dependencies
+        let result = eval.evaluate("${@bb.utils.which('RDEPENDS', 'glibc', d)}");
+        assert_eq!(result, Some("glibc".to_string()));
     }
 }
 
