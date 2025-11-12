@@ -383,20 +383,24 @@ impl PythonIR {
 
         for op in self.operations.values() {
             score += match &op.kind {
-                // Simple operations (low complexity)
+                // Simple operations (low complexity, symbolic only)
                 OpKind::StringLiteral { .. } => 0,
-                OpKind::GetVar { .. } => 1,
                 OpKind::SetVar { .. } => 1,
+
+                // GetVar depends on whether expansion is needed
+                OpKind::GetVar { expand: true, .. } => 4,  // Needs variable expansion
+                OpKind::GetVar { expand: false, .. } => 1,
+
                 OpKind::AppendVar { .. } => 2,
                 OpKind::PrependVar { .. } => 2,
 
-                // Medium complexity
-                OpKind::Contains { .. } => 3,
+                // Medium complexity (needs evaluation)
+                OpKind::Contains { .. } => 5,  // Needs containment check
                 OpKind::Concat { .. } => 2,
-                OpKind::StringMethod { .. } => 3,
-                OpKind::Conditional { .. } => 4,
-                OpKind::Compare { .. } => 2,
-                OpKind::Logical { .. } => 3,
+                OpKind::StringMethod { .. } => 4,
+                OpKind::Conditional { .. } => 5,
+                OpKind::Compare { .. } => 3,
+                OpKind::Logical { .. } => 4,
                 OpKind::ListLiteral { .. } => 3,
 
                 // Higher complexity
@@ -417,8 +421,8 @@ impl PythonIR {
     /// Determine execution strategy based on complexity
     pub fn execution_strategy(&self) -> ExecutionStrategy {
         match self.complexity_score {
-            0..=20 => ExecutionStrategy::Static,       // Pure pattern matching
-            21..=50 => ExecutionStrategy::Hybrid,      // Pattern matching + simple execution
+            0..=3 => ExecutionStrategy::Static,        // Pure pattern matching (only literals)
+            4..=50 => ExecutionStrategy::Hybrid,       // Pattern matching + simple execution
             _ => ExecutionStrategy::RustPython,        // Full RustPython VM
         }
     }
