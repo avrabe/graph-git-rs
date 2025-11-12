@@ -279,7 +279,8 @@ impl RecipeExtractor {
             }
 
             // Parse assignment with operator detection
-            if let Some((var_name, operator, value)) = self.parse_assignment(line) {
+            // Phase 9b: parse_assignment now returns (var_name, operator, override, value)
+            if let Some((var_name, operator, override_suffix, value)) = self.parse_assignment(line) {
                 // Skip flag assignments like VAR[flag]
                 if var_name.contains('[') {
                     continue;
@@ -291,20 +292,10 @@ impl RecipeExtractor {
                     value = self.eval_python_expressions_in_string(&value, &vars);
                 }
 
-                // Handle package-specific variables: RDEPENDS:${PN} or RDEPENDS:${PN}-ptest
-                // Extract the base variable name and override
-                let (clean_name, override_suffix) = if var_name.contains(':') {
-                    // RDEPENDS:${PN} -> ("RDEPENDS", Some("${PN}"))
-                    // DEPENDS:append -> ("DEPENDS", Some("append"))
-                    let parts: Vec<&str> = var_name.splitn(2, ':').collect();
-                    (parts[0], parts.get(1).copied())
-                } else {
-                    (var_name.as_str(), None)
-                };
-
-                if !clean_name.is_empty() {
-                    // Apply operator
-                    self.apply_variable_operator(&mut vars, clean_name, &operator, &value, override_suffix);
+                // Phase 9b: override_suffix is now directly extracted by parse_assignment
+                // Apply operator with the extracted override
+                if !var_name.is_empty() {
+                    self.apply_variable_operator(&mut vars, &var_name, &operator, &value, override_suffix.as_deref());
                 }
             }
         }
@@ -386,17 +377,28 @@ impl RecipeExtractor {
         depends
     }
 
-    /// Parse an assignment line and extract variable name, operator, and value
-    /// Returns: (var_name, operator, value)
-    fn parse_assignment(&self, line: &str) -> Option<(String, String, String)> {
+    /// Parse an assignment line and extract variable name, operator, override, and value
+    /// Phase 9b: Enhanced to properly handle chained overrides like DEPENDS:append:qemux86
+    /// Returns: (var_name, operator, override_suffix, value)
+    fn parse_assignment(&self, line: &str) -> Option<(String, String, Option<String>, String)> {
         // Try to find assignment operators (in order of specificity)
         // Handle :append, :prepend, :remove first (they contain :)
         if let Some(pos) = line.find(":append") {
             let before = &line[..pos];
             if let Some(eq_pos) = line[pos..].find('=') {
                 let var_name = before.trim().to_string();
+
+                // Phase 9b: Check for override suffix after :append
+                // DEPENDS:append:qemux86 = "foo" -> override = Some("qemux86")
+                let after_append = &line[pos + 7..pos + eq_pos]; // Skip ":append"
+                let override_suffix = if after_append.starts_with(':') {
+                    Some(after_append[1..].trim().to_string())
+                } else {
+                    None
+                };
+
                 let value = self.clean_value(&line[pos + eq_pos + 1..]);
-                return Some((var_name, ":append".to_string(), value));
+                return Some((var_name, ":append".to_string(), override_suffix, value));
             }
         }
 
@@ -404,8 +406,17 @@ impl RecipeExtractor {
             let before = &line[..pos];
             if let Some(eq_pos) = line[pos..].find('=') {
                 let var_name = before.trim().to_string();
+
+                // Phase 9b: Check for override suffix after :prepend
+                let after_prepend = &line[pos + 8..pos + eq_pos]; // Skip ":prepend"
+                let override_suffix = if after_prepend.starts_with(':') {
+                    Some(after_prepend[1..].trim().to_string())
+                } else {
+                    None
+                };
+
                 let value = self.clean_value(&line[pos + eq_pos + 1..]);
-                return Some((var_name, ":prepend".to_string(), value));
+                return Some((var_name, ":prepend".to_string(), override_suffix, value));
             }
         }
 
@@ -413,8 +424,17 @@ impl RecipeExtractor {
             let before = &line[..pos];
             if let Some(eq_pos) = line[pos..].find('=') {
                 let var_name = before.trim().to_string();
+
+                // Phase 9b: Check for override suffix after :remove
+                let after_remove = &line[pos + 7..pos + eq_pos]; // Skip ":remove"
+                let override_suffix = if after_remove.starts_with(':') {
+                    Some(after_remove[1..].trim().to_string())
+                } else {
+                    None
+                };
+
                 let value = self.clean_value(&line[pos + eq_pos + 1..]);
-                return Some((var_name, ":remove".to_string(), value));
+                return Some((var_name, ":remove".to_string(), override_suffix, value));
             }
         }
 
@@ -424,15 +444,28 @@ impl RecipeExtractor {
             if let Some(pos) = line.find(op) {
                 let var_name = line[..pos].trim().to_string();
                 let value = self.clean_value(&line[pos + op.len()..]);
-                return Some((var_name, op_str.to_string(), value));
+                // These operators don't support override syntax
+                return Some((var_name, op_str.to_string(), None, value));
             }
         }
 
         // Handle simple assignment =
+        // Phase 9b: Support VAR:override = value syntax
         if let Some((left, right)) = line.split_once('=') {
-            let var_name = left.trim().to_string();
+            let var_part = left.trim();
             let value = self.clean_value(right);
-            return Some((var_name, "=".to_string(), value));
+
+            // Check if there's an override suffix: VAR:machine = value
+            if let Some(colon_pos) = var_part.find(':') {
+                let var_name = var_part[..colon_pos].trim().to_string();
+                let override_suffix = var_part[colon_pos + 1..].trim().to_string();
+                // Don't treat known operators as overrides
+                if !["append", "prepend", "remove"].contains(&override_suffix.as_str()) {
+                    return Some((var_name, "=".to_string(), Some(override_suffix), value));
+                }
+            }
+
+            return Some((var_part.to_string(), "=".to_string(), None, value));
         }
 
         None
@@ -1722,5 +1755,189 @@ do_install[depends] = "depmodwrapper-cross:do_populate_sysroot"
             .iter()
             .any(|d| d.contains("gcc") || d == "depmodwrapper-cross"));
     }
+
+    // Phase 9b: Enhanced override resolution tests
+
+    #[test]
+    fn test_parse_assignment_with_chained_override() {
+        let extractor = RecipeExtractor::new_default();
+
+        // Test DEPENDS:append:qemux86 = "foo"
+        let result = extractor.parse_assignment("DEPENDS:append:qemux86 = \"foo\"");
+        assert!(result.is_some());
+        let (var_name, operator, override_suffix, value) = result.unwrap();
+        assert_eq!(var_name, "DEPENDS");
+        assert_eq!(operator, ":append");
+        assert_eq!(override_suffix, Some("qemux86".to_string()));
+        assert_eq!(value, "foo");
+
+        // Test RDEPENDS:prepend:class-native = "bar"
+        let result = extractor.parse_assignment("RDEPENDS:prepend:class-native = \"bar\"");
+        assert!(result.is_some());
+        let (var_name, operator, override_suffix, value) = result.unwrap();
+        assert_eq!(var_name, "RDEPENDS");
+        assert_eq!(operator, ":prepend");
+        assert_eq!(override_suffix, Some("class-native".to_string()));
+        assert_eq!(value, "bar");
+
+        // Test DEPENDS:remove:arm = "baz"
+        let result = extractor.parse_assignment("DEPENDS:remove:arm = \"baz\"");
+        assert!(result.is_some());
+        let (var_name, operator, override_suffix, value) = result.unwrap();
+        assert_eq!(var_name, "DEPENDS");
+        assert_eq!(operator, ":remove");
+        assert_eq!(override_suffix, Some("arm".to_string()));
+        assert_eq!(value, "baz");
+    }
+
+    #[test]
+    fn test_parse_assignment_with_simple_override() {
+        let extractor = RecipeExtractor::new_default();
+
+        // Test DEPENDS:qemux86 = "foo"
+        let result = extractor.parse_assignment("DEPENDS:qemux86 = \"foo\"");
+        assert!(result.is_some());
+        let (var_name, operator, override_suffix, value) = result.unwrap();
+        assert_eq!(var_name, "DEPENDS");
+        assert_eq!(operator, "=");
+        assert_eq!(override_suffix, Some("qemux86".to_string()));
+        assert_eq!(value, "foo");
+
+        // Test RDEPENDS:class-native = "bar"
+        let result = extractor.parse_assignment("RDEPENDS:class-native = \"bar\"");
+        assert!(result.is_some());
+        let (var_name, operator, override_suffix, value) = result.unwrap();
+        assert_eq!(var_name, "RDEPENDS");
+        assert_eq!(operator, "=");
+        assert_eq!(override_suffix, Some("class-native".to_string()));
+        assert_eq!(value, "bar");
+    }
+
+    #[test]
+    fn test_chained_override_integration() {
+        let mut graph = RecipeGraph::new();
+
+        // Test with qemux86 context
+        let config = ExtractionConfig {
+            build_context: BuildContext {
+                class: "target".to_string(),
+                libc: "glibc".to_string(),
+                arch: "x86-64".to_string(),
+                overrides: vec!["qemux86".to_string()],
+            },
+            ..Default::default()
+        };
+        let extractor = RecipeExtractor::new(config);
+
+        let content = r#"
+SUMMARY = "Test recipe with chained overrides"
+PV = "1.0"
+DEPENDS = "base-dep"
+DEPENDS:append = " append-dep"
+DEPENDS:append:qemux86 = " qemu-specific-dep"
+DEPENDS:qemux86 = "qemu-only-dep"
+"#;
+
+        let extraction = extractor
+            .extract_from_content(&mut graph, "test-recipe", content)
+            .unwrap();
+
+        // Should contain dependencies from active overrides
+        assert!(extraction.depends.contains(&"base-dep".to_string()));
+        assert!(extraction.depends.contains(&"append-dep".to_string()));
+        // qemux86 override should be active
+        assert!(extraction.depends.contains(&"qemu-specific-dep".to_string()));
+        assert!(extraction.depends.contains(&"qemu-only-dep".to_string()));
+    }
+
+    #[test]
+    fn test_class_override_resolution() {
+        let mut graph = RecipeGraph::new();
+
+        // Test with native context
+        let config = ExtractionConfig {
+            build_context: BuildContext {
+                class: "native".to_string(),
+                libc: "glibc".to_string(),
+                arch: "x86-64".to_string(),
+                overrides: Vec::new(),
+            },
+            ..Default::default()
+        };
+        let extractor = RecipeExtractor::new(config);
+
+        let content = r#"
+SUMMARY = "Test recipe with class overrides"
+PV = "1.0"
+DEPENDS = "common-dep"
+DEPENDS:append:class-native = " native-dep"
+DEPENDS:append:class-target = " target-dep"
+"#;
+
+        let extraction = extractor
+            .extract_from_content(&mut graph, "test-recipe", content)
+            .unwrap();
+
+        // Should contain common and native-specific deps
+        assert!(extraction.depends.contains(&"common-dep".to_string()));
+        assert!(extraction.depends.contains(&"native-dep".to_string()));
+        // Should include target deps too (inclusive approach for dependency extraction)
+        assert!(extraction.depends.contains(&"target-dep".to_string()));
+    }
+
+    #[test]
+    fn test_real_world_override_patterns() {
+        let mut graph = RecipeGraph::new();
+
+        // Real-world pattern from actual BitBake recipes
+        let config = ExtractionConfig {
+            build_context: BuildContext {
+                class: "target".to_string(),
+                libc: "glibc".to_string(),
+                arch: "aarch64".to_string(),
+                overrides: vec!["raspberrypi4".to_string()],
+            },
+            ..Default::default()
+        };
+        let extractor = RecipeExtractor::new(config);
+
+        let content = r#"
+SUMMARY = "Real-world recipe with multiple overrides"
+PV = "1.0"
+
+# Base dependencies
+DEPENDS = "virtual/kernel"
+
+# Architecture-specific
+DEPENDS:append:arm = " arm-specific"
+DEPENDS:append:aarch64 = " aarch64-specific"
+
+# Machine-specific
+DEPENDS:append:raspberrypi4 = " rpi4-hardware"
+
+# Class-specific
+DEPENDS:append:class-target = " target-only"
+
+# Distro-specific
+DEPENDS:append:poky = " poky-distro"
+"#;
+
+        let extraction = extractor
+            .extract_from_content(&mut graph, "test-recipe", content)
+            .unwrap();
+
+        // Check base dependency
+        assert!(extraction.depends.contains(&"virtual/kernel".to_string()));
+
+        // Check architecture-specific (should have aarch64)
+        assert!(extraction.depends.contains(&"aarch64-specific".to_string()));
+
+        // Check machine-specific (should have rpi4)
+        assert!(extraction.depends.contains(&"rpi4-hardware".to_string()));
+
+        // Check class-specific (should have target)
+        assert!(extraction.depends.contains(&"target-only".to_string()));
+    }
 }
+
 
