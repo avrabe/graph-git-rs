@@ -118,6 +118,16 @@ struct PackageConfigOption {
     runtime_recommends: Vec<String>,
 }
 
+/// Python block information (Phase 10)
+#[derive(Debug, Clone)]
+struct PythonBlockInfo {
+    func_name: String,
+    is_anonymous: bool,
+    code: String,
+    start_pos: usize,
+    end_pos: usize,
+}
+
 /// Extracts dependencies from BitBake recipe content
 pub struct RecipeExtractor {
     config: ExtractionConfig,
@@ -167,6 +177,11 @@ impl RecipeExtractor {
                     variables.insert(var_name, expanded);
                 }
             }
+        }
+
+        // Phase 10: Process Python blocks (anonymous functions)
+        if self.config.use_python_ir {
+            variables = self.process_python_blocks(content, variables);
         }
 
         // Parse PACKAGECONFIG declarations
@@ -620,6 +635,147 @@ impl RecipeExtractor {
                 vars.insert(var_name.to_string(), value.to_string());
             }
         }
+    }
+
+    /// Process Python blocks (anonymous functions) and merge variable changes
+    /// Phase 10: Extract and execute Python blocks via IR system
+    fn process_python_blocks(&self, content: &str, mut vars: HashMap<String, String>) -> HashMap<String, String> {
+        // Find all Python blocks: python __anonymous() { ... } or python do_*() { ... }
+        let python_blocks = self.extract_python_blocks(content);
+
+        // Merge default variables with recipe variables
+        let mut eval_vars = self.config.default_variables.clone();
+        eval_vars.extend(vars.clone());
+
+        for python_block in python_blocks {
+            // Only process anonymous blocks for now (they run at parse time)
+            if python_block.is_anonymous {
+                // Parse to IR
+                let parser = PythonIRParser::new();
+                if let Some(ir) = parser.parse(&python_block.code, eval_vars.clone()) {
+                    // Execute based on complexity
+                    match ir.execution_strategy() {
+                        ExecutionStrategy::Static | ExecutionStrategy::Hybrid => {
+                            let mut executor = IRExecutor::new(eval_vars.clone());
+                            let result = executor.execute(&ir);
+
+                            if result.success {
+                                // Merge variable changes back
+                                for (var_name, value) in result.variables_set {
+                                    vars.insert(var_name.clone(), value.clone());
+                                    eval_vars.insert(var_name, value);
+                                }
+                            }
+                        }
+                        ExecutionStrategy::RustPython => {
+                            // For complex blocks, fall back to SimplePythonEvaluator or skip
+                            // This would require full RustPython execution
+                            #[cfg(feature = "python-execution")]
+                            {
+                                let executor = PythonExecutor::new();
+                                let result = executor.execute(&python_block.code, &eval_vars);
+                                if result.success {
+                                    for (var_name, value) in result.variables_set {
+                                        vars.insert(var_name.clone(), value.clone());
+                                        eval_vars.insert(var_name, value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        vars
+    }
+
+    /// Extract Python function blocks from recipe content
+    fn extract_python_blocks(&self, content: &str) -> Vec<PythonBlockInfo> {
+        let mut blocks = Vec::new();
+
+        // Pattern: python __anonymous() { ... } or python do_*() { ... }
+        // We need to handle brace matching properly
+        let mut chars = content.chars().peekable();
+        let mut pos = 0;
+
+        while pos < content.len() {
+            // Look for "python " keyword
+            if content[pos..].starts_with("python ") {
+                let block_start = pos;
+                pos += 7; // Skip "python "
+
+                // Skip whitespace
+                while pos < content.len() && content.chars().nth(pos).unwrap().is_whitespace() && content.chars().nth(pos).unwrap() != '\n' {
+                    pos += 1;
+                }
+
+                // Get function name
+                let name_start = pos;
+                while pos < content.len() {
+                    let ch = content.chars().nth(pos).unwrap();
+                    if ch == '(' || ch.is_whitespace() {
+                        break;
+                    }
+                    pos += 1;
+                }
+                let func_name = content[name_start..pos].to_string();
+
+                // Skip to opening brace
+                while pos < content.len() && content.chars().nth(pos).unwrap() != '{' {
+                    pos += 1;
+                }
+
+                if pos < content.len() {
+                    pos += 1; // Skip '{'
+
+                    // Extract block body with brace matching
+                    let body_start = pos;
+                    let mut depth = 1;
+                    let mut in_string = false;
+                    let mut string_char = ' ';
+
+                    while pos < content.len() && depth > 0 {
+                        let ch = content.chars().nth(pos).unwrap();
+
+                        // Handle strings
+                        if (ch == '"' || ch == '\'') && (pos == 0 || content.chars().nth(pos - 1).unwrap() != '\\') {
+                            if !in_string {
+                                in_string = true;
+                                string_char = ch;
+                            } else if ch == string_char {
+                                in_string = false;
+                            }
+                        }
+
+                        // Count braces outside strings
+                        if !in_string {
+                            if ch == '{' {
+                                depth += 1;
+                            } else if ch == '}' {
+                                depth -= 1;
+                            }
+                        }
+
+                        pos += 1;
+                    }
+
+                    let body = content[body_start..pos - 1].to_string();
+
+                    blocks.push(PythonBlockInfo {
+                        func_name: func_name.clone(),
+                        is_anonymous: func_name == "__anonymous",
+                        code: body,
+                        start_pos: block_start,
+                        end_pos: pos,
+                    });
+                }
+            } else {
+                pos += 1;
+            }
+        }
+
+        blocks
     }
 
     /// Evaluate Python expressions in a string value
@@ -1982,6 +2138,76 @@ DEPENDS:append:poky = " poky-distro"
 
         // Check class-specific (should have target)
         assert!(extraction.depends.contains(&"target-only".to_string()));
+    }
+
+    #[test]
+    fn test_python_block_processing() {
+        let mut graph = RecipeGraph::new();
+
+        let mut config = ExtractionConfig::default();
+        config.use_python_ir = true;
+
+        let extractor = RecipeExtractor::new(config);
+
+        let content = r#"
+PN = "test-recipe"
+PV = "1.0"
+DEPENDS = "base-dep"
+
+python __anonymous() {
+    d.setVar('EXTRA_DEP', 'python-added')
+    d.appendVar('DEPENDS', ' python-added')
+}
+
+RDEPENDS = "runtime-dep"
+"#;
+
+        let extraction = extractor
+            .extract_from_content(&mut graph, "test-recipe", content)
+            .unwrap();
+
+        // Check that Python block was processed and variable was set
+        assert!(extraction.variables.contains_key("EXTRA_DEP"));
+        assert_eq!(extraction.variables.get("EXTRA_DEP"), Some(&"python-added".to_string()));
+
+        // Check that DEPENDS was modified by Python block
+        assert!(extraction.depends.contains(&"base-dep".to_string()));
+        assert!(extraction.depends.contains(&"python-added".to_string()));
+    }
+
+    #[test]
+    fn test_extract_python_blocks() {
+        let extractor = RecipeExtractor::new_default();
+
+        let content = r#"
+DEPENDS = "foo"
+
+python __anonymous() {
+    d.setVar('TEST', 'value')
+}
+
+python do_configure() {
+    # Some task code
+    pass
+}
+
+RDEPENDS = "bar"
+"#;
+
+        let blocks = extractor.extract_python_blocks(content);
+
+        // Should find 2 Python blocks
+        assert_eq!(blocks.len(), 2);
+
+        // First should be anonymous
+        assert_eq!(blocks[0].func_name, "__anonymous");
+        assert!(blocks[0].is_anonymous);
+        assert!(blocks[0].code.contains("d.setVar"));
+
+        // Second should be do_configure
+        assert_eq!(blocks[1].func_name, "do_configure");
+        assert!(!blocks[1].is_anonymous);
+        assert!(blocks[1].code.contains("pass"));
     }
 }
 
