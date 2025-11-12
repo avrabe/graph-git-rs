@@ -69,6 +69,13 @@ impl SimplePythonEvaluator {
         // Check for list literals: ['item1', 'item2'] or ["item1", "item2"]
         let trimmed_inner = inner.trim();
         if trimmed_inner.starts_with('[') && trimmed_inner.contains(']') {
+            // Phase 9e: Check for list comprehension first: [x for x in list if condition]
+            if trimmed_inner.contains(" for ") && trimmed_inner.contains(" in ") {
+                if let Some(comp_result) = self.eval_list_comprehension(trimmed_inner) {
+                    return Some(comp_result);
+                }
+            }
+
             if let Some(list_result) = self.eval_list_literal(trimmed_inner) {
                 return Some(list_result);
             }
@@ -641,6 +648,122 @@ impl SimplePythonEvaluator {
         debug!("  Parsed list items: {:?}, result: {}", items, result);
 
         Some(result)
+    }
+
+    /// Phase 9e: Evaluate list comprehension: [x for x in list if condition]
+    /// Examples:
+    ///   - [x for x in ['a', 'b', 'c']]
+    ///   - [x for x in d.getVar('PACKAGES').split() if x.startswith('lib')]
+    ///   - [x.replace('-', '_') for x in items]
+    fn eval_list_comprehension(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating list comprehension: {}", expr);
+
+        let trimmed = expr.trim();
+
+        // Extract content between [ and ]
+        let start_bracket = trimmed.find('[')?;
+        let end_bracket = trimmed.rfind(']')?;
+        if end_bracket <= start_bracket {
+            return None;
+        }
+
+        let content = &trimmed[start_bracket + 1..end_bracket];
+        debug!("  Content: {}", content);
+
+        // Parse pattern: output_expr for var_name in source_list [if condition]
+        let for_pos = content.find(" for ")?;
+        let in_pos = content.find(" in ")?;
+
+        if in_pos <= for_pos {
+            debug!("  Invalid comprehension: 'in' before 'for'");
+            return None;
+        }
+
+        let output_expr = content[..for_pos].trim();
+        let var_name = content[for_pos + 5..in_pos].trim();
+
+        // Check for optional 'if' clause
+        let (source_expr, condition_expr) = if let Some(if_pos) = content[in_pos..].find(" if ") {
+            let actual_if_pos = in_pos + if_pos;
+            let source = content[in_pos + 4..actual_if_pos].trim();
+            let condition = content[actual_if_pos + 4..].trim();
+            (source, Some(condition))
+        } else {
+            (content[in_pos + 4..].trim(), None)
+        };
+
+        debug!("  output_expr: {}, var: {}, source: {}, condition: {:?}",
+               output_expr, var_name, source_expr, condition_expr);
+
+        // Evaluate the source list
+        let source_result = self.evaluate(source_expr)?;
+        debug!("  source_result: {}", source_result);
+
+        // Split into items (space-separated)
+        let items: Vec<&str> = source_result.split_whitespace().collect();
+        debug!("  items: {:?}", items);
+
+        // Process each item
+        let mut results = Vec::new();
+        for item in items {
+            debug!("  Processing item: {}", item);
+
+            // Create a temporary evaluator with the loop variable bound
+            let mut temp_vars = self.variables.clone();
+            temp_vars.insert(var_name.to_string(), item.to_string());
+            let temp_eval = SimplePythonEvaluator::new(temp_vars);
+
+            // Check condition if present
+            if let Some(condition) = condition_expr {
+                // Replace variable references in condition
+                let condition_with_var = condition.replace(var_name, &format!("'{}'", item));
+                debug!("  Evaluating condition: {}", condition_with_var);
+
+                if let Some(cond_result) = temp_eval.eval_condition(&condition_with_var) {
+                    if !cond_result {
+                        debug!("  Condition false, skipping");
+                        continue;
+                    }
+                } else {
+                    debug!("  Could not evaluate condition, skipping");
+                    continue;
+                }
+            }
+
+            // Evaluate output expression
+            // Replace variable references in output expression
+            let output_with_var = if output_expr == var_name {
+                // Simple case: [x for x in list]
+                item.to_string()
+            } else if output_expr.contains(var_name) {
+                // Complex case with methods: [x.strip() for x in list]
+                let expr_to_eval = output_expr.replace(var_name, &format!("'{}'", item));
+                debug!("  Evaluating output: {}", expr_to_eval);
+
+                if let Some(result) = temp_eval.evaluate(&expr_to_eval) {
+                    result
+                } else {
+                    debug!("  Could not evaluate output expression");
+                    continue;
+                }
+            } else {
+                // Output expression doesn't reference the variable
+                if let Some(result) = temp_eval.evaluate(output_expr) {
+                    result
+                } else {
+                    output_expr.to_string()
+                }
+            };
+
+            debug!("  Adding result: {}", output_with_var);
+            results.push(output_with_var);
+        }
+
+        // Return space-separated results
+        let final_result = results.join(" ");
+        debug!("  Final result: {}", final_result);
+
+        Some(final_result)
     }
 
     /// Evaluate oe.utils.conditional(var, value, true_val, false_val, d)
@@ -2453,6 +2576,97 @@ mod tests {
         // Distro-specific handling
         let result = eval.evaluate("${@'poky-distro' if d.getVar('DISTRO').find('poky') >= 0 else 'other-distro'}");
         assert_eq!(result, Some("poky-distro".to_string()));
+    }
+
+    /// Phase 9e: List comprehension tests
+    #[test]
+    fn test_list_comprehension_simple() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Simple iteration: [x for x in list]
+        let result = eval.evaluate("${@[x for x in ['a', 'b', 'c']]}");
+        assert_eq!(result, Some("a b c".to_string()));
+    }
+
+    #[test]
+    fn test_list_comprehension_with_filter() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Filter with startswith
+        let result = eval.evaluate("${@[x for x in ['libfoo', 'bar', 'libbaz', 'qux'] if x.startswith('lib')]}");
+        assert_eq!(result, Some("libfoo libbaz".to_string()));
+    }
+
+    #[test]
+    fn test_list_comprehension_with_transform() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Transform with .upper()
+        let result = eval.evaluate("${@[x.upper() for x in ['hello', 'world']]}");
+        assert_eq!(result, Some("HELLO WORLD".to_string()));
+
+        // Transform with .replace()
+        let result = eval.evaluate("${@[x.replace('-', '_') for x in ['foo-bar', 'baz-qux']]}");
+        assert_eq!(result, Some("foo_bar baz_qux".to_string()));
+    }
+
+    #[test]
+    fn test_list_comprehension_with_variables() {
+        let mut vars = HashMap::new();
+        vars.insert("PACKAGES".to_string(), "libfoo libbar app1 app2".to_string());
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd x11 wayland".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Filter packages starting with 'lib'
+        let result = eval.evaluate("${@[x for x in d.getVar('PACKAGES').split() if x.startswith('lib')]}");
+        assert_eq!(result, Some("libfoo libbar".to_string()));
+
+        // Filter packages starting with 'app'
+        let result = eval.evaluate("${@[x for x in d.getVar('PACKAGES').split() if x.startswith('app')]}");
+        assert_eq!(result, Some("app1 app2".to_string()));
+    }
+
+    #[test]
+    fn test_list_comprehension_real_world_patterns() {
+        let mut vars = HashMap::new();
+        vars.insert("PACKAGES".to_string(), "python3-foo python3-bar lib-baz".to_string());
+        vars.insert("FILES".to_string(), "file1.so file2.a file3.so".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Find all Python 3 packages
+        let result = eval.evaluate("${@[x for x in d.getVar('PACKAGES').split() if x.startswith('python3-')]}");
+        assert_eq!(result, Some("python3-foo python3-bar".to_string()));
+
+        // Find all .so files
+        let result = eval.evaluate("${@[x for x in d.getVar('FILES').split() if x.endswith('.so')]}");
+        assert_eq!(result, Some("file1.so file3.so".to_string()));
+
+        // Transform package names by replacing '-' with '_'
+        let result = eval.evaluate("${@[x.replace('-', '_') for x in d.getVar('PACKAGES').split() if x.startswith('python3')]}");
+        assert_eq!(result, Some("python3_foo python3_bar".to_string()));
+    }
+
+    #[test]
+    fn test_list_comprehension_with_strip() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Strip whitespace from items
+        let result = eval.evaluate("${@[x.strip() for x in ['  hello  ', '  world  ']]}");
+        assert_eq!(result, Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn test_list_comprehension_empty_result() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Filter that matches nothing
+        let result = eval.evaluate("${@[x for x in ['foo', 'bar', 'baz'] if x.startswith('qux')]}");
+        assert_eq!(result, Some("".to_string()));
     }
 }
 
