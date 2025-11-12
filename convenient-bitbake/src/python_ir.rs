@@ -410,7 +410,7 @@ impl PythonIR {
                 OpKind::IfStmt { .. } => 8,
 
                 // Very high complexity (definitely need RustPython)
-                OpKind::ComplexPython { .. } => 50,
+                OpKind::ComplexPython { .. } => 51,
                 OpKind::DelVar { .. } => 5,
             };
         }
@@ -439,6 +439,18 @@ impl PythonIR {
 
     pub fn operation_count(&self) -> usize {
         self.operations.len()
+    }
+
+    pub fn complexity_score(&self) -> u32 {
+        self.complexity_score
+    }
+
+    pub fn variables_written(&self) -> &HashMap<String, ValueId> {
+        &self.variables_written
+    }
+
+    pub fn variables_read(&self) -> &[String] {
+        &self.variables_read
     }
 }
 
@@ -519,6 +531,14 @@ impl PythonIRBuilder {
         false_val: ValueId,
     ) -> ValueId {
         self.ir.add_contains(var_name, item, true_val, false_val)
+    }
+
+    /// Mark code as requiring complex Python execution (RustPython)
+    pub fn complex_python(&mut self, code: impl Into<String>) -> &mut Self {
+        self.ir.add_operation(OpKind::ComplexPython {
+            code: code.into(),
+        });
+        self
     }
 
     /// Finish building and return the IR
