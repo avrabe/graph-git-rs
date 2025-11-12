@@ -8,12 +8,12 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "4.4.10", features = ["cargo", "derive", "env"] }
+clap = { version = "4.5.38", features = ["cargo", "derive", "env"] }
 neo4rs = { workspace = true }
 tempfile = "3.8.1"
-tokio = { version = "1.33.0", features = ["rt", "tokio-macros"] }
+tokio = { version = "1.45.1", features = ["rt", "tokio-macros"] }
 tracing = { workspace = true }
-tracing-subscriber = "0.3.18"
+tracing-subscriber = "0.3.19"
 graph-git = { path = "../graph-git" }
 convenient-git = { path = "../convenient-git" }
 convenient-kas = { path = "../convenient-kas" }
@@ -23,6 +23,6 @@ convenient-repo = { path = "../convenient-repo" }
 [dev-dependencies]
 neo4j_testcontainers = "0.2.0"
 testcontainers = "0.14.0"
-tracing-test = "0.2.4"
+tracing-test = "0.2.5"
 url = "2.4.1"
 git2 = { workspace = true }

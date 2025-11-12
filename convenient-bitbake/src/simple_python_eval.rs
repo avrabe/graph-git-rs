@@ -45,14 +45,35 @@ impl SimplePythonEvaluator {
             return self.eval_filter(inner);
         }
 
-        // Handle d.getVar()
-        if inner.contains("d.getVar") {
-            return self.eval_getvar(inner);
-        }
-
         // Handle oe.utils.conditional()
         if inner.contains("oe.utils.conditional") {
             return self.eval_conditional(inner);
+        }
+
+        // Handle bb.utils.to_boolean()
+        if inner.contains("bb.utils.to_boolean") {
+            return self.eval_to_boolean(inner);
+        }
+
+        // Handle oe.utils.any_distro_features()
+        if inner.contains("oe.utils.any_distro_features") {
+            return self.eval_any_distro_features(inner);
+        }
+
+        // Handle oe.utils.all_distro_features()
+        if inner.contains("oe.utils.all_distro_features") {
+            return self.eval_all_distro_features(inner);
+        }
+
+        // Handle inline Python conditionals (ternary): value1 if condition else value2
+        // IMPORTANT: Check this BEFORE d.getVar() to avoid false matches
+        if inner.contains(" if ") && inner.contains(" else ") {
+            return self.eval_inline_conditional(inner);
+        }
+
+        // Handle d.getVar()
+        if inner.contains("d.getVar") {
+            return self.eval_getvar(inner);
         }
 
         // Can't handle this expression
@@ -249,6 +270,279 @@ impl SimplePythonEvaluator {
         };
 
         debug!("  var_value={}, matches={}, result={}", var_value, matches, result);
+
+        Some(result)
+    }
+
+    /// Evaluate inline Python conditional (ternary): value1 if condition else value2
+    /// Examples:
+    ///   - 'qemu-native' if d.getVar('TOOLCHAIN_TEST_TARGET') == 'user' else ''
+    ///   - 'yes' if 'systemd' in d.getVar('DISTRO_FEATURES').split() else 'no'
+    ///   - 'enabled' if d.getVar('FLAG') else 'disabled'
+    fn eval_inline_conditional(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating inline conditional: {}", expr);
+
+        // Parse pattern: true_value if condition else false_value
+        // Find ' if ' and ' else ' keywords (with spaces to avoid false matches)
+        let if_pos = expr.find(" if ")?;
+        let else_pos = expr.rfind(" else ")?;
+
+        // Ensure else comes after if
+        if else_pos <= if_pos {
+            debug!("  Invalid structure: else before if");
+            return None;
+        }
+
+        // Extract the three parts
+        let true_value_part = expr[..if_pos].trim();
+        let condition_part = expr[if_pos + 4..else_pos].trim(); // Skip " if "
+        let false_value_part = expr[else_pos + 6..].trim(); // Skip " else "
+
+        debug!("  true_value: {}", true_value_part);
+        debug!("  condition: {}", condition_part);
+        debug!("  false_value: {}", false_value_part);
+
+        // Evaluate the condition
+        let condition_result = self.eval_condition(condition_part)?;
+
+        debug!("  condition_result: {}", condition_result);
+
+        // Return appropriate value based on condition
+        let result = if condition_result {
+            self.extract_string_literal(true_value_part)
+        } else {
+            self.extract_string_literal(false_value_part)
+        };
+
+        debug!("  final_result: {:?}", result);
+        result
+    }
+
+    /// Evaluate a condition to boolean
+    /// Handles:
+    ///   - d.getVar('VAR') == 'value'
+    ///   - d.getVar('VAR') != 'value'  ///   - 'item' in d.getVar('VAR').split()
+    ///   - d.getVar('VAR') (truthiness check)
+    fn eval_condition(&self, condition: &str) -> Option<bool> {
+        debug!("Evaluating condition: {}", condition);
+
+        let trimmed = condition.trim();
+
+        // Handle: d.getVar('VAR') == 'value'
+        if let Some(eq_pos) = trimmed.find(" == ") {
+            let left = trimmed[..eq_pos].trim();
+            let right = trimmed[eq_pos + 4..].trim();
+
+            debug!("  Equality check: {} == {}", left, right);
+
+            // Evaluate left side (usually d.getVar)
+            let left_val = if left.contains("d.getVar") {
+                self.eval_getvar(left)?
+            } else {
+                self.extract_string_literal(left)?
+            };
+
+            // Evaluate right side (usually a string literal)
+            let right_val = self.extract_string_literal(right)?;
+
+            debug!("  left_val={}, right_val={}", left_val, right_val);
+            return Some(left_val == right_val);
+        }
+
+        // Handle: d.getVar('VAR') != 'value'
+        if let Some(neq_pos) = trimmed.find(" != ") {
+            let left = trimmed[..neq_pos].trim();
+            let right = trimmed[neq_pos + 4..].trim();
+
+            debug!("  Inequality check: {} != {}", left, right);
+
+            let left_val = if left.contains("d.getVar") {
+                self.eval_getvar(left)?
+            } else {
+                self.extract_string_literal(left)?
+            };
+
+            let right_val = self.extract_string_literal(right)?;
+
+            debug!("  left_val={}, right_val={}", left_val, right_val);
+            return Some(left_val != right_val);
+        }
+
+        // Handle: 'item' in d.getVar('VAR').split()
+        if let Some(in_pos) = trimmed.find(" in ") {
+            let item_part = trimmed[..in_pos].trim();
+            let container_part = trimmed[in_pos + 4..].trim();
+
+            debug!("  Membership check: {} in {}", item_part, container_part);
+
+            // Extract item (usually a string literal)
+            let item = self.extract_string_literal(item_part)?;
+
+            // Evaluate container - handle d.getVar('VAR').split()
+            let container_str = if container_part.contains("d.getVar") && container_part.contains(".split()") {
+                // Extract variable value and split
+                let var_value = self.eval_getvar(container_part)?;
+                var_value
+            } else if container_part.contains("d.getVar") {
+                // Just variable value (treat as space-separated)
+                self.eval_getvar(container_part)?
+            } else {
+                debug!("  Can't evaluate container: {}", container_part);
+                return None;
+            };
+
+            // Check if item is in container (space-separated)
+            let contains = container_str.split_whitespace().any(|s| s == item);
+            debug!("  container={}, contains={}", container_str, contains);
+            return Some(contains);
+        }
+
+        // Handle: d.getVar('VAR') (truthiness check - non-empty string is true)
+        if trimmed.contains("d.getVar") {
+            debug!("  Truthiness check");
+            if let Some(value) = self.eval_getvar(trimmed) {
+                // Non-empty string is truthy
+                let is_truthy = !value.is_empty() && value != "0" && value.to_lowercase() != "false";
+                debug!("  value={}, is_truthy={}", value, is_truthy);
+                return Some(is_truthy);
+            }
+        }
+
+        debug!("  Can't evaluate condition: {}", trimmed);
+        None
+    }
+
+    /// Extract a string literal from quotes, or return the trimmed value if no quotes
+    fn extract_string_literal(&self, s: &str) -> Option<String> {
+        let trimmed = s.trim();
+
+        // Handle quoted strings: 'value' or "value"
+        if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+            || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        {
+            if trimmed.len() < 2 {
+                return Some(String::new());
+            }
+            return Some(trimmed[1..trimmed.len() - 1].to_string());
+        }
+
+        // If it's a variable reference, try to evaluate it
+        if trimmed.contains("d.getVar") {
+            return self.eval_getvar(trimmed);
+        }
+
+        // Otherwise, return as-is (might be empty string or other literal)
+        Some(trimmed.to_string())
+    }
+
+    /// Evaluate bb.utils.to_boolean(value, d)
+    /// Convert string to boolean ("yes"/"true"/"1" -> true, others -> false)
+    fn eval_to_boolean(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating bb.utils.to_boolean: {}", expr);
+
+        let args = self.parse_function_args(expr, "bb.utils.to_boolean")?;
+
+        if args.is_empty() {
+            debug!("bb.utils.to_boolean: Expected 1+ args, got 0");
+            return None;
+        }
+
+        let value = &args[0];
+        debug!("  value={}", value);
+
+        // Try to get variable value if it's a variable reference
+        let actual_value = if value.is_empty() {
+            value.clone()
+        } else {
+            self.variables.get(value).cloned().unwrap_or_else(|| value.clone())
+        };
+
+        // Check if value is truthy
+        let is_true = matches!(actual_value.to_lowercase().as_str(),
+            "yes" | "true" | "1" | "y" | "t" | "on" | "enable" | "enabled");
+
+        let result = if is_true { "true" } else { "false" };
+        debug!("  actual_value={}, result={}", actual_value, result);
+
+        Some(result.to_string())
+    }
+
+    /// Evaluate oe.utils.any_distro_features(d, features, *args)
+    /// Returns True if ANY of the features are in DISTRO_FEATURES
+    fn eval_any_distro_features(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating oe.utils.any_distro_features: {}", expr);
+
+        // Parse: oe.utils.any_distro_features(d, 'feature1 feature2', true_val, false_val)
+        let args = self.parse_function_args(expr, "oe.utils.any_distro_features")?;
+
+        if args.len() < 2 {
+            debug!("oe.utils.any_distro_features: Expected 2+ args, got {}", args.len());
+            return None;
+        }
+
+        // First arg is 'd', second is features string
+        let features = &args[1];
+        let true_value = if args.len() > 2 { &args[2] } else { "1" };
+        let false_value = if args.len() > 3 { &args[3] } else { "" };
+
+        debug!("  features={}, true={}, false={}", features, true_value, false_value);
+
+        // Look up DISTRO_FEATURES
+        let distro_features = self.variables.get("DISTRO_FEATURES")?;
+
+        // Check if ANY feature is in DISTRO_FEATURES
+        let distro_items: Vec<&str> = distro_features.split_whitespace().collect();
+        let has_any = features
+            .split_whitespace()
+            .any(|feature| distro_items.contains(&feature));
+
+        let result = if has_any {
+            true_value.to_string()
+        } else {
+            false_value.to_string()
+        };
+
+        debug!("  distro_features={}, has_any={}, result={}", distro_features, has_any, result);
+
+        Some(result)
+    }
+
+    /// Evaluate oe.utils.all_distro_features(d, features, *args)
+    /// Returns True if ALL of the features are in DISTRO_FEATURES
+    fn eval_all_distro_features(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating oe.utils.all_distro_features: {}", expr);
+
+        // Parse: oe.utils.all_distro_features(d, 'feature1 feature2', true_val, false_val)
+        let args = self.parse_function_args(expr, "oe.utils.all_distro_features")?;
+
+        if args.len() < 2 {
+            debug!("oe.utils.all_distro_features: Expected 2+ args, got {}", args.len());
+            return None;
+        }
+
+        // First arg is 'd', second is features string
+        let features = &args[1];
+        let true_value = if args.len() > 2 { &args[2] } else { "1" };
+        let false_value = if args.len() > 3 { &args[3] } else { "" };
+
+        debug!("  features={}, true={}, false={}", features, true_value, false_value);
+
+        // Look up DISTRO_FEATURES
+        let distro_features = self.variables.get("DISTRO_FEATURES")?;
+
+        // Check if ALL features are in DISTRO_FEATURES
+        let distro_items: Vec<&str> = distro_features.split_whitespace().collect();
+        let has_all = features
+            .split_whitespace()
+            .all(|feature| distro_items.contains(&feature));
+
+        let result = if has_all {
+            true_value.to_string()
+        } else {
+            false_value.to_string()
+        };
+
+        debug!("  distro_features={}, has_all={}, result={}", distro_features, has_all, result);
 
         Some(result)
     }
@@ -518,19 +812,27 @@ mod tests {
     fn test_getvar() {
         let eval = create_test_evaluator();
 
-        // Test d.getVar('VAR')
+        // Test d.getVar('VAR') in conditional
         let result = eval.evaluate("${@'qemu-native' if d.getVar('TOOLCHAIN_TEST_TARGET') == 'user' else ''}");
         // TOOLCHAIN_TEST_TARGET not in our vars, so should return None (can't evaluate)
         assert_eq!(result, None);
 
-        // Add the variable
+        // Add the variable with matching value
         let mut vars = HashMap::new();
-        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam".to_string());
         vars.insert("TOOLCHAIN_TEST_TARGET".to_string(), "user".to_string());
         let eval2 = SimplePythonEvaluator::new(vars);
 
-        // This is complex (has 'if'), so we test just d.getVar extraction
-        // For now, just test that it can extract the variable
+        // Now it should evaluate to 'qemu-native'
+        let result = eval2.evaluate("${@'qemu-native' if d.getVar('TOOLCHAIN_TEST_TARGET') == 'user' else ''}");
+        assert_eq!(result, Some("qemu-native".to_string()));
+
+        // Test with non-matching value
+        let mut vars3 = HashMap::new();
+        vars3.insert("TOOLCHAIN_TEST_TARGET".to_string(), "qemu".to_string());
+        let eval3 = SimplePythonEvaluator::new(vars3);
+
+        let result = eval3.evaluate("${@'qemu-native' if d.getVar('TOOLCHAIN_TEST_TARGET') == 'user' else ''}");
+        assert_eq!(result, Some("".to_string()));
     }
 
     #[test]
@@ -562,4 +864,86 @@ mod tests {
         );
         assert_eq!(result, Some("no".to_string()));
     }
+
+    #[test]
+    fn test_inline_conditional_equality() {
+        let mut vars = HashMap::new();
+        vars.insert("TARGET_ARCH".to_string(), "arm".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test == operator
+        let result = eval.evaluate("${@'arm-dep' if d.getVar('TARGET_ARCH') == 'arm' else 'x86-dep'}");
+        assert_eq!(result, Some("arm-dep".to_string()));
+
+        let result = eval.evaluate("${@'arm-dep' if d.getVar('TARGET_ARCH') == 'x86' else 'x86-dep'}");
+        assert_eq!(result, Some("x86-dep".to_string()));
+    }
+
+    #[test]
+    fn test_inline_conditional_inequality() {
+        let mut vars = HashMap::new();
+        vars.insert("MACHINE".to_string(), "qemux86".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test != operator
+        let result = eval.evaluate("${@'special' if d.getVar('MACHINE') != 'host' else 'standard'}");
+        assert_eq!(result, Some("special".to_string()));
+    }
+
+    #[test]
+    fn test_inline_conditional_membership() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam ipv6".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test 'in' operator with .split()
+        let result = eval.evaluate("${@'systemd-dep' if 'systemd' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("systemd-dep".to_string()));
+
+        let result = eval.evaluate("${@'bluetooth-dep' if 'bluetooth' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("".to_string()));
+    }
+
+    #[test]
+    fn test_inline_conditional_truthiness() {
+        let mut vars = HashMap::new();
+        vars.insert("ENABLE_FEATURE".to_string(), "1".to_string());
+        vars.insert("DISABLE_FEATURE".to_string(), "".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Test truthiness (non-empty is true)
+        let result = eval.evaluate("${@'enabled' if d.getVar('ENABLE_FEATURE') else 'disabled'}");
+        assert_eq!(result, Some("enabled".to_string()));
+
+        let result = eval.evaluate("${@'enabled' if d.getVar('DISABLE_FEATURE') else 'disabled'}");
+        assert_eq!(result, Some("disabled".to_string()));
+    }
+
+    #[test]
+    fn test_inline_conditional_real_world_patterns() {
+        // Pattern 1: From crosssdk recipe
+        let mut vars = HashMap::new();
+        vars.insert("TOOLCHAIN_TEST_TARGET".to_string(), "user".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        let result = eval.evaluate("${@'qemu-native' if d.getVar('TOOLCHAIN_TEST_TARGET') == 'user' else ''}");
+        assert_eq!(result, Some("qemu-native".to_string()));
+
+        // Pattern 2: From systemd-dependent recipes
+        let mut vars2 = HashMap::new();
+        vars2.insert("DISTRO_FEATURES".to_string(), "systemd wayland".to_string());
+        let eval2 = SimplePythonEvaluator::new(vars2);
+
+        let result = eval2.evaluate("${@'libsystemd' if 'systemd' in d.getVar('DISTRO_FEATURES').split() else ''}");
+        assert_eq!(result, Some("libsystemd".to_string()));
+
+        // Pattern 3: Architecture-specific dependencies
+        let mut vars3 = HashMap::new();
+        vars3.insert("TARGET_ARCH".to_string(), "aarch64".to_string());
+        let eval3 = SimplePythonEvaluator::new(vars3);
+
+        let result = eval3.evaluate("${@'arm-toolchain' if d.getVar('TARGET_ARCH') != 'x86_64' else 'x86-toolchain'}");
+        assert_eq!(result, Some("arm-toolchain".to_string()));
+    }
 }
+
