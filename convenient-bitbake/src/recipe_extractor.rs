@@ -4,6 +4,9 @@
 use crate::recipe_graph::{RecipeGraph, RecipeId, TaskId};
 use crate::task_parser::{parse_addtask_statement, parse_task_flag};
 use crate::simple_python_eval::SimplePythonEvaluator;
+use crate::python_ir_parser::PythonIRParser;
+use crate::python_ir_executor::IRExecutor;
+use crate::python_ir::ExecutionStrategy;
 use crate::class_dependencies;
 use std::collections::HashMap;
 use std::path::Path;
@@ -43,6 +46,8 @@ pub struct ExtractionConfig {
     pub use_python_executor: bool,
     /// Use simple Python expression evaluator (handles bb.utils.contains, bb.utils.filter)
     pub use_simple_python_eval: bool,
+    /// Use Python IR parser + executor for enhanced Python block processing (Phase 10)
+    pub use_python_ir: bool,
     /// Default build-time variables (e.g., DISTRO_FEATURES) for Python expression evaluation
     pub default_variables: HashMap<String, String>,
     /// Extract task dependencies
@@ -72,6 +77,7 @@ impl Default for ExtractionConfig {
         Self {
             use_python_executor: false,
             use_simple_python_eval: false,
+            use_python_ir: true,  // Enable by default (Phase 10)
             default_variables,
             extract_tasks: false,
             resolve_providers: false,
@@ -635,11 +641,50 @@ impl RecipeExtractor {
                 let mut eval_vars = self.config.default_variables.clone();
                 eval_vars.extend(vars.clone());
 
-                let evaluator = SimplePythonEvaluator::new(eval_vars);
-                if let Some(evaluated) = evaluator.evaluate(expr) {
+                let mut evaluated = None;
+
+                // Phase 10: Try IR parser + executor first if enabled
+                if self.config.use_python_ir {
+                    // Extract the Python expression (remove ${@ and })
+                    let python_expr = if expr.starts_with("${@") && expr.ends_with("}") {
+                        &expr[3..expr.len()-1]
+                    } else {
+                        expr
+                    };
+
+                    let parser = PythonIRParser::new();
+                    if let Some(ir) = parser.parse_inline_expression(python_expr, eval_vars.clone()) {
+                        // Execute the IR based on complexity
+                        match ir.execution_strategy() {
+                            ExecutionStrategy::Static | ExecutionStrategy::Hybrid => {
+                                let mut executor = IRExecutor::new(eval_vars.clone());
+                                let ir_result = executor.execute(&ir);
+
+                                if ir_result.success {
+                                    // For inline expressions, check if any variables were modified
+                                    // If so, use the first modified value as the result
+                                    if let Some((_, value)) = ir_result.variables_set.iter().next() {
+                                        evaluated = Some(value.clone());
+                                    }
+                                }
+                            }
+                            ExecutionStrategy::RustPython => {
+                                // Fall through to SimplePythonEvaluator
+                            }
+                        }
+                    }
+                }
+
+                // Fallback to SimplePythonEvaluator
+                if evaluated.is_none() {
+                    let evaluator = SimplePythonEvaluator::new(eval_vars);
+                    evaluated = evaluator.evaluate(expr);
+                }
+
+                if let Some(evaluated_value) = evaluated {
                     // Replace the expression with the evaluated result
-                    result.replace_range(abs_pos..abs_pos + end_pos + 1, &evaluated);
-                    start = abs_pos + evaluated.len();
+                    result.replace_range(abs_pos..abs_pos + end_pos + 1, &evaluated_value);
+                    start = abs_pos + evaluated_value.len();
                 } else {
                     // Can't evaluate, keep original and move past it
                     start = abs_pos + end_pos + 1;
