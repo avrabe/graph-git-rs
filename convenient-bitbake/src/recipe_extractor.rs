@@ -776,12 +776,14 @@ impl RecipeExtractor {
 
         // Get dependencies for each class
         for class_name in classes {
-            // Try dynamic .bbclass parsing first (Phase 7b), fall back to hardcoded
+            // Try dynamic .bbclass parsing first (Phase 7b+7f), fall back to hardcoded
             let (class_build_deps, class_runtime_deps) = if !self.config.class_search_paths.is_empty() {
+                // Phase 7f: Pass recipe variables for Python expression evaluation in .bbclass files
                 class_dependencies::get_class_deps_dynamic(
                     &class_name,
                     distro_features,
                     &self.config.class_search_paths,
+                    variables,
                 )
             } else {
                 // No search paths configured - use hardcoded mappings only
