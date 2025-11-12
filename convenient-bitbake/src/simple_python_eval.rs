@@ -714,34 +714,102 @@ impl SimplePythonEvaluator {
 
         let trimmed = condition.trim();
 
-        // Handle: d.getVar('VAR') == 'value'
+        // Phase 9a: Handle numeric comparisons (<, >, <=, >=) for vercmp and len
+        // Check >= before > and <= before < to avoid partial matches
+        if let Some(gte_pos) = self.find_operator(trimmed, " >= ") {
+            let left = trimmed[..gte_pos].trim();
+            let right = trimmed[gte_pos + 4..].trim();
+            debug!("  Greater-than-or-equal check: {} >= {}", left, right);
+
+            let left_num = self.eval_numeric_expr(left)?;
+            let right_num = self.eval_numeric_expr(right)?;
+            debug!("  left_num={}, right_num={}", left_num, right_num);
+            return Some(left_num >= right_num);
+        }
+
+        if let Some(lte_pos) = self.find_operator(trimmed, " <= ") {
+            let left = trimmed[..lte_pos].trim();
+            let right = trimmed[lte_pos + 4..].trim();
+            debug!("  Less-than-or-equal check: {} <= {}", left, right);
+
+            let left_num = self.eval_numeric_expr(left)?;
+            let right_num = self.eval_numeric_expr(right)?;
+            debug!("  left_num={}, right_num={}", left_num, right_num);
+            return Some(left_num <= right_num);
+        }
+
+        if let Some(gt_pos) = self.find_operator(trimmed, " > ") {
+            let left = trimmed[..gt_pos].trim();
+            let right = trimmed[gt_pos + 3..].trim();
+            debug!("  Greater-than check: {} > {}", left, right);
+
+            let left_num = self.eval_numeric_expr(left)?;
+            let right_num = self.eval_numeric_expr(right)?;
+            debug!("  left_num={}, right_num={}", left_num, right_num);
+            return Some(left_num > right_num);
+        }
+
+        if let Some(lt_pos) = self.find_operator(trimmed, " < ") {
+            let left = trimmed[..lt_pos].trim();
+            let right = trimmed[lt_pos + 3..].trim();
+            debug!("  Less-than check: {} < {}", left, right);
+
+            let left_num = self.eval_numeric_expr(left)?;
+            let right_num = self.eval_numeric_expr(right)?;
+            debug!("  left_num={}, right_num={}", left_num, right_num);
+            return Some(left_num < right_num);
+        }
+
+        // Handle: d.getVar('VAR') == 'value' or len(...) == 5
         if let Some(eq_pos) = trimmed.find(" == ") {
             let left = trimmed[..eq_pos].trim();
             let right = trimmed[eq_pos + 4..].trim();
 
             debug!("  Equality check: {} == {}", left, right);
 
-            // Evaluate left side (usually d.getVar)
+            // Phase 9a: Check if this is a numeric comparison (vercmp or len)
+            if left.contains("bb.utils.vercmp") || left.starts_with("len(")
+                || right.contains("bb.utils.vercmp") || right.starts_with("len(")
+                || right.parse::<i32>().is_ok() {
+                // Numeric comparison
+                if let (Some(left_num), Some(right_num)) = (self.eval_numeric_expr(left), self.eval_numeric_expr(right)) {
+                    debug!("  Numeric equality: {} == {}", left_num, right_num);
+                    return Some(left_num == right_num);
+                }
+            }
+
+            // String comparison (original behavior)
             let left_val = if left.contains("d.getVar") {
                 self.eval_getvar(left)?
             } else {
                 self.extract_string_literal(left)?
             };
 
-            // Evaluate right side (usually a string literal)
             let right_val = self.extract_string_literal(right)?;
 
             debug!("  left_val={}, right_val={}", left_val, right_val);
             return Some(left_val == right_val);
         }
 
-        // Handle: d.getVar('VAR') != 'value'
+        // Handle: d.getVar('VAR') != 'value' or len(...) != 5
         if let Some(neq_pos) = trimmed.find(" != ") {
             let left = trimmed[..neq_pos].trim();
             let right = trimmed[neq_pos + 4..].trim();
 
             debug!("  Inequality check: {} != {}", left, right);
 
+            // Phase 9a: Check if this is a numeric comparison (vercmp or len)
+            if left.contains("bb.utils.vercmp") || left.starts_with("len(")
+                || right.contains("bb.utils.vercmp") || right.starts_with("len(")
+                || right.parse::<i32>().is_ok() {
+                // Numeric comparison
+                if let (Some(left_num), Some(right_num)) = (self.eval_numeric_expr(left), self.eval_numeric_expr(right)) {
+                    debug!("  Numeric inequality: {} != {}", left_num, right_num);
+                    return Some(left_num != right_num);
+                }
+            }
+
+            // String comparison (original behavior)
             let left_val = if left.contains("d.getVar") {
                 self.eval_getvar(left)?
             } else {
@@ -845,6 +913,150 @@ impl SimplePythonEvaluator {
 
         // Otherwise, return as-is (might be empty string or other literal)
         Some(trimmed.to_string())
+    }
+
+    /// Phase 9a: Evaluate numeric expression (supports bb.utils.vercmp, len, and numeric literals)
+    /// Returns an integer for comparison operations
+    fn eval_numeric_expr(&self, expr: &str) -> Option<i32> {
+        let trimmed = expr.trim();
+        debug!("Evaluating numeric expression: {}", trimmed);
+
+        // Handle bb.utils.vercmp(v1, v2)
+        if trimmed.contains("bb.utils.vercmp") {
+            return self.eval_vercmp(trimmed);
+        }
+
+        // Handle len(...)
+        if trimmed.starts_with("len(") {
+            return self.eval_len(trimmed);
+        }
+
+        // Try to parse as integer literal
+        if let Ok(num) = trimmed.parse::<i32>() {
+            return Some(num);
+        }
+
+        // Try to evaluate as d.getVar and parse result
+        if trimmed.contains("d.getVar") {
+            if let Some(value) = self.eval_getvar(trimmed) {
+                if let Ok(num) = value.parse::<i32>() {
+                    return Some(num);
+                }
+            }
+        }
+
+        debug!("  Can't evaluate numeric expression: {}", trimmed);
+        None
+    }
+
+    /// Phase 9a: Evaluate bb.utils.vercmp(v1, v2)
+    /// Returns -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+    fn eval_vercmp(&self, expr: &str) -> Option<i32> {
+        debug!("Evaluating bb.utils.vercmp: {}", expr);
+
+        let args = self.parse_function_args(expr, "bb.utils.vercmp")?;
+
+        if args.len() < 2 {
+            debug!("bb.utils.vercmp: Expected 2 args, got {}", args.len());
+            return None;
+        }
+
+        // Evaluate arguments (they might be d.getVar() calls or literals)
+        let v1_raw = &args[0];
+        let v2_raw = &args[1];
+
+        // Try to evaluate as expressions first, then fall back to literal values
+        let v1 = if v1_raw.contains("d.getVar") {
+            self.eval_getvar(v1_raw).unwrap_or_else(|| v1_raw.clone())
+        } else {
+            v1_raw.clone()
+        };
+
+        let v2 = if v2_raw.contains("d.getVar") {
+            self.eval_getvar(v2_raw).unwrap_or_else(|| v2_raw.clone())
+        } else {
+            v2_raw.clone()
+        };
+
+        debug!("  Comparing versions: {} vs {}", v1, v2);
+
+        // Implement Debian-style version comparison
+        // Split versions into numeric components and compare
+        let result = self.compare_versions(&v1, &v2);
+        debug!("  Result: {}", result);
+
+        Some(result)
+    }
+
+    /// Compare two version strings (Debian-style comparison)
+    /// Returns -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+    fn compare_versions(&self, v1: &str, v2: &str) -> i32 {
+        // Split versions by dots and compare component by component
+        let parts1: Vec<&str> = v1.split('.').collect();
+        let parts2: Vec<&str> = v2.split('.').collect();
+
+        let max_len = parts1.len().max(parts2.len());
+
+        for i in 0..max_len {
+            let p1 = parts1.get(i).unwrap_or(&"0");
+            let p2 = parts2.get(i).unwrap_or(&"0");
+
+            // Try to parse as numbers for numeric comparison
+            let n1 = p1.parse::<i32>().unwrap_or(0);
+            let n2 = p2.parse::<i32>().unwrap_or(0);
+
+            if n1 < n2 {
+                return -1;
+            } else if n1 > n2 {
+                return 1;
+            }
+            // If equal, continue to next component
+        }
+
+        // All components are equal
+        0
+    }
+
+    /// Phase 9a: Evaluate len(...) - returns length of string or list
+    fn eval_len(&self, expr: &str) -> Option<i32> {
+        debug!("Evaluating len: {}", expr);
+
+        let trimmed = expr.trim();
+
+        // Extract content between len( and )
+        if !trimmed.starts_with("len(") {
+            debug!("  Expression doesn't start with len(");
+            return None;
+        }
+
+        // Find matching closing paren - need to skip "len(" prefix
+        let after_open_paren = &trimmed[4..];
+        let relative_close = self.find_matching_paren(after_open_paren)?;
+        let inner = &after_open_paren[..relative_close];
+
+        debug!("  Inner expression: {}", inner);
+
+        // Evaluate the inner expression to get a string
+        let value = if inner.contains("d.getVar") {
+            // Handle: len(d.getVar('VAR')) or len(d.getVar('VAR').split())
+            self.eval_getvar(inner)?
+        } else {
+            // Handle: len('literal')
+            self.extract_string_literal(inner)?
+        };
+
+        // If the value was from .split(), count the words
+        // Otherwise, return the string length
+        let length = if inner.contains(".split()") {
+            // Count words (space-separated)
+            value.split_whitespace().count() as i32
+        } else {
+            // String length
+            value.len() as i32
+        };
+
+        debug!("  Length: {}", length);
+        Some(length)
     }
 
     /// Evaluate bb.utils.to_boolean(value, d)
@@ -1019,14 +1231,24 @@ impl SimplePythonEvaluator {
                 '\'' if !in_double_quote => {
                     in_single_quote = !in_single_quote;
                     arg_started = true;
-                    had_quotes = true;
-                    // Don't include the quote in the result
+                    // Phase 9a: Preserve quotes inside parentheses (nested function calls)
+                    if paren_depth > 0 {
+                        current_arg.push(ch);
+                    } else {
+                        had_quotes = true;
+                        // Don't include the outermost quote in the result
+                    }
                 }
                 '"' if !in_single_quote => {
                     in_double_quote = !in_double_quote;
                     arg_started = true;
-                    had_quotes = true;
-                    // Don't include the quote in the result
+                    // Phase 9a: Preserve quotes inside parentheses (nested function calls)
+                    if paren_depth > 0 {
+                        current_arg.push(ch);
+                    } else {
+                        had_quotes = true;
+                        // Don't include the outermost quote in the result
+                    }
                 }
                 '(' if !in_single_quote && !in_double_quote => {
                     paren_depth += 1;
@@ -1814,6 +2036,137 @@ mod tests {
 
         let result = eval3.evaluate("${@'sysvinit-compat' if not 'systemd' in d.getVar('DISTRO_FEATURES').split() and 'pam' in d.getVar('DISTRO_FEATURES').split() else ''}");
         assert_eq!(result, Some("sysvinit-compat".to_string()));
+    }
+
+    // Phase 9a: bb.utils.vercmp() and len() tests
+
+    #[test]
+    fn test_vercmp_basic() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Equal versions
+        let result = eval.evaluate("${@'yes' if bb.utils.vercmp('1.2.3', '1.2.3') == 0 else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // First version less than second
+        let result = eval.evaluate("${@'yes' if bb.utils.vercmp('1.2.3', '1.2.4') < 0 else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // First version greater than second
+        let result = eval.evaluate("${@'yes' if bb.utils.vercmp('1.2.4', '1.2.3') > 0 else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // Greater than or equal
+        let result = eval.evaluate("${@'yes' if bb.utils.vercmp('2.5.1', '2.0') >= 0 else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn test_vercmp_with_variables() {
+        let mut vars = HashMap::new();
+        vars.insert("PV".to_string(), "2.5.1".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Check if version is at least 2.0
+        let result = eval.evaluate("${@'newfeature' if bb.utils.vercmp(d.getVar('PV'), '2.0') >= 0 else ''}");
+        assert_eq!(result, Some("newfeature".to_string()));
+
+        // Check if version is less than 3.0
+        let result = eval.evaluate("${@'oldapi' if bb.utils.vercmp(d.getVar('PV'), '3.0') < 0 else 'newapi'}");
+        assert_eq!(result, Some("oldapi".to_string()));
+    }
+
+    #[test]
+    fn test_vercmp_complex_versions() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Multi-digit versions
+        let result = eval.evaluate("${@'yes' if bb.utils.vercmp('1.10.0', '1.9.0') > 0 else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // Versions with different component counts
+        let result = eval.evaluate("${@'yes' if bb.utils.vercmp('2.0', '2.0.0') == 0 else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn test_len_basic() {
+        let vars = HashMap::new();
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Length of string literal
+        let result = eval.evaluate("${@'yes' if len('hello') == 5 else 'no'}");
+        assert_eq!(result, Some("yes".to_string()));
+
+        // Length check greater than
+        let result = eval.evaluate("${@'long' if len('hello world') > 5 else 'short'}");
+        assert_eq!(result, Some("long".to_string()));
+    }
+
+    #[test]
+    fn test_len_with_variables() {
+        let mut vars = HashMap::new();
+        vars.insert("DEPENDS".to_string(), "libfoo libbar libbaz".to_string());
+        vars.insert("ARCH".to_string(), "arm".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Count items after split
+        let result = eval.evaluate("${@'many' if len(d.getVar('DEPENDS').split()) >= 3 else 'few'}");
+        assert_eq!(result, Some("many".to_string()));
+
+        // String length
+        let result = eval.evaluate("${@'short' if len(d.getVar('ARCH')) < 10 else 'long'}");
+        assert_eq!(result, Some("short".to_string()));
+    }
+
+    #[test]
+    fn test_len_empty_and_zero() {
+        let mut vars = HashMap::new();
+        vars.insert("EMPTY".to_string(), "".to_string());
+        vars.insert("NONEMPTY".to_string(), "value".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Empty string length
+        let result = eval.evaluate("${@'empty' if len(d.getVar('EMPTY')) == 0 else 'nonempty'}");
+        assert_eq!(result, Some("empty".to_string()));
+
+        // Non-empty check
+        let result = eval.evaluate("${@'has-value' if len(d.getVar('NONEMPTY')) > 0 else 'empty'}");
+        assert_eq!(result, Some("has-value".to_string()));
+    }
+
+    #[test]
+    fn test_real_world_vercmp_patterns() {
+        let mut vars = HashMap::new();
+        vars.insert("PV".to_string(), "5.4.0".to_string());
+        vars.insert("KERNEL_VERSION".to_string(), "5.10.0".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Kernel version check pattern
+        let result = eval.evaluate("${@'newkernel' if bb.utils.vercmp(d.getVar('KERNEL_VERSION'), '5.0') >= 0 else 'oldkernel'}");
+        assert_eq!(result, Some("newkernel".to_string()));
+
+        // Package version range check
+        let result = eval.evaluate("${@'supported' if bb.utils.vercmp(d.getVar('PV'), '4.0') >= 0 and bb.utils.vercmp(d.getVar('PV'), '6.0') < 0 else 'unsupported'}");
+        assert_eq!(result, Some("supported".to_string()));
+    }
+
+    #[test]
+    fn test_real_world_len_patterns() {
+        let mut vars = HashMap::new();
+        vars.insert("PACKAGECONFIG".to_string(), "ssl crypto zlib openssl".to_string());
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd pam".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // Check if many features enabled
+        let result = eval.evaluate("${@'feature-rich' if len(d.getVar('PACKAGECONFIG').split()) > 3 else 'minimal'}");
+        assert_eq!(result, Some("feature-rich".to_string()));
+
+        // Conditional dependency based on feature count
+        let result = eval.evaluate("${@'extra-deps' if len(d.getVar('DISTRO_FEATURES').split()) >= 2 else ''}");
+        assert_eq!(result, Some("extra-deps".to_string()));
     }
 }
 
