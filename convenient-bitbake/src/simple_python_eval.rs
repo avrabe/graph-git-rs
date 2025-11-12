@@ -576,19 +576,20 @@ impl SimplePythonEvaluator {
 
         let trimmed = expr.trim();
 
-        // Handle parentheses first - evaluate innermost expressions
-        if let Some(open_paren) = trimmed.find('(') {
-            // Find matching closing paren
+        // Handle parentheses ONLY at the start (logical grouping), not embedded (function calls)
+        // This prevents matching d.getVar(...) parentheses
+        if trimmed.starts_with('(') {
+            // Find matching closing paren for the opening paren at position 0
             let mut depth = 0;
             let mut close_paren = None;
 
-            for (i, ch) in trimmed[open_paren..].chars().enumerate() {
+            for (i, ch) in trimmed.chars().enumerate() {
                 match ch {
                     '(' => depth += 1,
                     ')' => {
                         depth -= 1;
                         if depth == 0 {
-                            close_paren = Some(open_paren + i);
+                            close_paren = Some(i);
                             break;
                         }
                     }
@@ -598,15 +599,20 @@ impl SimplePythonEvaluator {
 
             if let Some(close_pos) = close_paren {
                 // Evaluate the parenthesized expression
-                let inner_expr = &trimmed[open_paren + 1..close_pos];
+                let inner_expr = &trimmed[1..close_pos];
                 let inner_result = self.eval_logical_expression(inner_expr)?;
 
                 // Replace the parenthesized part with its result
-                let before = &trimmed[..open_paren];
                 let after = &trimmed[close_pos + 1..];
-                let result_str = if inner_result { "True" } else { "False" };
 
-                let new_expr = format!("{}{}{}", before, result_str, after);
+                // If there's nothing after the closing paren, just return the result
+                if after.trim().is_empty() {
+                    return Some(inner_result);
+                }
+
+                // Otherwise, replace and continue evaluating
+                let result_str = if inner_result { "True" } else { "False" };
+                let new_expr = format!("{}{}", result_str, after);
                 return self.eval_logical_expression(&new_expr);
             }
         }
@@ -1624,6 +1630,22 @@ mod tests {
         // First, test that a simple comparison works
         let result = eval.evaluate("${@'yes' if d.getVar('ARCH') == 'arm' else 'no'}");
         assert_eq!(result, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn test_logical_and_minimal() {
+        let mut vars = HashMap::new();
+        vars.insert("A".to_string(), "1".to_string());
+        vars.insert("B".to_string(), "2".to_string());
+        let eval = SimplePythonEvaluator::new(vars);
+
+        // First test without any complex logic - just one getVar
+        let result1 = eval.evaluate("${@'yes' if d.getVar('A') == '1' else 'no'}");
+        assert_eq!(result1, Some("yes".to_string()), "Single comparison failed");
+
+        // Then test with and
+        let result2 = eval.evaluate("${@'yes' if d.getVar('A') == '1' and d.getVar('B') == '2' else 'no'}");
+        assert_eq!(result2, Some("yes".to_string()), "And expression failed");
     }
 
     #[test]
