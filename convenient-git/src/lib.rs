@@ -1,3 +1,21 @@
+//! Convenient Git - High-performance async git operations
+//!
+//! Provides both legacy synchronous and modern async git operations
+//! with proper error handling and progress tracking.
+
+#![warn(
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown
+)]
+
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},

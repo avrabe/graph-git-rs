@@ -6,6 +6,19 @@
 //! - BitBake configuration generation
 //! - Checksum tracking for cache invalidation
 
+#![warn(
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown
+)]
+
 pub mod include_graph;
 pub mod repository_manager;
 pub mod config_generator;
