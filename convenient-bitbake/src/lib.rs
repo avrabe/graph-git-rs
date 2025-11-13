@@ -17,6 +17,7 @@ pub mod recipe_graph;
 pub mod recipe_extractor;
 pub mod simple_python_eval;
 pub mod class_dependencies;
+pub mod executor;
 
 #[cfg(feature = "python-execution")]
 pub mod python_executor;
@@ -41,6 +42,7 @@ pub use simple_python_eval::SimplePythonEvaluator;
 pub use python_ir::{PythonIR, PythonIRBuilder, Operation, OpKind, ExecutionStrategy};
 pub use python_ir_executor::{IRExecutor, IRExecutionResult};
 pub use python_ir_parser::PythonIRParser;
+pub use executor::{TaskExecutor, TaskSpec, TaskOutput, TaskSignature, ContentHash, SandboxSpec, ExecutionResult};
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
