@@ -388,3 +388,75 @@ distro: poky
     assert!(files.contains_key(&main_path));
     assert!(files.contains_key(&temp.path().join("base.yml")));
 }
+
+#[tokio::test]
+async fn test_busybox_kas_example() {
+    // Realistic busybox kas configuration test
+    let temp = TempDir::new().unwrap();
+    let kas_path = temp.path().join("busybox.yml");
+
+    let content = r#"
+header:
+  version: 14
+
+machine: qemux86-64
+distro: poky
+
+target:
+  - busybox
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    branch: kirkstone
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+
+env:
+  SSTATE_DIR: /shared/sstate-cache
+  DL_DIR: /shared/downloads
+  BB_NUMBER_THREADS: "8"
+  PARALLEL_MAKE: "-j 8"
+
+local_conf_header:
+  build-settings: |
+    PACKAGE_CLASSES = "package_rpm"
+    INHERIT += "rm_work"
+
+bblayers_conf_header:
+  layer-settings: |
+    BBMASK = ""
+"#;
+
+    fs::write(&kas_path, content).await.unwrap();
+
+    // Test loading
+    let kas_file = KasFile::load(&kas_path).await.unwrap();
+    assert_eq!(kas_file.config.header.version, 14);
+    assert_eq!(kas_file.config.machine, Some("qemux86-64".to_string()));
+    assert_eq!(kas_file.config.distro, Some("poky".to_string()));
+    assert_eq!(kas_file.config.target, Some(vec!["busybox".to_string()]));
+
+    // Test repos
+    assert_eq!(kas_file.config.repos.len(), 1);
+    let poky = kas_file.config.repos.get("poky").unwrap();
+    assert_eq!(poky.url, Some("https://git.yoctoproject.org/poky".to_string()));
+    assert_eq!(poky.branch, Some("kirkstone".to_string()));
+    assert_eq!(poky.layers.len(), 3);
+
+    // Test environment
+    let env = kas_file.config.env.as_ref().unwrap();
+    assert_eq!(env.get("SSTATE_DIR").unwrap(), "/shared/sstate-cache");
+    assert_eq!(env.get("DL_DIR").unwrap(), "/shared/downloads");
+    assert_eq!(env.get("BB_NUMBER_THREADS").unwrap(), "8");
+
+    // Test include graph
+    let graph = KasIncludeGraph::build(&kas_path).await.unwrap();
+    assert_eq!(graph.files().len(), 1);
+
+    // Test checksum
+    let checksum = graph.combined_checksum();
+    assert_eq!(checksum.len(), 64); // SHA256 hex string
+}
