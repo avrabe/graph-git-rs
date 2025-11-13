@@ -214,12 +214,15 @@ impl ConfigGenerator {
 /// Configuration error types
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// File system I/O error
     #[error("IO error at {0}: {1}")]
     IoError(PathBuf, String),
 
+    /// Invalid configuration value
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
+    /// Required configuration field is missing
     #[error("Missing required field: {0}")]
     MissingField(String),
 }
