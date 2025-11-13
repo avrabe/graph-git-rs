@@ -9,6 +9,7 @@ pub mod types;
 pub mod cache;
 pub mod sandbox;
 pub mod executor;
+pub mod cache_manager;
 
 pub use types::{
     TaskSignature, TaskOutput, TaskSpec, SandboxSpec,
@@ -17,3 +18,4 @@ pub use types::{
 pub use cache::{ContentAddressableStore, ActionCache};
 pub use sandbox::SandboxManager;
 pub use executor::TaskExecutor;
+pub use cache_manager::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
