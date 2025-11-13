@@ -34,7 +34,7 @@ impl SimpleResolver {
                 if parts.len() > 1 {
                     let last = parts.last().unwrap();
                     // Check if last part looks like a version (starts with digit)
-                    if last.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                    if last.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                         parts[..parts.len() - 1].join("-")
                     } else {
                         pn.clone()
@@ -58,7 +58,7 @@ impl SimpleResolver {
             for (i, c) in pn.char_indices() {
                 if (c == '-' || c == '_') && i + 1 < pn.len() {
                     let rest = &pn[i + 1..];
-                    if rest.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                    if rest.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                         variables
                             .entry("PV".to_string())
                             .or_insert(rest.to_string());

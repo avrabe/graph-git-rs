@@ -170,7 +170,7 @@ impl OverrideResolver {
         let assignment = OverrideAssignment::parse(var_name, value, operation);
         self.assignments
             .entry(assignment.var_name.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(assignment);
     }
 
@@ -251,7 +251,7 @@ impl OverrideResolver {
         let mut all_vars: Vec<String> = self.assignments.keys().cloned().collect();
 
         // Add variables from base resolver
-        for (key, _) in self.resolver.variables() {
+        for key in self.resolver.variables().keys() {
             if !all_vars.contains(key) {
                 all_vars.push(key.clone());
             }

@@ -1,7 +1,7 @@
 [package]
 name = "convenient-bitbake"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -28,9 +28,6 @@ logos = "0.14.0"
 # RustPython for executing Python code (optional feature)
 rustpython = { version = "0.3", optional = true }
 rustpython-vm = { version = "0.3", optional = true }
-
-# Force older home crate version to avoid edition2024 requirement in CI
-home = "=0.5.9"
 
 [features]
 default = []

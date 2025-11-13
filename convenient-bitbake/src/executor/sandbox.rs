@@ -77,7 +77,7 @@ impl Sandbox {
             }
 
             // Try symlink first (fast), fall back to copy
-            if let Err(_) = std::os::unix::fs::symlink(host_path, &dest) {
+            if std::os::unix::fs::symlink(host_path, &dest).is_err() {
                 if host_path.is_file() {
                     fs::copy(host_path, &dest)?;
                 } else if host_path.is_dir() {

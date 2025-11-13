@@ -403,14 +403,13 @@ pub fn get_class_deps_dynamic(
     variables: &HashMap<String, String>,
 ) -> (Vec<String>, Vec<String>) {
     // Try to parse .bbclass file first (Phase 7f: with Python evaluation)
-    if let Some(class_path) = find_class_file(class_name, search_paths) {
-        if let Some(parsed) = parse_class_file(&class_path, variables) {
+    if let Some(class_path) = find_class_file(class_name, search_paths)
+        && let Some(parsed) = parse_class_file(&class_path, variables) {
             // Successfully parsed - use those dependencies
             if !parsed.build_deps.is_empty() || !parsed.runtime_deps.is_empty() {
                 return (parsed.build_deps, parsed.runtime_deps);
             }
         }
-    }
 
     // Fall back to hardcoded mappings
     let build_deps = get_class_build_deps(class_name, distro_features);

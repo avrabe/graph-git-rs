@@ -353,9 +353,9 @@ impl RecipeExtractor {
                 let var_part = var_part.trim();
 
                 // Check if this is a flag assignment: VAR[flag]
-                if let Some(open_bracket) = var_part.find('[') {
-                    if let Some(close_bracket) = var_part.find(']') {
-                        if open_bracket < close_bracket {
+                if let Some(open_bracket) = var_part.find('[')
+                    && let Some(close_bracket) = var_part.find(']')
+                        && open_bracket < close_bracket {
                             let var_name = var_part[..open_bracket].trim().to_string();
                             let flag_name = var_part[open_bracket + 1..close_bracket].trim().to_string();
                             let value = self.clean_value(flag_value);
@@ -363,11 +363,9 @@ impl RecipeExtractor {
                             // Store the flag
                             flags
                                 .entry(var_name)
-                                .or_insert_with(HashMap::new)
+                                .or_default()
                                 .insert(flag_name, value);
                         }
-                    }
-                }
             }
         }
 
@@ -382,8 +380,8 @@ impl RecipeExtractor {
 
         for (var_name, var_flags) in flags {
             // Look for do_* tasks with depends flags
-            if var_name.starts_with("do_") {
-                if let Some(depends_value) = var_flags.get("depends") {
+            if var_name.starts_with("do_")
+                && let Some(depends_value) = var_flags.get("depends") {
                     // Parse dependencies: "recipe1:do_task1 recipe2:do_task2"
                     for dep in depends_value.split_whitespace() {
                         // Extract recipe name before the colon
@@ -400,7 +398,6 @@ impl RecipeExtractor {
                         }
                     }
                 }
-            }
         }
 
         depends
@@ -608,11 +605,10 @@ impl RecipeExtractor {
             }
             ":remove" => {
                 // Remove items from existing value - only apply if override is active (Phase 7c)
-                if let Some(override_str) = override_suffix {
-                    if !self.is_override_active(override_str) {
+                if let Some(override_str) = override_suffix
+                    && !self.is_override_active(override_str) {
                         return; // Skip removal if override not active
                     }
-                }
 
                 if let Some(existing) = vars.get(var_name) {
                     let items_to_remove: Vec<&str> = value.split_whitespace().collect();
@@ -979,8 +975,8 @@ impl RecipeExtractor {
             let line = line.trim();
 
             // Look for PACKAGECONFIG[option] = "..."
-            if line.starts_with("PACKAGECONFIG[") {
-                if let Some(bracket_end) = line.find(']') {
+            if line.starts_with("PACKAGECONFIG[")
+                && let Some(bracket_end) = line.find(']') {
                     let option_name = &line[14..bracket_end]; // Skip "PACKAGECONFIG["
 
                     // Find the assignment
@@ -994,7 +990,7 @@ impl RecipeExtractor {
                         // Parse comma-separated fields
                         let fields: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
 
-                        let enable = fields.get(0).unwrap_or(&"").to_string();
+                        let enable = fields.first().unwrap_or(&"").to_string();
                         let disable = fields.get(1).unwrap_or(&"").to_string();
 
                         // Phase 7g: Parse build_deps field and handle variable references
@@ -1020,7 +1016,6 @@ impl RecipeExtractor {
                         );
                     }
                 }
-            }
         }
 
         configs
@@ -1132,11 +1127,7 @@ impl RecipeExtractor {
                     "PV" => variables.get("PV").cloned(),
                     "P" => {
                         // P = ${PN}-${PV}
-                        if let Some(pv) = variables.get("PV") {
-                            Some(format!("{}-{}", recipe_name, pv))
-                        } else {
-                            None
-                        }
+                        variables.get("PV").map(|pv| format!("{}-{}", recipe_name, pv))
                     }
                     // Enhanced variable expansion (Phase 7e)
                     // Try to get from variables first, then from default_variables, then use sensible defaults
@@ -1410,11 +1401,10 @@ impl RecipeExtractor {
 
         // Apply flags
         for (task_name, flag_name, value) in task_flags {
-            if let Some(task_id) = graph.find_task(recipe_id, &task_name) {
-                if let Some(task_node) = graph.get_task_mut(task_id) {
+            if let Some(task_id) = graph.find_task(recipe_id, &task_name)
+                && let Some(task_node) = graph.get_task_mut(task_id) {
                     task_node.flags.insert(flag_name, value);
                 }
-            }
         }
 
         task_names
@@ -1629,7 +1619,7 @@ impl RecipeExtractor {
             if let Some(classes) = self.parse_inherit_statement(trimmed) {
                 // Process each class
                 for class_name in classes {
-                    if let Some(class_path) = self.find_class_file(&class_name, recipe_path) {
+                    if let Some(class_path) = self.find_class_file(class_name, recipe_path) {
                         match std::fs::read_to_string(&class_path) {
                             Ok(content) => {
                                 // Extract just the addtask statements and task flags
@@ -1664,12 +1654,7 @@ impl RecipeExtractor {
     fn parse_inherit_statement<'a>(&self, line: &'a str) -> Option<Vec<&'a str>> {
         let trimmed = line.trim();
 
-        if let Some(rest) = trimmed.strip_prefix("inherit ") {
-            // Split class names: inherit autotools gettext ptest
-            Some(rest.split_whitespace().collect())
-        } else {
-            None
-        }
+        trimmed.strip_prefix("inherit ").map(|rest| rest.split_whitespace().collect())
     }
 
     /// Find .bbclass file in search paths
