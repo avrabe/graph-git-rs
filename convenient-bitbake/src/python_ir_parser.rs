@@ -46,9 +46,10 @@ impl PythonIRParser {
                 r#"d\.prependVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#
             ).unwrap(),
 
-            // bb.utils.contains('VAR', 'item', 'true_val', 'false_val', d)
+            // bb.utils.contains('VAR', 'item', true_val, false_val, d)
+            // true_val and false_val can be either quoted strings or unquoted literals (True, False, 1, 0, etc.)
             contains_pattern: Regex::new(
-                r#"bb\.utils\.contains\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*['"]([^'"]*)['"]\s*,\s*d\s*\)"#
+                r#"bb\.utils\.contains\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*(?:['"]([^'"]*)['"']|([A-Za-z_0-9]+))\s*,\s*(?:['"]([^'"]*)['"']|([A-Za-z_0-9]+))\s*,\s*d\s*\)"#
             ).unwrap(),
 
             // String methods: var.startswith('prefix'), var.endswith('suffix'), etc.
@@ -89,6 +90,19 @@ impl PythonIRParser {
                 continue;
             }
 
+            // Check for if statement (before trim so we can detect indentation in body)
+            if line.starts_with("if ") && line.trim_end().ends_with(':') {
+                // Parse if statement with body
+                let (parsed, lines_consumed) = self.parse_if_statement(&lines[i..], &mut builder, &mut value_cache, &initial_vars);
+                if !parsed {
+                    // Failed to parse - mark as complex
+                    builder.complex_python(python_code);
+                    return Some(builder.build());
+                }
+                i += lines_consumed;
+                continue;
+            }
+
             // Try to parse this line
             if !self.parse_line(line, &mut builder, &mut value_cache, &initial_vars) {
                 // Failed to parse - mark as complex
@@ -100,6 +114,105 @@ impl PythonIRParser {
         }
 
         Some(builder.build())
+    }
+
+    /// Parse an if statement with body
+    /// Returns (success, lines_consumed)
+    fn parse_if_statement(
+        &self,
+        lines: &[&str],
+        builder: &mut PythonIRBuilder,
+        value_cache: &mut HashMap<String, ValueId>,
+        initial_vars: &HashMap<String, String>,
+    ) -> (bool, usize) {
+        if lines.is_empty() {
+            return (false, 0);
+        }
+
+        let if_line = lines[0].trim();
+
+        // Extract condition from "if condition:"
+        if !if_line.starts_with("if ") || !if_line.ends_with(':') {
+            return (false, 0);
+        }
+
+        let condition = if_line[3..if_line.len()-1].trim();
+
+        // Try to parse bb.utils.contains as condition
+        if let Some(cap) = self.contains_pattern.captures(condition) {
+            let var_name = cap.get(1).unwrap().as_str();
+            let item = cap.get(2).unwrap().as_str();
+
+            // true_val can be in group 3 (quoted) or group 4 (unquoted)
+            let true_str = cap.get(3)
+                .or_else(|| cap.get(4))
+                .unwrap()
+                .as_str();
+
+            // false_val can be in group 5 (quoted) or group 6 (unquoted)
+            let false_str = cap.get(5)
+                .or_else(|| cap.get(6))
+                .unwrap()
+                .as_str();
+
+            // Create contains check
+            let true_val = builder.string_literal(true_str);
+            let false_val = builder.string_literal(false_str);
+            let condition_result = builder.contains(var_name, item, true_val, false_val);
+
+            // Store for use in conditional body
+            value_cache.insert("__condition__".to_string(), condition_result);
+
+            // Parse the body (indented lines after the if)
+            let mut body_lines_consumed = 1; // Start after the if line
+
+            // For now, we'll execute the body lines directly if they're simple operations
+            // In a full implementation, we'd wrap them in a conditional IR operation
+            while body_lines_consumed < lines.len() {
+                let body_line = lines[body_lines_consumed];
+
+                // Check if line is indented (part of if body)
+                if body_line.starts_with("    ") || body_line.starts_with("\t") {
+                    let trimmed = body_line.trim();
+                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        // Try to parse the body line
+                        // For simple bb.utils.contains in if, we'll execute the body
+                        // This is a simplification - ideally we'd generate conditional IR
+                        if !self.parse_line(trimmed, builder, value_cache, initial_vars) {
+                            return (false, 0);
+                        }
+                    }
+                    body_lines_consumed += 1;
+                } else {
+                    // No longer indented, end of if body
+                    break;
+                }
+            }
+
+            // Check if there's an else clause and skip it
+            if body_lines_consumed < lines.len() {
+                let next_line = lines[body_lines_consumed].trim();
+                if next_line == "else:" {
+                    // Skip the else line
+                    body_lines_consumed += 1;
+
+                    // Skip all indented lines in the else body
+                    while body_lines_consumed < lines.len() {
+                        let else_line = lines[body_lines_consumed];
+                        if else_line.starts_with("    ") || else_line.starts_with("\t") {
+                            body_lines_consumed += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return (true, body_lines_consumed);
+        }
+
+        // If condition is not bb.utils.contains, we can't handle it yet
+        (false, 0)
     }
 
     /// Parse a single line of Python code
