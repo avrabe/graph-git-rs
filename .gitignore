@@ -4,7 +4,17 @@ mine
 1.txt
 .vscode
 
+# Coverage artifacts
+*.profraw
+*.profdata
+/target/llvm-cov
+/target/llvm-cov-target
+coverage.json
+
 # KAS checkout directories
 /build
 /poky
 /meta-openembedded
+
+# Bazel cache (for testing)
+/bazel-cache-data

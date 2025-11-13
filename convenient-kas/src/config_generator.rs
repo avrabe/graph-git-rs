@@ -233,8 +233,8 @@ mod tests {
     use crate::include_graph::{KasHeader, KasRepo};
     use tempfile::TempDir;
 
-    #[test]
-    fn test_config_generation() {
+    #[tokio::test]
+    async fn test_config_generation() {
         let temp = TempDir::new().unwrap();
 
         let mut repos = HashMap::new();
@@ -267,12 +267,12 @@ mod tests {
         };
 
         let generator = ConfigGenerator::new(temp.path(), config, HashMap::new());
-        generator.generate_all().unwrap();
+        generator.generate_all().await.unwrap();
 
         let local_conf = temp.path().join("conf/local.conf");
         assert!(local_conf.exists());
 
-        let content = std::fs::read_to_string(local_conf).unwrap();
+        let content = tokio::fs::read_to_string(local_conf).await.unwrap();
         assert!(content.contains("MACHINE"));
         assert!(content.contains("qemux86-64"));
     }

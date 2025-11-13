@@ -212,7 +212,7 @@ mod tests {
     #[tokio::test]
     async fn test_repository_manager_creation() {
         let temp = TempDir::new().unwrap();
-        let manager = RepositoryManager::new(temp.path());
+        let _manager = RepositoryManager::new(temp.path());
         assert!(temp.path().exists());
     }
 }
