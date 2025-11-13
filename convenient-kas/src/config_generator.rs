@@ -29,19 +29,20 @@ impl ConfigGenerator {
     }
 
     /// Generate all configuration files
-    pub fn generate_all(&self) -> Result<(), ConfigError> {
+    pub async fn generate_all(&self) -> Result<(), ConfigError> {
         let conf_dir = self.build_dir.join("conf");
-        std::fs::create_dir_all(&conf_dir)
+        tokio::fs::create_dir_all(&conf_dir)
+            .await
             .map_err(|e| ConfigError::IoError(conf_dir.clone(), e.to_string()))?;
 
-        self.generate_local_conf(&conf_dir)?;
-        self.generate_bblayers_conf(&conf_dir)?;
+        self.generate_local_conf(&conf_dir).await?;
+        self.generate_bblayers_conf(&conf_dir).await?;
 
         Ok(())
     }
 
     /// Generate local.conf
-    fn generate_local_conf(&self, conf_dir: &Path) -> Result<(), ConfigError> {
+    async fn generate_local_conf(&self, conf_dir: &Path) -> Result<(), ConfigError> {
         let mut content = String::new();
 
         // Header
@@ -95,14 +96,15 @@ impl ConfigGenerator {
 
         // Write file
         let local_conf_path = conf_dir.join("local.conf");
-        std::fs::write(&local_conf_path, content)
+        tokio::fs::write(&local_conf_path, content)
+            .await
             .map_err(|e| ConfigError::IoError(local_conf_path.clone(), e.to_string()))?;
 
         Ok(())
     }
 
     /// Generate bblayers.conf
-    fn generate_bblayers_conf(&self, conf_dir: &Path) -> Result<(), ConfigError> {
+    async fn generate_bblayers_conf(&self, conf_dir: &Path) -> Result<(), ConfigError> {
         let mut content = String::new();
 
         // Header
@@ -139,14 +141,15 @@ impl ConfigGenerator {
 
         // Write file
         let bblayers_conf_path = conf_dir.join("bblayers.conf");
-        std::fs::write(&bblayers_conf_path, content)
+        tokio::fs::write(&bblayers_conf_path, content)
+            .await
             .map_err(|e| ConfigError::IoError(bblayers_conf_path.clone(), e.to_string()))?;
 
         Ok(())
     }
 
     /// Generate environment setup script
-    pub fn generate_env_setup(&self) -> Result<(), ConfigError> {
+    pub async fn generate_env_setup(&self) -> Result<(), ConfigError> {
         let mut content = String::new();
 
         // Header
@@ -178,18 +181,21 @@ impl ConfigGenerator {
 
         // Write file
         let env_setup_path = self.build_dir.join("setup-environment");
-        std::fs::write(&env_setup_path, content)
+        tokio::fs::write(&env_setup_path, content)
+            .await
             .map_err(|e| ConfigError::IoError(env_setup_path.clone(), e.to_string()))?;
 
         // Make executable
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&env_setup_path)
+            let mut perms = tokio::fs::metadata(&env_setup_path)
+                .await
                 .map_err(|e| ConfigError::IoError(env_setup_path.clone(), e.to_string()))?
                 .permissions();
             perms.set_mode(0o755);
-            std::fs::set_permissions(&env_setup_path, perms)
+            tokio::fs::set_permissions(&env_setup_path, perms)
+                .await
                 .map_err(|e| ConfigError::IoError(env_setup_path.clone(), e.to_string()))?;
         }
 
