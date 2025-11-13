@@ -45,7 +45,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2.0.4
+      - uses: EmbarkStudios/cargo-deny-action@v2.0.11
         with:
           command: check ${{ matrix.checks }}
 
@@ -68,7 +68,7 @@ jobs:
           cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 600 --out xml
  
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           token: ${{secrets.CODECOV_TOKEN}}
   
