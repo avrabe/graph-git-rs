@@ -1,0 +1,35 @@
+# Cargo configuration for the workspace
+
+[build]
+# Use all CPU cores for parallel compilation
+jobs = -1
+
+[target.x86_64-unknown-linux-gnu]
+# Optimize for native CPU
+rustflags = ["-C", "target-cpu=native"]
+
+# Code coverage configuration
+[target.'cfg(all())']
+rustflags = [
+    # Enable source-based code coverage
+    "-C", "instrument-coverage",
+]
+
+# Profile for code coverage
+[profile.coverage]
+inherits = "dev"
+# Disable optimizations for accurate coverage
+opt-level = 0
+# Enable debug info for coverage tools
+debug = true
+# Disable incremental compilation for coverage
+incremental = false
+# Disable link-time optimization
+lto = false
+
+[alias]
+# Coverage commands
+cov = "llvm-cov"
+cov-test = "llvm-cov --all-features --workspace"
+cov-report = "llvm-cov --all-features --workspace --html"
+cov-json = "llvm-cov --all-features --workspace --json --output-path coverage.json"
