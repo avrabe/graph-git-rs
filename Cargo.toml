@@ -8,7 +8,7 @@ members = [
     "convenient-kas",
     "convenient-repo",
     "graph-git-cli",
-    "accuracy-measurement",
+    "accuracy-measurement", "convenient-graph",
 ]
 
 [profile.release]
