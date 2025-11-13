@@ -5,7 +5,7 @@ use crate::python_ir::{OpKind, Operation, PythonIR, ValueId, ExecutionStrategy};
 use std::collections::HashMap;
 
 #[cfg(feature = "python-execution")]
-use crate::python_executor::{PythonExecutor, PythonExecutionResult};
+use crate::python_executor::PythonExecutor;
 
 /// Result of IR execution
 #[derive(Debug, Clone)]
@@ -144,14 +144,14 @@ impl IRExecutor {
     }
 
     /// Execute using RustPython fallback
-    fn execute_rustpython(&self, _ir: &PythonIR) -> IRExecutionResult {
+    fn execute_rustpython(&self, ir: &PythonIR) -> IRExecutionResult {
         #[cfg(feature = "python-execution")]
         {
             // Find ComplexPython operation and extract code
             for operation in ir.operations() {
                 if let OpKind::ComplexPython { code } = &operation.kind {
                     let executor = PythonExecutor::new();
-                    let result = executor.execute(code, &self.initial_vars);
+                    let result = executor.execute(&code, &self.initial_vars);
 
                     return if result.success {
                         IRExecutionResult::success(

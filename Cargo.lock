@@ -445,6 +445,8 @@ name = "convenient-git"
 version = "0.1.0"
 dependencies = [
  "git2",
+ "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 
@@ -452,6 +454,7 @@ dependencies = [
 name = "convenient-kas"
 version = "0.1.0"
 dependencies = [
+ "convenient-git",
  "git2",
  "hostname",
  "serde",
@@ -459,6 +462,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 

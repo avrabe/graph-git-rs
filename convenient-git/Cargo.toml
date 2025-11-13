@@ -9,3 +9,5 @@ license = "MIT"
 [dependencies]
 git2 = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true }
+thiserror = "1.0"
