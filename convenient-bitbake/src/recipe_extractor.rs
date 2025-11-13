@@ -750,50 +750,68 @@ impl RecipeExtractor {
 
         // Pattern: python __anonymous() { ... } or python do_*() { ... }
         // We need to handle brace matching properly
-        let chars = content.chars().peekable();
-        let mut pos = 0;
+        // Build a vector of (byte_pos, char) for proper UTF-8 handling
+        let char_indices: Vec<(usize, char)> = content.char_indices().collect();
+        let mut idx = 0;
 
-        while pos < content.len() {
+        while idx < char_indices.len() {
+            let (byte_pos, _) = char_indices[idx];
+
             // Look for "python " keyword
-            if content[pos..].starts_with("python ") {
-                let block_start = pos;
-                pos += 7; // Skip "python "
+            if content[byte_pos..].starts_with("python ") {
+                let block_start = byte_pos;
+                idx += 7; // Skip "python " (7 chars)
+                if idx >= char_indices.len() { break; }
 
                 // Skip whitespace
-                while pos < content.len() && content.chars().nth(pos).unwrap().is_whitespace() && content.chars().nth(pos).unwrap() != '\n' {
-                    pos += 1;
+                while idx < char_indices.len() {
+                    let (_, ch) = char_indices[idx];
+                    if !ch.is_whitespace() || ch == '\n' {
+                        break;
+                    }
+                    idx += 1;
                 }
+                if idx >= char_indices.len() { break; }
 
                 // Get function name
-                let name_start = pos;
-                while pos < content.len() {
-                    let ch = content.chars().nth(pos).unwrap();
+                let name_start = char_indices[idx].0;
+                while idx < char_indices.len() {
+                    let (_, ch) = char_indices[idx];
                     if ch == '(' || ch.is_whitespace() {
                         break;
                     }
-                    pos += 1;
+                    idx += 1;
                 }
-                let func_name = content[name_start..pos].to_string();
+                if idx >= char_indices.len() { break; }
+                let name_end = char_indices[idx].0;
+                let func_name = content[name_start..name_end].to_string();
 
                 // Skip to opening brace
-                while pos < content.len() && content.chars().nth(pos).unwrap() != '{' {
-                    pos += 1;
+                while idx < char_indices.len() && char_indices[idx].1 != '{' {
+                    idx += 1;
                 }
 
-                if pos < content.len() {
-                    pos += 1; // Skip '{'
+                if idx < char_indices.len() {
+                    idx += 1; // Skip '{'
+                    if idx >= char_indices.len() { break; }
 
                     // Extract block body with brace matching
-                    let body_start = pos;
+                    let body_start = char_indices[idx].0;
                     let mut depth = 1;
                     let mut in_string = false;
                     let mut string_char = ' ';
 
-                    while pos < content.len() && depth > 0 {
-                        let ch = content.chars().nth(pos).unwrap();
+                    while idx < char_indices.len() && depth > 0 {
+                        let (_, ch) = char_indices[idx];
 
-                        // Handle strings
-                        if (ch == '"' || ch == '\'') && (pos == 0 || content.chars().nth(pos - 1).unwrap() != '\\') {
+                        // Handle strings (check for escape by looking at previous char)
+                        let is_escaped = if idx > 0 {
+                            char_indices[idx - 1].1 == '\\'
+                        } else {
+                            false
+                        };
+
+                        if (ch == '"' || ch == '\'') && !is_escaped {
                             if !in_string {
                                 in_string = true;
                                 string_char = ch;
@@ -811,21 +829,28 @@ impl RecipeExtractor {
                             }
                         }
 
-                        pos += 1;
+                        idx += 1;
                     }
 
-                    let body = content[body_start..pos - 1].to_string();
+                    if idx > 0 && idx <= char_indices.len() {
+                        let body_end = if idx < char_indices.len() {
+                            char_indices[idx - 1].0
+                        } else {
+                            content.len()
+                        };
+                        let body = content[body_start..body_end].to_string();
 
-                    blocks.push(PythonBlockInfo {
-                        func_name: func_name.clone(),
-                        is_anonymous: func_name == "__anonymous",
-                        code: body,
-                        start_pos: block_start,
-                        end_pos: pos,
-                    });
+                        blocks.push(PythonBlockInfo {
+                            func_name: func_name.clone(),
+                            is_anonymous: func_name == "__anonymous",
+                            code: body,
+                            start_pos: block_start,
+                            end_pos: body_end,
+                        });
+                    }
                 }
             } else {
-                pos += 1;
+                idx += 1;
             }
         }
 
