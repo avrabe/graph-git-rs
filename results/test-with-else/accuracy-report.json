@@ -1,0 +1,82 @@
+{
+  "total_recipes": 3,
+  "recipes_with_python": 3,
+  "phase10_impact_count": 1,
+  "total_deps_added": 1,
+  "total_rdeps_added": 1,
+  "measurements": [
+    {
+      "name": "test-simple-python_1.0",
+      "file_path": "./meta-test/recipes-test/test-recipe/test-simple-python_1.0.bb",
+      "has_python_blocks": true,
+      "python_block_count": 3,
+      "depends_without_phase10": [
+        "base-dep"
+      ],
+      "depends_with_phase10": [
+        "base-dep",
+        "python-added-dep"
+      ],
+      "rdepends_without_phase10": [
+        "runtime-dep"
+      ],
+      "rdepends_with_phase10": [
+        "runtime-dep",
+        "systemd"
+      ],
+      "phase10_added_depends": [
+        "python-added-dep"
+      ],
+      "phase10_added_rdepends": [
+        "systemd"
+      ],
+      "extraction_time_ms": 9
+    },
+    {
+      "name": "test-python-blocks_1.0",
+      "file_path": "./meta-test/recipes-test/test-recipe/test-python-blocks_1.0.bb",
+      "has_python_blocks": true,
+      "python_block_count": 5,
+      "depends_without_phase10": [
+        "base-dep",
+        "configure-dep",
+        "feature1-dep",
+        "feature2-dep",
+        "virtual/kernel"
+      ],
+      "depends_with_phase10": [
+        "base-dep",
+        "configure-dep",
+        "feature1-dep",
+        "feature2-dep",
+        "virtual/kernel"
+      ],
+      "rdepends_without_phase10": [
+        "runtime-dep"
+      ],
+      "rdepends_with_phase10": [
+        "runtime-dep"
+      ],
+      "phase10_added_depends": [],
+      "phase10_added_rdepends": [],
+      "extraction_time_ms": 7
+    },
+    {
+      "name": "test-complex-python_1.0",
+      "file_path": "./meta-test/recipes-test/test-recipe/test-complex-python_1.0.bb",
+      "has_python_blocks": true,
+      "python_block_count": 5,
+      "depends_without_phase10": [
+        "base-package"
+      ],
+      "depends_with_phase10": [
+        "base-package"
+      ],
+      "rdepends_without_phase10": [],
+      "rdepends_with_phase10": [],
+      "phase10_added_depends": [],
+      "phase10_added_rdepends": [],
+      "extraction_time_ms": 7
+    }
+  ]
+}

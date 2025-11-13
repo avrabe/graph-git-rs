@@ -148,6 +148,11 @@ fn measure_recipes(recipes: &[PathBuf], phase10_enabled: bool) -> AccuracyReport
     config.use_python_ir = phase10_enabled;
     config.use_simple_python_eval = true;
 
+    // Set up default variables for Python block evaluation
+    config.default_variables.insert("DISTRO_FEATURES".to_string(), "systemd pam usrmerge".to_string());
+    config.default_variables.insert("PACKAGECONFIG".to_string(), "feature1 feature2".to_string());
+    config.default_variables.insert("MACHINE".to_string(), "qemux86-64".to_string());
+
     for recipe_path in recipes {
         pb.inc(1);
 

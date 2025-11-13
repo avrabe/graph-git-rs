@@ -71,6 +71,34 @@ impl IRExecutor {
         }
     }
 
+    /// Expand ${VAR} references in a string
+    fn expand_var_references(&self, s: &str) -> String {
+        let mut result = s.to_string();
+
+        // Simple expansion of ${VAR} patterns
+        let var_pattern = regex::Regex::new(r"\$\{([^}]+)\}").unwrap();
+
+        loop {
+            let mut changed = false;
+            result = var_pattern.replace_all(&result, |caps: &regex::Captures| {
+                let var_name = &caps[1];
+                if let Some(value) = self.current_vars.get(var_name) {
+                    changed = true;
+                    value.clone()
+                } else {
+                    // Keep unexpanded if variable not found
+                    caps[0].to_string()
+                }
+            }).to_string();
+
+            if !changed {
+                break;
+            }
+        }
+
+        result
+    }
+
     /// Execute Python IR
     pub fn execute(&mut self, ir: &PythonIR) -> IRExecutionResult {
         // Determine execution strategy
@@ -181,24 +209,33 @@ impl IRExecutor {
             }
 
             OpKind::SetVar { var_name, value } => {
+                // Expand any ${...} references in the variable name
+                let expanded_var_name = self.expand_var_references(var_name);
+
                 if let Some(value_str) = self.values.get(value) {
-                    self.current_vars.insert(var_name.clone(), value_str.clone());
+                    self.current_vars.insert(expanded_var_name, value_str.clone());
                 }
                 Ok(())
             }
 
             OpKind::AppendVar { var_name, value } => {
+                // Expand any ${...} references in the variable name
+                let expanded_var_name = self.expand_var_references(var_name);
+
                 if let Some(value_str) = self.values.get(value) {
-                    let current = self.current_vars.get(var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(var_name.clone(), format!("{}{}", current, value_str));
+                    let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
+                    self.current_vars.insert(expanded_var_name, format!("{}{}", current, value_str));
                 }
                 Ok(())
             }
 
             OpKind::PrependVar { var_name, value } => {
+                // Expand any ${...} references in the variable name
+                let expanded_var_name = self.expand_var_references(var_name);
+
                 if let Some(value_str) = self.values.get(value) {
-                    let current = self.current_vars.get(var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(var_name.clone(), format!("{}{}", value_str, current));
+                    let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
+                    self.current_vars.insert(expanded_var_name, format!("{}{}", value_str, current));
                 }
                 Ok(())
             }
@@ -238,24 +275,33 @@ impl IRExecutor {
             }
 
             OpKind::SetVar { var_name, value } => {
+                // Expand any ${...} references in the variable name
+                let expanded_var_name = self.expand_var_references(var_name);
+
                 if let Some(value_str) = self.values.get(value) {
-                    self.current_vars.insert(var_name.clone(), value_str.clone());
+                    self.current_vars.insert(expanded_var_name, value_str.clone());
                 }
                 Ok(())
             }
 
             OpKind::AppendVar { var_name, value } => {
+                // Expand any ${...} references in the variable name
+                let expanded_var_name = self.expand_var_references(var_name);
+
                 if let Some(value_str) = self.values.get(value) {
-                    let current = self.current_vars.get(var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(var_name.clone(), format!("{}{}", current, value_str));
+                    let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
+                    self.current_vars.insert(expanded_var_name, format!("{}{}", current, value_str));
                 }
                 Ok(())
             }
 
             OpKind::PrependVar { var_name, value } => {
+                // Expand any ${...} references in the variable name
+                let expanded_var_name = self.expand_var_references(var_name);
+
                 if let Some(value_str) = self.values.get(value) {
-                    let current = self.current_vars.get(var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(var_name.clone(), format!("{}{}", value_str, current));
+                    let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
+                    self.current_vars.insert(expanded_var_name, format!("{}{}", value_str, current));
                 }
                 Ok(())
             }

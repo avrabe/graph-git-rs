@@ -194,6 +194,14 @@ impl RecipeExtractor {
         // Extract dependencies
         let mut depends = self.extract_dependency_list(&variables, "DEPENDS");
         let mut rdepends = self.extract_dependency_list(&variables, "RDEPENDS");
+
+        // Also check for package-specific RDEPENDS:${PN} variants
+        if let Some(pn) = variables.get("PN") {
+            let pkg_specific_key = format!("RDEPENDS:{}", pn);
+            let pkg_rdepends = self.extract_dependency_list(&variables, &pkg_specific_key);
+            rdepends.extend(pkg_rdepends);
+        }
+
         let provides = self.extract_list(&variables, "PROVIDES");
         let rprovides = self.extract_list(&variables, "RPROVIDES");
 
