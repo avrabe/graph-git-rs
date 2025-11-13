@@ -1,4 +1,5 @@
 // Test RDEPENDS:${PN} expansion in Python blocks
+#![cfg(feature = "python-execution")]
 
 use convenient_bitbake::{ExtractionConfig, RecipeExtractor, RecipeGraph};
 
@@ -8,6 +9,7 @@ fn test_rdepends_with_pn_expansion() {
 
     let mut config = ExtractionConfig::default();
     config.use_python_ir = true;
+    config.use_python_executor = true;
     config.default_variables.insert("DISTRO_FEATURES".to_string(), "systemd".to_string());
 
     let extractor = RecipeExtractor::new(config);
@@ -38,6 +40,7 @@ fn test_rdepends_with_pn_expansion_and_else() {
 
     let mut config = ExtractionConfig::default();
     config.use_python_ir = true;
+    config.use_python_executor = true;
     config.default_variables.insert("DISTRO_FEATURES".to_string(), "systemd".to_string());
 
     let extractor = RecipeExtractor::new(config);
