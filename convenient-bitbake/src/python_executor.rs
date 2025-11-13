@@ -11,6 +11,53 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+// Module containing bb.utils functions
+#[pymodule]
+mod bb_utils {
+    use super::*;
+
+    #[pyfunction]
+    fn contains(
+        var: PyStrRef,
+        item: PyStrRef,
+        true_val: PyObjectRef,
+        false_val: PyObjectRef,
+        d: PyObjectRef,
+        vm: &VirtualMachine,
+    ) -> PyResult<PyObjectRef> {
+        // Get the DataStore from 'd'
+        if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
+            // Get the variable value
+            if let Some(value) = datastore.inner.lock().unwrap().get_var(var.as_str(), true) {
+                // Check if item is in the value (space-separated)
+                let items: Vec<&str> = value.split_whitespace().collect();
+                if items.contains(&item.as_str()) {
+                    Ok(true_val)
+                } else {
+                    Ok(false_val)
+                }
+            } else {
+                // Variable not found, return false_val
+                Ok(false_val)
+            }
+        } else {
+            Err(vm.new_type_error("Expected DataStore as 'd' parameter".to_string()))
+        }
+    }
+}
+
+// Module containing bb
+#[pymodule]
+mod bb {
+    use super::*;
+
+    #[pyattr]
+    fn utils(_vm: &VirtualMachine) -> PyObjectRef {
+        // This will be set up in the interpreter init
+        _vm.ctx.none()
+    }
+}
+
 // Module containing the DataStore class
 #[pymodule]
 mod bitbake_internal {
@@ -267,7 +314,30 @@ impl PythonExecutor {
         let d_obj = datastore.into_pyobject(vm);
 
         // Add 'd' as a global
-        scope.globals.set_item("d", d_obj, vm)?;
+        scope.globals.set_item("d", d_obj.clone(), vm)?;
+
+        // Create bb.utils module with contains function
+        let bb_utils_code = r#"
+class _BBUtils:
+    def __init__(self, d_obj):
+        self._d = d_obj
+
+    def contains(self, var, item, true_val, false_val, d):
+        # Get variable value from datastore
+        value = d.getVar(var, True)
+        if value is None:
+            return false_val
+        # Check if item is in the space-separated value
+        items = value.split()
+        return true_val if item in items else false_val
+
+class _BB:
+    def __init__(self, d_obj):
+        self.utils = _BBUtils(d_obj)
+
+bb = _BB(d)
+"#;
+        vm.run_block_expr(scope.clone(), bb_utils_code)?;
 
         // Execute the Python code
         let code_obj = match vm.compile(python_code, rustpython_vm::compiler::Mode::Exec, "<bitbake>".to_owned()) {
@@ -275,7 +345,7 @@ impl PythonExecutor {
             Err(e) => return Ok(PythonExecutionResult::failure(format!("Compile error: {:?}", e))),
         };
 
-        match vm.run_code_obj(code_obj, scope) {
+        match vm.run_code_obj(code_obj, scope.clone()) {
             Ok(_) => {
                 // Extract final state from inner DataStore
                 // Try to unwrap Arc, if it fails (still has references), clone the data
@@ -286,7 +356,8 @@ impl PythonExecutor {
                 Ok(result)
             }
             Err(e) => {
-                let error_msg = format!("Python error: {:?}", e);
+                // Format the error as a string using Debug
+                let error_msg = format!("{:?}", e);
                 Ok(PythonExecutionResult::failure(error_msg))
             }
         }
@@ -636,5 +707,87 @@ d.setVar("HAS_SYS", "yes" if hasattr(sys, 'version') else "no")
         assert!(result.success, "Execution should succeed: {:?}", result.error);
         assert_eq!(result.variables_set.get("HAS_OS"), Some(&"yes".to_string()));
         assert_eq!(result.variables_set.get("HAS_SYS"), Some(&"yes".to_string()));
+    }
+
+    #[test]
+    fn test_bb_utils_contains() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("DISTRO_FEATURES".to_string(), "systemd pam usrmerge".to_string());
+
+        let code = r#"
+import bb.utils
+# Test bb.utils.contains - returns True if systemd in DISTRO_FEATURES
+result = bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d)
+if result:
+    d.appendVar('RDEPENDS', ' systemd')
+else:
+    d.appendVar('RDEPENDS', ' sysvinit')
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("RDEPENDS"), Some(&" systemd".to_string()));
+    }
+
+    #[test]
+    fn test_bb_utils_contains_not_found() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("DISTRO_FEATURES".to_string(), "pam usrmerge".to_string());
+
+        let code = r#"
+import bb.utils
+# Test bb.utils.contains - returns False if systemd not in DISTRO_FEATURES
+result = bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d)
+if result:
+    d.appendVar('RDEPENDS', ' systemd')
+else:
+    d.appendVar('RDEPENDS', ' sysvinit')
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("RDEPENDS"), Some(&" sysvinit".to_string()));
+    }
+
+    #[test]
+    fn test_complex_python_with_in_operator() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("PACKAGECONFIG".to_string(), "feature1 feature2".to_string());
+
+        let code = r#"
+# Test 'in' operator with getVar
+pkgconfig = d.getVar('PACKAGECONFIG', True) or ''
+if 'feature1' in pkgconfig:
+    d.appendVar('DEPENDS', ' feature1-lib')
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("DEPENDS"), Some(&" feature1-lib".to_string()));
+    }
+
+    #[test]
+    fn test_complex_python_with_startswith() {
+        let executor = PythonExecutor::new();
+
+        let mut initial = HashMap::new();
+        initial.insert("MACHINE".to_string(), "qemux86-64".to_string());
+
+        let code = r#"
+# Test string method .startswith()
+machine = d.getVar('MACHINE', True)
+if machine and machine.startswith('qemu'):
+    d.appendVar('RDEPENDS', ' qemu-helper')
+"#;
+
+        let result = executor.execute(code, &initial);
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("RDEPENDS"), Some(&" qemu-helper".to_string()));
     }
 }
