@@ -1,5 +1,21 @@
-// Convenient BitBake parser - Rowan-based resilient implementation
-// This module provides parsing and analysis of BitBake files (.bb, .bbappend, .inc)
+//! Convenient BitBake - Bazel-inspired BitBake replacement
+//!
+//! This module provides parsing, analysis, and execution of BitBake files
+//! with modern caching and sandboxing inspired by Bazel.
+
+#![warn(
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::pedantic
+)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::doc_markdown,
+    clippy::too_many_lines  // Build system code tends to be verbose
+)]
 
 pub mod syntax_kind;
 pub mod lexer;

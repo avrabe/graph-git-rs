@@ -1,37 +1,19 @@
 # Clippy configuration for 2025 best practices
 #
-# This ensures high code quality across the entire workspace
+# This configures thresholds and options for clippy lints.
+# Lint levels should be set in code or via #![warn(...)] attributes.
 
-# Pedantic lints - catch potential issues
-pedantic = "warn"
-
-# Restriction lints - enforce good patterns
-unwrap-used = "warn"
-expect-used = "warn"
-panic = "warn"
-todo = "warn"
-unimplemented = "warn"
-dbg-macro = "warn"
-
-# Documentation requirements
-missing-docs = "warn"
-missing-errors-doc = "warn"
-missing-panics-doc = "warn"
-missing-safety-doc = "warn"
-
-# Performance
-inefficient-to-string = "warn"
-large-types-passed-by-value = "warn"
-
-# Complexity
+# Complexity thresholds
 cognitive-complexity-threshold = 15
 too-many-lines-threshold = 200
+too-many-arguments-threshold = 5
 
-# Style preferences
-use-self = "warn"
-redundant-closure-for-method-calls = "warn"
+# Type size thresholds
+type-complexity-threshold = 250
+trivial-copy-size-limit = 128
 
-# Allow certain pedantic lints that are too strict
-doc-markdown = "allow"
-module-name-repetitions = "allow"
-must-use-candidate = "allow"
+# Documentation
+doc-valid-idents = ["BitBake", "Yocto", "OpenEmbedded", "kas", "Bazel", "gRPC"]
+
+# Suppress overly strict pedantic lints
+avoid-breaking-exported-api = true
