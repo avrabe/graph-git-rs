@@ -77,9 +77,10 @@ pub struct KasFile {
 
 impl KasFile {
     /// Load and parse kas file with checksum
-    pub fn load(path: impl AsRef<Path>) -> Result<Self, KasError> {
+    pub async fn load(path: impl AsRef<Path>) -> Result<Self, KasError> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path)
+        let content = tokio::fs::read_to_string(path)
+            .await
             .map_err(|e| KasError::IoError(path.to_path_buf(), e.to_string()))?;
 
         let checksum = Self::calculate_checksum(&content);
@@ -132,13 +133,13 @@ pub struct KasIncludeGraph {
 
 impl KasIncludeGraph {
     /// Build include graph starting from root kas file
-    pub fn build(root_path: impl AsRef<Path>) -> Result<Self, KasError> {
+    pub async fn build(root_path: impl AsRef<Path>) -> Result<Self, KasError> {
         let root_path = root_path.as_ref().to_path_buf();
         let mut files = HashMap::new();
         let mut dependencies = HashMap::new();
         let mut visited = HashSet::new();
 
-        Self::build_recursive(&root_path, &mut files, &mut dependencies, &mut visited)?;
+        Self::build_recursive(&root_path, &mut files, &mut dependencies, &mut visited).await?;
 
         Ok(Self {
             files,
@@ -147,31 +148,33 @@ impl KasIncludeGraph {
         })
     }
 
-    fn build_recursive(
-        path: &PathBuf,
-        files: &mut HashMap<PathBuf, KasFile>,
-        dependencies: &mut HashMap<PathBuf, Vec<PathBuf>>,
-        visited: &mut HashSet<PathBuf>,
-    ) -> Result<(), KasError> {
-        if visited.contains(path) {
-            return Ok(());
-        }
+    fn build_recursive<'a>(
+        path: &'a PathBuf,
+        files: &'a mut HashMap<PathBuf, KasFile>,
+        dependencies: &'a mut HashMap<PathBuf, Vec<PathBuf>>,
+        visited: &'a mut HashSet<PathBuf>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), KasError>> + 'a>> {
+        Box::pin(async move {
+            if visited.contains(path) {
+                return Ok(());
+            }
 
-        visited.insert(path.clone());
+            visited.insert(path.clone());
 
-        let kas_file = KasFile::load(path)?;
-        let includes = kas_file.includes();
+            let kas_file = KasFile::load(path).await?;
+            let includes = kas_file.includes();
 
-        dependencies.insert(path.clone(), includes.clone());
+            dependencies.insert(path.clone(), includes.clone());
 
-        // Recursively process includes
-        for include_path in includes {
-            Self::build_recursive(&include_path, files, dependencies, visited)?;
-        }
+            // Recursively process includes
+            for include_path in includes {
+                Self::build_recursive(&include_path, files, dependencies, visited).await?;
+            }
 
-        files.insert(path.clone(), kas_file);
+            files.insert(path.clone(), kas_file);
 
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Get topologically sorted kas files (dependencies first)
