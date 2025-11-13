@@ -57,7 +57,33 @@ yanked = "warn"
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
 ignore = [
-    #"RUSTSEC-0000-0000",
+    # Unmaintained crates from rustpython 0.3.1 - used only for BitBake parsing
+    "RUSTSEC-2021-0139", # ansi_term - unmaintained
+    "RUSTSEC-2024-0375", # atty - unmaintained
+    "RUSTSEC-2021-0145", # atty - potential unaligned read
+    "RUSTSEC-2024-0436", # paste - unmaintained
+
+    # Unmaintained unic-* crates from rustpython/xmlem dependencies
+    "RUSTSEC-2025-0057", # fxhash - unmaintained
+    "RUSTSEC-2025-0075", # unic-char-range - unmaintained
+    "RUSTSEC-2025-0076", # unic-ucd-name - unmaintained
+    "RUSTSEC-2025-0077", # unic-ucd - unmaintained
+    "RUSTSEC-2025-0078", # unic-ucd-normal - unmaintained
+    "RUSTSEC-2025-0079", # unic-ucd-hangul - unmaintained
+    "RUSTSEC-2025-0080", # unic-common - unmaintained
+    "RUSTSEC-2025-0081", # unic-char-property - unmaintained
+    "RUSTSEC-2025-0082", # unic-normal - unmaintained
+    "RUSTSEC-2025-0083", # unic-ucd-bidi - unmaintained
+    "RUSTSEC-2025-0089", # unic-ucd-name_aliases - unmaintained
+    "RUSTSEC-2025-0090", # unic-emoji-char - unmaintained
+    "RUSTSEC-2025-0092", # unic-ucd-case - unmaintained
+    "RUSTSEC-2025-0094", # unic-ucd-category - unmaintained
+    "RUSTSEC-2025-0098", # unic-ucd-version - unmaintained
+    "RUSTSEC-2025-0099", # unic-ucd-block - unmaintained
+    "RUSTSEC-2025-0100", # unic-ucd-ident - unmaintained
+    "RUSTSEC-2025-0101", # unic-ucd-common - unmaintained
+    "RUSTSEC-2025-0102", # unic-ucd-age - unmaintained
+    "RUSTSEC-2025-0104", # unic-ucd-segment - unmaintained
 ]
 # Threshold for security vulnerabilities, any vulnerability with a CVSS score
 # lower than the range specified will be ignored. Note that ignored advisories
