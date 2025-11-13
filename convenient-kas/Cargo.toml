@@ -10,3 +10,10 @@ license = "MIT"
 serde = { workspace = true }
 serde_yaml = "0.9.34+deprecated"
 tracing = { workspace = true }
+git2 = { workspace = true }
+sha2 = "0.10"
+thiserror = "1.0"
+hostname = "0.4"
+
+[dev-dependencies]
+tempfile = "3.8"

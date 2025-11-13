@@ -1,19 +1,42 @@
+//! Convenient Kas - Complete kas YAML parsing and repository management
+//!
+//! Provides:
+//! - Full kas configuration parsing with include graph
+//! - Repository cloning and management
+//! - BitBake configuration generation
+//! - Checksum tracking for cache invalidation
+
+pub mod include_graph;
+pub mod repository_manager;
+pub mod config_generator;
+
+// Re-export main types
+pub use include_graph::{
+    KasConfig, KasError, KasFile, KasHeader, KasIncludeGraph, KasLayer, KasRepo,
+};
+pub use repository_manager::{RepoError, RepositoryManager};
+pub use config_generator::{ConfigError, ConfigGenerator};
+
 use std::{collections::HashMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
+// Legacy simple types (deprecated but kept for compatibility)
+#[deprecated(note = "Use KasFile and KasIncludeGraph instead")]
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct Kas {
     pub path: String,
     pub manifest: KasManifest,
 }
+
+#[deprecated(note = "Use KasConfig instead")]
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct KasManifest {
     pub repos: HashMap<String, Option<Repository>>,
 }
 
-// TODO: Way to enable either refspec or branch, commit
+#[deprecated(note = "Use KasRepo instead")]
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct Repository {
     pub url: Option<String>,
@@ -22,6 +45,7 @@ pub struct Repository {
     pub commit: Option<String>,
 }
 
+#[allow(deprecated)]
 impl KasManifest {
     /// Finds KasManifest files recursively in the given path.
     ///
@@ -87,6 +111,7 @@ impl KasManifest {
 mod tests {
     use std::path::PathBuf;
 
+    #[allow(deprecated)]
     use crate::KasManifest;
 
     #[test]
