@@ -21,4 +21,5 @@ neo4rs = { git = "https://github.com/neo4j-labs/neo4rs.git", version = "0.9.0-rc
 tracing = { version = "0.1.41", features = ["attributes"] }
 serde = { version = "1.0.217", features = ["derive"] }
 git2 = "0.20.0"
+tokio = { version = "1.42", features = ["full"] }
 

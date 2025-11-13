@@ -9,6 +9,8 @@ use git2::{
 };
 use tracing::{error, info, info_span, span, warn, Level};
 
+pub mod async_git;
+
 pub struct GitRemoteHead {
     pub oid: String,
     pub name: String,

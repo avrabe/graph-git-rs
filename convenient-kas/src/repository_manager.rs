@@ -4,9 +4,9 @@
 //! based on kas configuration.
 
 use crate::include_graph::{KasConfig, KasRepo};
-use git2::{build::CheckoutBuilder, FetchOptions, Repository};
-use std::path::{Path, PathBuf};
+use convenient_git::async_git::{AsyncGitRepository, GitError};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 /// Repository manager
@@ -31,17 +31,18 @@ impl RepositoryManager {
     }
 
     /// Setup all repositories from kas config
-    pub fn setup_repositories(
+    pub async fn setup_repositories(
         &self,
         config: &KasConfig,
     ) -> Result<HashMap<String, PathBuf>, RepoError> {
         let mut repo_paths = HashMap::new();
 
-        std::fs::create_dir_all(&self.repos_dir)
+        tokio::fs::create_dir_all(&self.repos_dir)
+            .await
             .map_err(|e| RepoError::IoError(self.repos_dir.clone(), e.to_string()))?;
 
         for (name, repo_config) in &config.repos {
-            let repo_path = self.setup_repository(name, repo_config)?;
+            let repo_path = self.setup_repository(name, repo_config).await?;
             repo_paths.insert(name.clone(), repo_path);
         }
 
@@ -49,7 +50,7 @@ impl RepositoryManager {
     }
 
     /// Setup a single repository
-    pub fn setup_repository(
+    pub async fn setup_repository(
         &self,
         name: &str,
         config: &KasRepo,
@@ -57,7 +58,7 @@ impl RepositoryManager {
         // If path is specified, use it directly (local repo)
         if let Some(path) = &config.path {
             let repo_path = PathBuf::from(path);
-            if repo_path.exists() {
+            if tokio::fs::try_exists(&repo_path).await.unwrap_or(false) {
                 info!("Using local repository: {} at {}", name, repo_path.display());
                 return Ok(repo_path);
             } else {
@@ -73,117 +74,43 @@ impl RepositoryManager {
 
         let repo_path = self.repos_dir.join(name);
 
-        if repo_path.exists() {
-            info!("Repository {} already exists, updating...", name);
-            self.update_repository(&repo_path, config)?;
-        } else {
-            info!("Cloning repository {} from {}", name, url);
-            self.clone_repository(url, &repo_path, config)?;
+        // Create AsyncGitRepository instance
+        let git_repo = AsyncGitRepository::new(&repo_path, url, None);
+
+        // Clone or open repository
+        info!("Cloning/opening repository {} from {}", name, url);
+        git_repo.clone_or_open().await.map_err(RepoError::from)?;
+
+        // Checkout specific refspec if specified
+        if let Some(refspec) = self.get_refspec(config) {
+            info!("Checking out refspec: {}", refspec);
+            git_repo.checkout(&refspec).await.map_err(RepoError::from)?;
         }
 
         Ok(repo_path)
     }
 
-    /// Clone a repository
-    fn clone_repository(
-        &self,
-        url: &str,
-        dest: &Path,
-        config: &KasRepo,
-    ) -> Result<(), RepoError> {
-        // Build fetch options
-        let mut fetch_opts = FetchOptions::new();
-
-        // For shallow clones (CI optimization)
-        // fetch_opts.depth(1);
-
-        // Clone the repository
-        let mut builder = git2::build::RepoBuilder::new();
-        builder.fetch_options(fetch_opts);
-
-        let repo = builder
-            .clone(url, dest)
-            .map_err(|e| RepoError::GitError(format!("Clone failed: {}", e)))?;
-
-        // Checkout specific refspec/branch/commit/tag
-        self.checkout_refspec(&repo, config)?;
-
-        Ok(())
-    }
-
-    /// Update an existing repository
-    fn update_repository(&self, repo_path: &Path, config: &KasRepo) -> Result<(), RepoError> {
-        let repo = Repository::open(repo_path)
-            .map_err(|e| RepoError::GitError(format!("Open failed: {}", e)))?;
-
-        // Fetch latest changes
-        let mut remote = repo
-            .find_remote("origin")
-            .map_err(|e| RepoError::GitError(format!("Find remote failed: {}", e)))?;
-
-        let mut fetch_opts = FetchOptions::new();
-        remote
-            .fetch(&["refs/heads/*:refs/remotes/origin/*"], Some(&mut fetch_opts), None)
-            .map_err(|e| RepoError::GitError(format!("Fetch failed: {}", e)))?;
-
-        // Checkout requested refspec
-        self.checkout_refspec(&repo, config)?;
-
-        Ok(())
-    }
-
-    /// Checkout specific refspec/branch/commit/tag
-    fn checkout_refspec(&self, repo: &Repository, config: &KasRepo) -> Result<(), RepoError> {
-        let refspec = if let Some(commit) = &config.commit {
-            commit.clone()
-        } else if let Some(tag) = &config.tag {
-            format!("refs/tags/{}", tag)
-        } else if let Some(branch) = &config.branch {
-            format!("refs/heads/{}", branch)
-        } else if let Some(refspec) = &config.refspec {
-            refspec.clone()
-        } else {
-            "HEAD".to_string()
-        };
-
-        info!("Checking out refspec: {}", refspec);
-
-        // Resolve reference
-        let (object, reference) = repo
-            .revparse_ext(&refspec)
-            .map_err(|e| RepoError::GitError(format!("Refspec '{}' not found: {}", refspec, e)))?;
-
-        // Checkout
-        let mut checkout_builder = CheckoutBuilder::new();
-        checkout_builder.force();
-
-        repo.checkout_tree(&object, Some(&mut checkout_builder))
-            .map_err(|e| RepoError::GitError(format!("Checkout failed: {}", e)))?;
-
-        // Set HEAD
-        match reference {
-            Some(gref) => repo.set_head(gref.name().unwrap()),
-            None => repo.set_head_detached(object.id()),
-        }
-        .map_err(|e| RepoError::GitError(format!("Set HEAD failed: {}", e)))?;
-
-        Ok(())
+    /// Get refspec from config (commit, tag, branch, or refspec)
+    fn get_refspec(&self, config: &KasRepo) -> Option<String> {
+        config
+            .commit
+            .clone()
+            .or_else(|| config.tag.clone())
+            .or_else(|| config.branch.clone())
+            .or_else(|| config.refspec.clone())
     }
 
     /// Apply patches to a repository
-    pub fn apply_patches(
+    pub async fn apply_patches(
         &self,
         repo_path: &Path,
         patches: &HashMap<String, Vec<String>>,
     ) -> Result<(), RepoError> {
-        let repo = Repository::open(repo_path)
-            .map_err(|e| RepoError::GitError(format!("Open failed: {}", e)))?;
-
         for (patch_id, patch_files) in patches {
             info!("Applying patch set: {}", patch_id);
 
             for patch_file in patch_files {
-                self.apply_single_patch(&repo, repo_path, patch_file)?;
+                self.apply_single_patch(repo_path, patch_file).await?;
             }
         }
 
@@ -191,28 +118,27 @@ impl RepositoryManager {
     }
 
     /// Apply a single patch file
-    fn apply_single_patch(
-        &self,
-        _repo: &Repository,
-        repo_path: &Path,
-        patch_file: &str,
-    ) -> Result<(), RepoError> {
+    async fn apply_single_patch(&self, repo_path: &Path, patch_file: &str) -> Result<(), RepoError> {
         info!("Applying patch: {}", patch_file);
 
-        // Use git apply command
-        let output = std::process::Command::new("git")
-            .arg("apply")
-            .arg(patch_file)
-            .current_dir(repo_path)
-            .output()
-            .map_err(|e| RepoError::PatchError(format!("Failed to run git apply: {}", e)))?;
+        let repo_path = repo_path.to_path_buf();
+        let patch_file = patch_file.to_string();
+
+        // Use git apply command (run in blocking task)
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("git")
+                .arg("apply")
+                .arg(&patch_file)
+                .current_dir(&repo_path)
+                .output()
+        })
+        .await
+        .map_err(|e| RepoError::PatchError(format!("Task join error: {}", e)))?
+        .map_err(|e| RepoError::PatchError(format!("Failed to run git apply: {}", e)))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(RepoError::PatchError(format!(
-                "Patch failed: {}",
-                stderr
-            )));
+            return Err(RepoError::PatchError(format!("Patch failed: {}", stderr)));
         }
 
         Ok(())
@@ -261,7 +187,7 @@ pub enum RepoError {
     IoError(PathBuf, String),
 
     #[error("Git error: {0}")]
-    GitError(String),
+    Git(#[from] GitError),
 
     #[error("Missing URL for repository: {0}")]
     MissingUrl(String),
@@ -271,9 +197,6 @@ pub enum RepoError {
 
     #[error("Patch application failed: {0}")]
     PatchError(String),
-
-    #[error("Invalid refspec: {0}")]
-    InvalidRefspec(String),
 }
 
 #[cfg(test)]
@@ -281,8 +204,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_repository_manager_creation() {
+    #[tokio::test]
+    async fn test_repository_manager_creation() {
         let temp = TempDir::new().unwrap();
         let manager = RepositoryManager::new(temp.path());
         assert!(temp.path().exists());
