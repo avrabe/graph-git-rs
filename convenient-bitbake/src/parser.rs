@@ -2,7 +2,7 @@
 // Based on rust-analyzer architecture
 
 use crate::lexer::{Lexer, Token};
-use crate::syntax_kind::{BitbakeLang, SyntaxKind, SyntaxNode};
+use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 use rowan::GreenNodeBuilder;
 use std::fmt;
 

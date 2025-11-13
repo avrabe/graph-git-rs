@@ -4,7 +4,7 @@
 use crate::{BitbakeRecipe, IncludeResolver, SimpleResolver};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Layer configuration from layer.conf
 #[derive(Debug, Clone)]

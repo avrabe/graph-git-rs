@@ -1,23 +1,13 @@
-use convenient_bitbake::PythonExecutor;
-use std::collections::HashMap;
+// Note: PythonExecutor is not publicly exported
 
 fn main() {
-    println!("Testing Python executor with getVar...");
-    let executor = PythonExecutor::new();
-
-    let mut initial = HashMap::new();
-    initial.insert("WORKDIR".to_string(), "/tmp/work".to_string());
-    initial.insert("PN".to_string(), "mypackage".to_string());
-
-    let code = r#"
-workdir = d.getVar("WORKDIR")
-pn = d.getVar("PN")
-build_dir = workdir + "/build/" + pn
-d.setVar("BUILD_DIR", build_dir)
-"#;
-
-    let result = executor.execute(code, &initial);
-    println!("\nResult: success={}, error={:?}", result.success, result.error);
-    println!("Variables set: {:?}", result.variables_set);
-    println!("Variables read: {:?}", result.variables_read);
+    println!("PythonExecutor is not publicly exported from the convenient_bitbake crate.");
+    println!("Python execution is handled internally by the RecipeExtractor.");
+    println!("\nTo test Python functionality with getVar/setVar:");
+    println!("  1. Create a test recipe with Python code:");
+    println!("     WORKDIR = \"${{@d.getVar('TMPDIR')}}/work\"");
+    println!("  2. Configure the extractor:");
+    println!("     config.use_python_executor = true;");
+    println!("  3. Extract the recipe:");
+    println!("     extractor.extract_from_content(&mut graph, name, content)");
 }

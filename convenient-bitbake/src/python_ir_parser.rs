@@ -1,7 +1,7 @@
 // Parser for Python code → Python IR
 // Converts BitBake Python blocks into flat IR operations
 
-use crate::python_ir::{PythonIRBuilder, PythonIR, ValueId, StringMethodKind, CompareOp, LogicalOp};
+use crate::python_ir::{PythonIRBuilder, PythonIR, ValueId};
 use regex::Regex;
 use std::collections::HashMap;
 

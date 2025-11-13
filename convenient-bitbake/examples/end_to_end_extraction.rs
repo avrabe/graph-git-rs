@@ -97,11 +97,9 @@ addtask deploy after compile
 
     // === Configure Extractor ===
 
-    let config = ExtractionConfig {
-        use_python_executor: false,  // Not needed for basic extraction
-        extract_tasks: true,
-        resolve_providers: true,
-    };
+    let mut config = ExtractionConfig::default();
+    config.extract_tasks = true;
+    config.resolve_providers = true;
 
     let extractor = RecipeExtractor::new(config);
     let mut graph = RecipeGraph::new();

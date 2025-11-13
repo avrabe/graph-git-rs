@@ -26,16 +26,14 @@ fn main() {
     println!("Discovered {} recipe files\n", recipes.len());
 
     // Configure extractor with defaults and customizations
-    let config = ExtractionConfig {
-        use_simple_python_eval: true, // Phase 1: Use simple Python expression evaluator (bb.utils.contains, bb.utils.filter)
-        extract_tasks: true,
-        resolve_providers: true,
-        resolve_includes: true, // Phase 5: Resolve require/include directives
-        resolve_inherit: true,   // Resolve inherit classes for task extraction
-        extract_class_deps: true, // Phase 6: Extract dependencies from inherited classes
-        class_search_paths: vec![poky_meta.clone()], // Phase 7b: Parse .bbclass files dynamically
-        ..Default::default() // Use defaults for use_python_executor, default_variables
-    };
+    let mut config = ExtractionConfig::default();
+    config.use_simple_python_eval = true; // Phase 1: Use simple Python expression evaluator (bb.utils.contains, bb.utils.filter)
+    config.extract_tasks = true;
+    config.resolve_providers = true;
+    config.resolve_includes = true; // Phase 5: Resolve require/include directives
+    config.resolve_inherit = true;   // Resolve inherit classes for task extraction
+    config.extract_class_deps = true; // Phase 6: Extract dependencies from inherited classes
+    config.class_search_paths = vec![poky_meta.clone()]; // Phase 7b: Parse .bbclass files dynamically
 
     let extractor = RecipeExtractor::new(config);
     let mut graph = RecipeGraph::new();
