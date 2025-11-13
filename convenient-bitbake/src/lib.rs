@@ -46,7 +46,8 @@ pub use python_ir_executor::{IRExecutor, IRExecutionResult};
 pub use python_ir_parser::PythonIRParser;
 pub use executor::{TaskExecutor, TaskSpec, TaskOutput, TaskSignature, ContentHash, SandboxSpec, ExecutionResult};
 pub use executor::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
-pub use executor::AsyncTaskExecutor;
+pub use executor::{AsyncTaskExecutor, TaskMonitor, TaskInfo, TaskState, BuildStats};
+pub use executor::{InteractiveExecutor, InteractiveOptions, ExecutionControlHandle};
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};

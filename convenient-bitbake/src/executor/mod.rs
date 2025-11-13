@@ -11,6 +11,8 @@ pub mod sandbox;
 pub mod executor;
 pub mod cache_manager;
 pub mod async_executor;
+pub mod monitor;
+pub mod interactive;
 
 pub use types::{
     TaskSignature, TaskOutput, TaskSpec, SandboxSpec,
@@ -21,3 +23,5 @@ pub use sandbox::SandboxManager;
 pub use executor::TaskExecutor;
 pub use cache_manager::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
 pub use async_executor::AsyncTaskExecutor;
+pub use monitor::{TaskMonitor, TaskInfo, TaskState, BuildStats};
+pub use interactive::{InteractiveExecutor, InteractiveOptions, ExecutionControlHandle};

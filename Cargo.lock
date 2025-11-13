@@ -417,6 +417,7 @@ dependencies = [
 name = "convenient-bitbake"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "futures",
  "glob",
  "home",
