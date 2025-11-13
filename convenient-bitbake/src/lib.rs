@@ -43,6 +43,7 @@ pub use python_ir::{PythonIR, PythonIRBuilder, Operation, OpKind, ExecutionStrat
 pub use python_ir_executor::{IRExecutor, IRExecutionResult};
 pub use python_ir_parser::PythonIRParser;
 pub use executor::{TaskExecutor, TaskSpec, TaskOutput, TaskSignature, ContentHash, SandboxSpec, ExecutionResult};
+pub use executor::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};

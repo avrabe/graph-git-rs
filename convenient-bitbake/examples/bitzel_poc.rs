@@ -16,13 +16,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-use tracing::{info, Level};
+use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 fn main() -> ExecutionResult<()> {
     // Initialize logging
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+        .with_max_level(Level::DEBUG)
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
@@ -161,11 +161,11 @@ install:
         name: "do_fetch".to_string(),
         recipe: "hello-world".to_string(),
         script: r#"
-mkdir -p /work/outputs
+mkdir -p "$D"
 echo "Fetching sources..."
 echo "SRC_URI downloaded successfully"
-echo "Sources ready" > /work/outputs/fetch.stamp
-ls -la /work/outputs
+echo "Sources ready" > "$D/fetch.stamp"
+ls -la "$D"
 echo "Stamp file created successfully"
         "#.to_string(),
         workdir: src_dir,
@@ -182,10 +182,10 @@ fn execute_unpack(executor: &mut TaskExecutor, workdir: &Path) -> ExecutionResul
         name: "do_unpack".to_string(),
         recipe: "hello-world".to_string(),
         script: r#"
-mkdir -p /work/outputs
+mkdir -p "$D"
 echo "Unpacking sources..."
-ls -la /work/src || echo "No src dir"
-echo "Sources unpacked" > /work/outputs/unpack.stamp
+ls -la "$S" || echo "No src dir"
+echo "Sources unpacked" > "$D/unpack.stamp"
         "#.to_string(),
         workdir: workdir.join("src"),
         env: create_bitbake_env("hello-world", "1.0"),
@@ -201,13 +201,13 @@ fn execute_compile(executor: &mut TaskExecutor, workdir: &Path) -> ExecutionResu
         name: "do_compile".to_string(),
         recipe: "hello-world".to_string(),
         script: r#"
-mkdir -p /work/outputs
+mkdir -p "$D"
 echo "Compiling hello-world..."
-cd /work/src
+cd "$S"
 if [ -f Makefile ]; then
     make all
-    cp hello-world /work/outputs/
-    echo "Compilation successful" > /work/outputs/compile.stamp
+    cp hello-world "$D/"
+    echo "Compilation successful" > "$D/compile.stamp"
 else
     echo "No Makefile found!"
     exit 1
@@ -227,13 +227,13 @@ fn execute_install(executor: &mut TaskExecutor, workdir: &Path) -> ExecutionResu
         name: "do_install".to_string(),
         recipe: "hello-world".to_string(),
         script: r#"
-mkdir -p /work/outputs
+mkdir -p "$D"
 echo "Installing hello-world..."
-cd /work/src
-export DESTDIR=/work/outputs
+cd "$S"
+export DESTDIR="$D"
 make install
-echo "Installation complete" > /work/outputs/install.stamp
-ls -R /work/outputs
+echo "Installation complete" > "$D/install.stamp"
+ls -R "$D"
         "#.to_string(),
         workdir: workdir.join("src"),
         env: create_bitbake_env("hello-world", "1.0"),

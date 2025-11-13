@@ -89,6 +89,11 @@ impl Sandbox {
         Ok(Self { root, spec })
     }
 
+    /// Update environment variables
+    pub fn update_env(&mut self, env: HashMap<String, String>) {
+        self.spec.env = env;
+    }
+
     /// Execute command in sandbox
     pub fn execute(&self) -> ExecutionResult<SandboxResult> {
         let start = Instant::now();
@@ -143,22 +148,46 @@ impl Sandbox {
 
     /// Collect outputs from sandbox
     pub fn collect_outputs(&self) -> ExecutionResult<HashMap<PathBuf, Vec<u8>>> {
+        use tracing::debug;
         let mut outputs = HashMap::new();
 
+        debug!("Collecting outputs from sandbox root: {}", self.root.display());
+        debug!("Expected outputs: {:?}", self.spec.outputs);
+
         for output_path in &self.spec.outputs {
-            let full_path = self.root.join(output_path.strip_prefix("/").unwrap_or(output_path));
+            // Strip leading / and join with sandbox root
+            let rel_path = output_path.strip_prefix("/").unwrap_or(output_path);
+            let full_path = self.root.join(rel_path);
+
+            debug!("Looking for output: {} at {}", output_path.display(), full_path.display());
 
             if full_path.is_file() {
                 let content = fs::read(&full_path)?;
+                debug!("✓ Found file: {} ({} bytes)", full_path.display(), content.len());
                 outputs.insert(output_path.clone(), content);
             } else if full_path.is_dir() {
+                debug!("✓ Found directory: {}", full_path.display());
                 // Collect all files in directory
                 collect_dir_outputs(&full_path, output_path, &mut outputs)?;
-            } else if !full_path.exists() {
+            } else {
+                // List what actually exists
+                if let Some(parent) = full_path.parent() {
+                    if parent.exists() {
+                        debug!("✗ Output not found. Parent directory contents:");
+                        if let Ok(entries) = fs::read_dir(parent) {
+                            for entry in entries.flatten() {
+                                debug!("  - {}", entry.path().display());
+                            }
+                        }
+                    } else {
+                        debug!("✗ Parent directory doesn't exist: {}", parent.display());
+                    }
+                }
                 return Err(ExecutionError::MissingOutput(output_path.clone()));
             }
         }
 
+        debug!("Successfully collected {} outputs", outputs.len());
         Ok(outputs)
     }
 

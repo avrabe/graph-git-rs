@@ -66,10 +66,18 @@ impl TaskExecutor {
 
         // 3. Execute in sandbox
         let start = Instant::now();
-        let sandbox_spec = self.prepare_sandbox(&spec)?;
-        let sandbox = self.sandbox_manager.create_sandbox(sandbox_spec)?;
+        let mut sandbox_spec = self.prepare_sandbox(&spec)?;
+        let mut sandbox = self.sandbox_manager.create_sandbox(sandbox_spec.clone())?;
 
-        info!("Executing in sandbox: {}", sandbox.root().display());
+        // Update environment variables with actual sandbox paths
+        let sandbox_root = sandbox.root().to_path_buf();
+        sandbox_spec.env.insert("WORKDIR".to_string(), sandbox_root.join("work").to_string_lossy().to_string());
+        sandbox_spec.env.insert("S".to_string(), sandbox_root.join("work/src").to_string_lossy().to_string());
+        sandbox_spec.env.insert("B".to_string(), sandbox_root.join("work/build").to_string_lossy().to_string());
+        sandbox_spec.env.insert("D".to_string(), sandbox_root.join("work/outputs").to_string_lossy().to_string());
+        sandbox.update_env(sandbox_spec.env);
+
+        info!("Executing in sandbox: {}", sandbox_root.display());
         let result = sandbox.execute()?;
 
         if !result.success() {
@@ -186,11 +194,7 @@ impl TaskExecutor {
         // Copy environment
         sandbox_spec.env = spec.env.clone();
 
-        // Add essential BitBake-like environment
-        sandbox_spec.env.insert("WORKDIR".to_string(), "/work".to_string());
-        sandbox_spec.env.insert("S".to_string(), "/work/src".to_string());
-        sandbox_spec.env.insert("B".to_string(), "/work/build".to_string());
-        sandbox_spec.env.insert("D".to_string(), "/work/outputs".to_string());
+        // BitBake environment variables will be set after sandbox creation with actual paths
 
         Ok(sandbox_spec)
     }

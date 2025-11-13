@@ -3,6 +3,7 @@
 
 use logos::Logos;
 
+#[allow(non_camel_case_types)]
 #[derive(Logos, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum SyntaxKind {

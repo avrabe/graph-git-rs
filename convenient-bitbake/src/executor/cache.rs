@@ -1,7 +1,6 @@
 //! Content-addressable storage and action cache
 
 use super::types::{ContentHash, TaskOutput, ExecutionError, ExecutionResult};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
