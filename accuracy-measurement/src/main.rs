@@ -148,6 +148,12 @@ fn measure_recipes(recipes: &[PathBuf], phase10_enabled: bool) -> AccuracyReport
     config.use_python_ir = phase10_enabled;
     config.use_simple_python_eval = true;
 
+    // Enable RustPython for complex Python patterns (Phase 11)
+    #[cfg(feature = "python-execution")]
+    {
+        config.use_python_executor = phase10_enabled;
+    }
+
     // Set up default variables for Python block evaluation
     config.default_variables.insert("DISTRO_FEATURES".to_string(), "systemd pam usrmerge".to_string());
     config.default_variables.insert("PACKAGECONFIG".to_string(), "feature1 feature2".to_string());

@@ -184,24 +184,45 @@ impl DataStoreInner {
         }
     }
 
+    /// Expand variable references like ${PN} in a string
+    fn expand_vars(&self, s: &str) -> String {
+        let mut result = s.to_string();
+        while let Some(start) = result.find("${") {
+            if let Some(end) = result[start..].find('}') {
+                let var_name = &result[start + 2..start + end];
+                if let Some(value) = self.variables.get(var_name) {
+                    result.replace_range(start..start + end + 1, value);
+                } else {
+                    break; // Stop if we can't expand
+                }
+            } else {
+                break;
+            }
+        }
+        result
+    }
+
     /// Called by Python: d.setVar('VAR', 'value')
     pub fn set_var(&mut self, name: String, value: String) {
-        self.write_log.push((name.clone(), value.clone()));
-        self.variables.insert(name, value);
+        let expanded_name = self.expand_vars(&name);
+        self.write_log.push((expanded_name.clone(), value.clone()));
+        self.variables.insert(expanded_name, value);
     }
 
     /// Called by Python: d.appendVar('VAR', ' suffix')
     pub fn append_var(&mut self, name: String, suffix: String) {
-        let current = self.variables.get(&name).cloned().unwrap_or_default();
+        let expanded_name = self.expand_vars(&name);
+        let current = self.variables.get(&expanded_name).cloned().unwrap_or_default();
         let new_value = format!("{}{}", current, suffix);
-        self.set_var(name, new_value);
+        self.set_var(expanded_name, new_value);
     }
 
     /// Called by Python: d.prependVar('VAR', 'prefix ')
     pub fn prepend_var(&mut self, name: String, prefix: String) {
-        let current = self.variables.get(&name).cloned().unwrap_or_default();
+        let expanded_name = self.expand_vars(&name);
+        let current = self.variables.get(&expanded_name).cloned().unwrap_or_default();
         let new_value = format!("{}{}", prefix, current);
-        self.set_var(name, new_value);
+        self.set_var(expanded_name, new_value);
     }
 
     /// Simple variable expansion: ${VAR} -> value
@@ -717,8 +738,8 @@ d.setVar("HAS_SYS", "yes" if hasattr(sys, 'version') else "no")
         initial.insert("DISTRO_FEATURES".to_string(), "systemd pam usrmerge".to_string());
 
         let code = r#"
-import bb.utils
 # Test bb.utils.contains - returns True if systemd in DISTRO_FEATURES
+# bb object is already available in global scope
 result = bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d)
 if result:
     d.appendVar('RDEPENDS', ' systemd')
@@ -739,8 +760,8 @@ else:
         initial.insert("DISTRO_FEATURES".to_string(), "pam usrmerge".to_string());
 
         let code = r#"
-import bb.utils
 # Test bb.utils.contains - returns False if systemd not in DISTRO_FEATURES
+# bb object is already available in global scope
 result = bb.utils.contains('DISTRO_FEATURES', 'systemd', True, False, d)
 if result:
     d.appendVar('RDEPENDS', ' systemd')
