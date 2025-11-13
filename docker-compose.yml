@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # Bazel remote cache for testing Bitzel's Remote Execution API implementation
+  bazel-cache:
+    image: buchgr/bazel-remote-cache:latest
+    container_name: bitzel-bazel-cache
+    ports:
+      - "9090:8080"  # HTTP endpoint
+      - "9092:9092"  # gRPC endpoint
+    volumes:
+      - ./bazel-cache-data:/data
+    command: >
+      --max_size 5
+      --dir /data
+      --enable_endpoint_metrics
+      --http_address 0.0.0.0:8080
+      --grpc_address 0.0.0.0:9092
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # Optional: Prometheus for metrics (future use)
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: bitzel-prometheus
+  #   ports:
+  #     - "9091:9090"
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml
+  #     - prometheus-data:/prometheus
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #   restart: unless-stopped
+
+volumes:
+  bazel-cache-data:
+    driver: local
+  # prometheus-data:
+  #   driver: local
