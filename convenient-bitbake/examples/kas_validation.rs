@@ -54,11 +54,10 @@ fn main() {
     // Load our graph
     println!("--- Building Our Dependency Graph ---\n");
 
-    let config = ExtractionConfig {
-        use_python_executor: false,
-        extract_tasks: true,
-        resolve_providers: true,
-    };
+    let mut config = ExtractionConfig::default();
+    config.use_python_executor = false;
+    config.extract_tasks = true;
+    config.resolve_providers = true;
 
     let extractor = RecipeExtractor::new(config);
     let mut our_graph = RecipeGraph::new();
@@ -199,11 +198,10 @@ fn main() {
 fn run_sample_validation() {
     println!("=== Sample Validation (Without BitBake) ===\n");
 
-    let config = ExtractionConfig {
-        use_python_executor: false,
-        extract_tasks: true,
-        resolve_providers: true,
-    };
+    let mut config = ExtractionConfig::default();
+    config.use_python_executor = false;
+    config.extract_tasks = true;
+    config.resolve_providers = true;
 
     let extractor = RecipeExtractor::new(config);
     let mut graph = RecipeGraph::new();

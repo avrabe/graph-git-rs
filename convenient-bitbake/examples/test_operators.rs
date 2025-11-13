@@ -34,11 +34,9 @@ RDEPENDS:${PN} = "dep1"
 RDEPENDS:${PN}-tools = "dep2"
 "#;
 
-    let config = ExtractionConfig {
-        use_simple_python_eval: false,
-        extract_tasks: false,
-        ..Default::default()
-    };
+    let mut config = ExtractionConfig::default();
+    config.use_simple_python_eval = false;
+    config.extract_tasks = false;
 
     let extractor = RecipeExtractor::new(config);
     let mut graph = RecipeGraph::new();

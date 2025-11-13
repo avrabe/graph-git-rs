@@ -2,7 +2,6 @@
 // Much faster than RustPython for simple operations
 
 use crate::python_ir::{OpKind, Operation, PythonIR, ValueId, ExecutionStrategy};
-use crate::simple_python_eval::SimplePythonEvaluator;
 use std::collections::HashMap;
 
 #[cfg(feature = "python-execution")]

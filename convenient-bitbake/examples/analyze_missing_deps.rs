@@ -18,16 +18,14 @@ fn main() {
     // Find all recipes
     let recipes = find_recipes(&poky_meta);
 
-    let config = ExtractionConfig {
-        use_simple_python_eval: true,
-        extract_tasks: true,
-        resolve_providers: true,
-        resolve_includes: true,
-        resolve_inherit: true,
-        extract_class_deps: true,
-        class_search_paths: vec![poky_meta.clone()],
-        ..Default::default()
-    };
+    let mut config = ExtractionConfig::default();
+    config.use_simple_python_eval = true;
+    config.extract_tasks = true;
+    config.resolve_providers = true;
+    config.resolve_includes = true;
+    config.resolve_inherit = true;
+    config.extract_class_deps = true;
+    config.class_search_paths = vec![poky_meta.clone()];
 
     let extractor = RecipeExtractor::new(config);
     let mut graph = RecipeGraph::new();

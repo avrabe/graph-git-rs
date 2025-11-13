@@ -646,6 +646,7 @@ impl RecipeExtractor {
     }
 
     /// Dedent Python code by removing common leading whitespace
+    #[cfg(feature = "python-execution")]
     fn dedent_python(&self, code: &str) -> String {
         let lines: Vec<&str> = code.lines().collect();
 
@@ -749,7 +750,7 @@ impl RecipeExtractor {
 
         // Pattern: python __anonymous() { ... } or python do_*() { ... }
         // We need to handle brace matching properly
-        let mut chars = content.chars().peekable();
+        let chars = content.chars().peekable();
         let mut pos = 0;
 
         while pos < content.len() {

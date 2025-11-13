@@ -1,35 +1,11 @@
 // Test Python executor manually
-use convenient_bitbake::{PythonExecutor};
-use std::collections::HashMap;
+// Note: PythonExecutor is not publicly exported
 
 fn main() {
-    println!("Creating Python executor...");
-    let executor = PythonExecutor::new();
-
-    println!("Testing simple Python code...");
-    let code = r#"
-x = 1 + 1
-print("Hello from Python!")
-"#;
-
-    let result = executor.execute(code, &HashMap::new());
-    println!("Result: {:?}", result);
-
-    if !result.success {
-        println!("ERROR: {}", result.error.unwrap_or_default());
-    }
-
-    println!("\nTesting DataStore...");
-    let code2 = r#"
-d.setVar("TEST", "value")
-"#;
-
-    let result2 = executor.execute(code2, &HashMap::new());
-    println!("Result2: {:?}", result2);
-
-    if !result2.success {
-        println!("ERROR: {}", result2.error.unwrap_or_default());
-    } else {
-        println!("Variables set: {:?}", result2.variables_set);
-    }
+    println!("PythonExecutor is not publicly exported from the convenient_bitbake crate.");
+    println!("Python execution is handled internally by the RecipeExtractor.");
+    println!("\nTo test Python functionality, use the ExtractionConfig:");
+    println!("  config.use_python_executor = true;");
+    println!("\nOr use the simple Python evaluator:");
+    println!("  config.use_simple_python_eval = true;");
 }

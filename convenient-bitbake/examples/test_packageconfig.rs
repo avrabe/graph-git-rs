@@ -9,11 +9,9 @@ PACKAGECONFIG ??= "${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'hwdb', ''
 PACKAGECONFIG[hwdb] = "HWDB=yes,HWDB=no,udev"
 "#;
 
-    let config = ExtractionConfig {
-        use_simple_python_eval: true,
-        extract_tasks: true,
-        ..Default::default()
-    };
+    let mut config = ExtractionConfig::default();
+    config.use_simple_python_eval = true;
+    config.extract_tasks = true;
 
     let extractor = RecipeExtractor::new(config);
     let mut graph = RecipeGraph::new();

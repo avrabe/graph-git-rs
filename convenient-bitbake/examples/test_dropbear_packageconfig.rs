@@ -11,11 +11,9 @@ PACKAGECONFIG[system-libtom] = "--disable-bundled-libtom,--enable-bundled-libtom
 PACKAGECONFIG[disable-weak-ciphers] = ""
 "#;
 
-    let config = ExtractionConfig {
-        use_simple_python_eval: true,
-        extract_tasks: false,
-        ..Default::default()
-    };
+    let mut config = ExtractionConfig::default();
+    config.use_simple_python_eval = true;
+    config.extract_tasks = false;
 
     let extractor = RecipeExtractor::new(config);
     let mut graph = RecipeGraph::new();
