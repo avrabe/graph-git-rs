@@ -1,0 +1,72 @@
+# KAS Configuration 3: Poky + OpenEmbedded + Custom Meta Layer
+# Includes custom meta-test layer for testing overrides and PACKAGECONFIG
+
+header:
+  version: 14
+
+distro: poky
+machine: qemux86-64
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    refspec: scarthgap
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    refspec: scarthgap
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+      meta-filesystems:
+      meta-perl:
+
+  # Custom local layer for testing
+  meta-test:
+    path: ../meta-test
+
+local_conf_header:
+  base: |
+    # Configuration with custom overrides
+    PACKAGE_CLASSES = "package_rpm"
+
+    # Enable systemd
+    DISTRO_FEATURES:append = " systemd"
+    DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"
+    VIRTUAL-RUNTIME_init_manager = "systemd"
+    VIRTUAL-RUNTIME_initscripts = ""
+
+    # Extended features
+    DISTRO_FEATURES:append = " pam ipv6 usrmerge"
+    DISTRO_FEATURES:append = " wifi bluetooth"
+    DISTRO_FEATURES:append = " opengl vulkan wayland"
+    DISTRO_FEATURES:append = " x11"
+
+    MACHINE_FEATURES:append = " wifi bluetooth"
+
+    # Build configuration
+    BB_NUMBER_THREADS = "4"
+    PARALLEL_MAKE = "-j 4"
+
+    # Enable build history
+    INHERIT += "buildhistory"
+    BUILDHISTORY_COMMIT = "1"
+
+    # Custom PACKAGECONFIG overrides for testing
+    PACKAGECONFIG:append:pn-systemd = " resolved networkd timesyncd"
+    PACKAGECONFIG:append:pn-mesa = " gbm egl gles2"
+    PACKAGECONFIG:append:pn-gstreamer1.0 = " pango"
+
+    # Test some bbappends and overrides
+    PREFERRED_VERSION_python3 = "3.11%"
+
+bblayers_conf_header:
+  meta: |
+    # Poky + OpenEmbedded + Custom test layer
+    BBPATH = "${TOPDIR}"
+    BBFILES ?= ""

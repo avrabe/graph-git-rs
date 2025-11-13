@@ -1,0 +1,114 @@
+# KAS Configuration 4: Full Complexity Setup
+# Maximum complexity with multiple layers, overrides, and PACKAGECONFIG variations
+
+header:
+  version: 14
+
+distro: poky
+machine: qemux86-64
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    refspec: scarthgap
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    refspec: scarthgap
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+      meta-filesystems:
+      meta-perl:
+      meta-gnome:
+      meta-xfce:
+      meta-multimedia:
+      meta-webserver:
+
+  meta-virtualization:
+    url: https://git.yoctoproject.org/meta-virtualization
+    refspec: scarthgap
+
+  meta-security:
+    url: https://git.yoctoproject.org/meta-security
+    refspec: scarthgap
+
+  # Custom local layer
+  meta-test:
+    path: ../meta-test
+
+local_conf_header:
+  base: |
+    # Full complexity configuration
+    PACKAGE_CLASSES = "package_rpm"
+
+    # Maximum feature set
+    DISTRO_FEATURES:append = " systemd"
+    DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"
+    VIRTUAL-RUNTIME_init_manager = "systemd"
+    VIRTUAL-RUNTIME_initscripts = ""
+
+    DISTRO_FEATURES:append = " pam ipv6 usrmerge"
+    DISTRO_FEATURES:append = " wifi bluetooth"
+    DISTRO_FEATURES:append = " opengl vulkan wayland x11"
+    DISTRO_FEATURES:append = " ptest"
+    DISTRO_FEATURES:append = " selinux"
+    DISTRO_FEATURES:append = " virtualization"
+
+    MACHINE_FEATURES:append = " wifi bluetooth"
+    MACHINE_FEATURES:append = " tpm2"
+
+    # Build configuration
+    BB_NUMBER_THREADS = "8"
+    PARALLEL_MAKE = "-j 8"
+
+    # Enable build history
+    INHERIT += "buildhistory"
+    BUILDHISTORY_COMMIT = "1"
+
+    # Extensive PACKAGECONFIG testing
+    # systemd with all features
+    PACKAGECONFIG:append:pn-systemd = " resolved networkd timesyncd"
+    PACKAGECONFIG:append:pn-systemd = " coredump importd machined"
+    PACKAGECONFIG:append:pn-systemd = " hostnamed localed timedated"
+
+    # Mesa with full GL stack
+    PACKAGECONFIG:append:pn-mesa = " gbm egl gles2 dri3"
+
+    # GStreamer with many plugins
+    PACKAGECONFIG:append:pn-gstreamer1.0 = " pango"
+
+    # Python with optimizations
+    PACKAGECONFIG:append:pn-python3 = " tk readline gdbm"
+
+    # OpenSSL with engines
+    PACKAGECONFIG:append:pn-openssl = " cryptodev-linux"
+
+    # QEMU with many features
+    PACKAGECONFIG:append:pn-qemu = " sdl vnc libusb fdt"
+
+    # Conditional PACKAGECONFIG based on architecture
+    PACKAGECONFIG:append:pn-linux-firmware:x86-64 = " iwlwifi"
+
+    # Override-specific configurations
+    DEPENDS:append:class-native = " cmake-native"
+    RDEPENDS:append:class-target = " base-files base-passwd"
+
+    # Preferred versions for testing
+    PREFERRED_VERSION_linux-yocto = "6.6%"
+    PREFERRED_VERSION_python3 = "3.11%"
+
+    # Test some IMAGE_ variables that might use Python
+    IMAGE_INSTALL:append = " python3 python3-pip"
+    IMAGE_FEATURES:append = " dev-pkgs tools-sdk"
+
+bblayers_conf_header:
+  meta: |
+    # All layers for maximum complexity
+    BBPATH = "${TOPDIR}"
+    BBFILES ?= ""

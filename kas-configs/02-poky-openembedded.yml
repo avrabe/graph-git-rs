@@ -1,0 +1,63 @@
+# KAS Configuration 2: Poky + OpenEmbedded Layers
+# Adds meta-openembedded for testing with additional recipes
+
+header:
+  version: 14
+
+distro: poky
+machine: qemux86-64
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    refspec: scarthgap
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+
+  meta-openembedded:
+    url: https://git.openembedded.org/meta-openembedded
+    refspec: scarthgap
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+      meta-filesystems:
+      meta-perl:
+
+local_conf_header:
+  base: |
+    # Configuration with OpenEmbedded layers
+    PACKAGE_CLASSES = "package_rpm"
+
+    # Enable systemd
+    DISTRO_FEATURES:append = " systemd"
+    DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"
+    VIRTUAL-RUNTIME_init_manager = "systemd"
+    VIRTUAL-RUNTIME_initscripts = ""
+
+    # Extended features for OE testing
+    DISTRO_FEATURES:append = " pam ipv6 usrmerge"
+    DISTRO_FEATURES:append = " wifi bluetooth"
+    DISTRO_FEATURES:append = " opengl vulkan"
+
+    # More machine features
+    MACHINE_FEATURES:append = " wifi bluetooth"
+
+    # Build configuration
+    BB_NUMBER_THREADS = "4"
+    PARALLEL_MAKE = "-j 4"
+
+    # Enable build history
+    INHERIT += "buildhistory"
+    BUILDHISTORY_COMMIT = "1"
+
+    # Add packageconfig for testing
+    PACKAGECONFIG:append:pn-systemd = " resolved networkd"
+
+bblayers_conf_header:
+  meta: |
+    # Poky + OpenEmbedded layers
+    BBPATH = "${TOPDIR}"
+    BBFILES ?= ""
