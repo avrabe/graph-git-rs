@@ -645,6 +645,33 @@ impl RecipeExtractor {
         }
     }
 
+    /// Dedent Python code by removing common leading whitespace
+    fn dedent_python(&self, code: &str) -> String {
+        let lines: Vec<&str> = code.lines().collect();
+
+        // Find minimum indentation (ignoring empty lines and lines with only closing braces)
+        let min_indent = lines.iter()
+            .filter(|line| !line.trim().is_empty())
+            .filter(|line| line.trim() != "}")  // Ignore BitBake closing braces
+            .map(|line| line.len() - line.trim_start().len())
+            .min()
+            .unwrap_or(0);
+
+        // Remove that amount of indentation from each line, and filter out closing braces
+        lines.iter()
+            .filter_map(|line| {
+                if line.trim() == "}" {
+                    None  // Skip closing braces
+                } else if line.trim().is_empty() {
+                    Some("")
+                } else {
+                    Some(&line[min_indent.min(line.len())..])
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Process Python blocks (anonymous functions) and merge variable changes
     /// Phase 10: Extract and execute Python blocks via IR system
     fn process_python_blocks(&self, content: &str, mut vars: HashMap<String, String>) -> HashMap<String, String> {
@@ -658,9 +685,11 @@ impl RecipeExtractor {
         for python_block in python_blocks {
             // Only process anonymous blocks for now (they run at parse time)
             if python_block.is_anonymous {
-                // Parse to IR
+                // Try to parse to IR first
                 let parser = PythonIRParser::new();
-                if let Some(ir) = parser.parse(&python_block.code, eval_vars.clone()) {
+                let ir_result = parser.parse(&python_block.code, eval_vars.clone());
+
+                if let Some(ir) = ir_result {
                     // Execute based on complexity
                     match ir.execution_strategy() {
                         ExecutionStrategy::Static | ExecutionStrategy::Hybrid => {
@@ -676,17 +705,33 @@ impl RecipeExtractor {
                             }
                         }
                         ExecutionStrategy::RustPython => {
-                            // For complex blocks, fall back to SimplePythonEvaluator or skip
-                            // This would require full RustPython execution
+                            // For complex blocks, use RustPython executor if enabled
                             #[cfg(feature = "python-execution")]
                             {
-                                let executor = PythonExecutor::new();
-                                let result = executor.execute(&python_block.code, &eval_vars);
-                                if result.success {
-                                    for (var_name, value) in result.variables_set {
-                                        vars.insert(var_name.clone(), value.clone());
-                                        eval_vars.insert(var_name, value);
+                                if let Some(ref executor) = self.executor {
+                                    let dedented_code = self.dedent_python(&python_block.code);
+                                    let result = executor.execute(&dedented_code, &eval_vars);
+                                    if result.success {
+                                        for (var_name, value) in result.variables_set {
+                                            vars.insert(var_name.clone(), value.clone());
+                                            eval_vars.insert(var_name, value);
+                                        }
                                     }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // IR parser failed - fall back to RustPython if available
+                    #[cfg(feature = "python-execution")]
+                    {
+                        if let Some(ref executor) = self.executor {
+                            let dedented_code = self.dedent_python(&python_block.code);
+                            let result = executor.execute(&dedented_code, &eval_vars);
+                            if result.success {
+                                for (var_name, value) in result.variables_set {
+                                    vars.insert(var_name.clone(), value.clone());
+                                    eval_vars.insert(var_name, value);
                                 }
                             }
                         }

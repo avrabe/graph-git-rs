@@ -257,8 +257,18 @@ impl PythonIRParser {
         if let Some(cap) = self.contains_pattern.captures(line) {
             let var_name = cap.get(1).unwrap().as_str();
             let item = cap.get(2).unwrap().as_str();
-            let true_str = cap.get(3).unwrap().as_str();
-            let false_str = cap.get(4).unwrap().as_str();
+
+            // True value can be a string literal (group 3) or identifier (group 4)
+            let true_str = cap.get(3)
+                .or_else(|| cap.get(4))
+                .map(|m| m.as_str())
+                .unwrap_or("True");
+
+            // False value can be a string literal (group 5) or identifier (group 6)
+            let false_str = cap.get(5)
+                .or_else(|| cap.get(6))
+                .map(|m| m.as_str())
+                .unwrap_or("False");
 
             let true_val = builder.string_literal(true_str);
             let false_val = builder.string_literal(false_str);
