@@ -144,7 +144,7 @@ impl IRExecutor {
     }
 
     /// Execute using RustPython fallback
-    fn execute_rustpython(&self, ir: &PythonIR) -> IRExecutionResult {
+    fn execute_rustpython(&self, _ir: &PythonIR) -> IRExecutionResult {
         #[cfg(feature = "python-execution")]
         {
             // Find ComplexPython operation and extract code

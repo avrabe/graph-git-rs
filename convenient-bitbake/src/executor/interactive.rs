@@ -8,7 +8,7 @@
 //! - Query task state during execution
 
 use super::executor::TaskExecutor;
-use super::monitor::{TaskInfo, TaskMonitor, TaskState};
+use super::monitor::{TaskMonitor, TaskState};
 use super::types::{ExecutionResult, TaskOutput, TaskSpec};
 use crate::task_graph::TaskGraph;
 use crate::recipe_graph::TaskId;
@@ -132,7 +132,7 @@ impl InteractiveExecutor {
                     continue;
                 }
                 ExecutionControl::Debug => {
-                    self.enter_debugger(&task_graph, &completed);
+                    self.enter_debugger(task_graph, &completed);
                     *self.control.lock().unwrap() = ExecutionControl::Continue;
                     continue;
                 }
@@ -328,11 +328,8 @@ impl InteractiveExecutor {
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).ok();
 
-        match input.trim() {
-            "q" => {
-                *self.control.lock().unwrap() = ExecutionControl::Stop;
-            }
-            _ => {}
+        if input.trim() == "q" {
+            *self.control.lock().unwrap() = ExecutionControl::Stop;
         }
     }
 

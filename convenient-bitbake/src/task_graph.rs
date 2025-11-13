@@ -328,7 +328,7 @@ impl TaskGraphBuilder {
         // Queue tasks with no dependencies
         let mut queue: VecDeque<_> = in_degree
             .iter()
-            .filter(|(_, &degree)| degree == 0)
+            .filter(|&(_, &degree)| degree == 0)
             .map(|(id, _)| *id)
             .collect();
 

@@ -200,11 +200,7 @@ impl BitbakeRecipe {
             .and_then(|s| s.to_str())
             .and_then(|stem| {
                 // Split on underscore to get version
-                if let Some(underscore_pos) = stem.rfind('_') {
-                    Some(stem[underscore_pos + 1..].to_string())
-                } else {
-                    None
-                }
+                stem.rfind('_').map(|underscore_pos| stem[underscore_pos + 1..].to_string())
             });
 
         Self {
@@ -351,11 +347,10 @@ fn extract_variable_assignment(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
                 // E.g., "PV:append" or "DEPENDS:append:arm"
                 let mut full_name = String::new();
                 for elem in child.descendants_with_tokens() {
-                    if let Some(token) = elem.as_token() {
-                        if !token.kind().is_trivia() {
+                    if let Some(token) = elem.as_token()
+                        && !token.kind().is_trivia() {
                             full_name.push_str(token.text());
                         }
-                    }
                 }
                 if !full_name.is_empty() {
                     var_name = Some(full_name);
@@ -365,11 +360,10 @@ fn extract_variable_assignment(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
                 // Concatenate all text in value
                 let mut value_text = String::new();
                 for elem in child.descendants_with_tokens() {
-                    if let Some(token) = elem.as_token() {
-                        if !token.kind().is_trivia() {
+                    if let Some(token) = elem.as_token()
+                        && !token.kind().is_trivia() {
                             value_text.push_str(token.text());
                         }
-                    }
                 }
                 var_value = Some(value_text);
             }
@@ -385,12 +379,11 @@ fn extract_variable_assignment(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
 
 fn extract_inherit(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
     for token in node.descendants_with_tokens() {
-        if let Some(token) = token.as_token() {
-            if token.kind() == SyntaxKind::IDENT &&
+        if let Some(token) = token.as_token()
+            && token.kind() == SyntaxKind::IDENT &&
                token.text() != "inherit" {
                 recipe.inherits.push(token.text().to_string());
             }
-        }
     }
 }
 
@@ -448,7 +441,7 @@ fn parse_src_uri_value(value: &str) -> Result<Vec<SourceUri>, String> {
             }
             ' ' | '\t' | '\n' if !in_quotes => {
                 if !current_uri.trim().is_empty() {
-                    if let Ok(source) = parse_single_uri(&current_uri.trim()) {
+                    if let Ok(source) = parse_single_uri(current_uri.trim()) {
                         sources.push(source);
                     }
                     current_uri.clear();
@@ -461,11 +454,10 @@ fn parse_src_uri_value(value: &str) -> Result<Vec<SourceUri>, String> {
     }
 
     // Don't forget the last URI
-    if !current_uri.trim().is_empty() {
-        if let Ok(source) = parse_single_uri(&current_uri.trim()) {
+    if !current_uri.trim().is_empty()
+        && let Ok(source) = parse_single_uri(current_uri.trim()) {
             sources.push(source);
         }
-    }
 
     Ok(sources)
 }

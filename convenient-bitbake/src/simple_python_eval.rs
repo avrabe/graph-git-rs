@@ -42,11 +42,10 @@ impl SimplePythonEvaluator {
         let trimmed_inner = inner.trim();
         if trimmed_inner.starts_with('[') && trimmed_inner.contains(']') {
             // Phase 9e: Check for list comprehension first: [x for x in list if condition]
-            if trimmed_inner.contains(" for ") && trimmed_inner.contains(" in ") {
-                if let Some(comp_result) = self.eval_list_comprehension(trimmed_inner) {
+            if trimmed_inner.contains(" for ") && trimmed_inner.contains(" in ")
+                && let Some(comp_result) = self.eval_list_comprehension(trimmed_inner) {
                     return Some(comp_result);
                 }
-            }
 
             if let Some(list_result) = self.eval_list_literal(trimmed_inner) {
                 return Some(list_result);
@@ -287,7 +286,7 @@ impl SimplePythonEvaluator {
         let after_open = &after[open_paren + 1..];
 
         // Find first quoted string (the variable name)
-        let quote_start = after_open.find(|c| c == '\'' || c == '"')?;
+        let quote_start = after_open.find(['\'', '"'])?;
         let quote_char = after_open.chars().nth(quote_start)?;
         let after_quote = &after_open[quote_start + 1..];
 
@@ -303,7 +302,7 @@ impl SimplePythonEvaluator {
 
         // Phase 8a: Check for chained operations after d.getVar()
         // Find the closing paren of d.getVar(...)
-        let full_getvar_call = &expr[start..];
+        let _full_getvar_call = &expr[start..];
         if let Some(close_paren_pos) = self.find_matching_paren(&after[open_paren + 1..]) {
             let after_getvar = &after[open_paren + 1 + close_paren_pos + 1..];
 
@@ -942,8 +941,8 @@ impl SimplePythonEvaluator {
         }
 
         // Handle 'not' operator (highest precedence)
-        if trimmed.starts_with("not ") {
-            let inner_expr = &trimmed[4..]; // Skip "not "
+        if let Some(inner_expr) = trimmed.strip_prefix("not ") {
+            // Skip "not "
             debug!("  NOT expression: not {}", inner_expr);
 
             let inner_result = self.eval_logical_expression(inner_expr)?;
@@ -982,13 +981,11 @@ impl SimplePythonEvaluator {
             }
 
             // Check for operator at this position (only at top level)
-            if paren_depth == 0 && !in_single_quote && !in_double_quote {
-                if i + op_bytes.len() <= expr_bytes.len() {
-                    if &expr_bytes[i..i + op_bytes.len()] == op_bytes {
+            if paren_depth == 0 && !in_single_quote && !in_double_quote
+                && i + op_bytes.len() <= expr_bytes.len()
+                    && &expr_bytes[i..i + op_bytes.len()] == op_bytes {
                         return Some(i);
                     }
-                }
-            }
         }
 
         None
@@ -1126,8 +1123,8 @@ impl SimplePythonEvaluator {
                 self.eval_list_literal(container_part)?
             } else if container_part.contains("d.getVar") && container_part.contains(".split()") {
                 // Extract variable value and split
-                let var_value = self.eval_getvar(container_part)?;
-                var_value
+                
+                self.eval_getvar(container_part)?
             } else if container_part.contains("d.getVar") {
                 // Just variable value (treat as space-separated)
                 self.eval_getvar(container_part)?
@@ -1165,8 +1162,8 @@ impl SimplePythonEvaluator {
 
         // Phase 9d: Try to evaluate as string method that returns boolean
         // e.g., 'hello'.startswith('hel') -> "True"
-        if trimmed.contains(".startswith(") || trimmed.contains(".endswith(") {
-            if let Some(result) = self.evaluate(trimmed) {
+        if (trimmed.contains(".startswith(") || trimmed.contains(".endswith("))
+            && let Some(result) = self.evaluate(trimmed) {
                 debug!("  String method result: {}", result);
                 if result == "True" {
                     return Some(true);
@@ -1174,19 +1171,17 @@ impl SimplePythonEvaluator {
                     return Some(false);
                 }
             }
-        }
 
         // Phase 9f: Try to evaluate as bb.utils function and check truthiness
         // e.g., bb.utils.which('PATH', 'gcc') returns 'gcc' (truthy) or '' (falsy)
-        if trimmed.contains("bb.utils.") || trimmed.contains("oe.utils.") {
-            if let Some(result) = self.evaluate(trimmed) {
+        if (trimmed.contains("bb.utils.") || trimmed.contains("oe.utils."))
+            && let Some(result) = self.evaluate(trimmed) {
                 debug!("  bb.utils/oe.utils function result: {}", result);
                 // Non-empty string is truthy (like Python)
                 let is_truthy = !result.is_empty() && result != "0" && result.to_lowercase() != "false";
                 debug!("  is_truthy={}", is_truthy);
                 return Some(is_truthy);
             }
-        }
 
         debug!("  Can't evaluate simple condition: {}", trimmed);
         None
@@ -1259,22 +1254,18 @@ impl SimplePythonEvaluator {
         }
 
         // Try to evaluate as d.getVar and parse result
-        if trimmed.contains("d.getVar") {
-            if let Some(value) = self.eval_getvar(trimmed) {
-                if let Ok(num) = value.parse::<i32>() {
+        if trimmed.contains("d.getVar")
+            && let Some(value) = self.eval_getvar(trimmed)
+                && let Ok(num) = value.parse::<i32>() {
                     return Some(num);
                 }
-            }
-        }
 
         // Phase 9d: Try to evaluate as string method that returns numeric (.find(), .rfind())
-        if trimmed.contains(".find(") || trimmed.contains(".rfind(") {
-            if let Some(value) = self.evaluate(trimmed) {
-                if let Ok(num) = value.parse::<i32>() {
+        if (trimmed.contains(".find(") || trimmed.contains(".rfind("))
+            && let Some(value) = self.evaluate(trimmed)
+                && let Ok(num) = value.parse::<i32>() {
                     return Some(num);
                 }
-            }
-        }
 
         debug!("  Can't evaluate numeric expression: {}", trimmed);
         None

@@ -276,29 +276,26 @@ impl RecipeGraph {
 
     /// Add a build-time dependency between recipes
     pub fn add_dependency(&mut self, from: RecipeId, to: RecipeId) {
-        if let Some(recipe) = self.recipes.get_mut(&from) {
-            if !recipe.depends.contains(&to) {
+        if let Some(recipe) = self.recipes.get_mut(&from)
+            && !recipe.depends.contains(&to) {
                 recipe.depends.push(to);
             }
-        }
     }
 
     /// Add a runtime dependency between recipes
     pub fn add_runtime_dependency(&mut self, from: RecipeId, to: RecipeId) {
-        if let Some(recipe) = self.recipes.get_mut(&from) {
-            if !recipe.rdepends.contains(&to) {
+        if let Some(recipe) = self.recipes.get_mut(&from)
+            && !recipe.rdepends.contains(&to) {
                 recipe.rdepends.push(to);
             }
-        }
     }
 
     /// Add a task dependency
     pub fn add_task_dependency(&mut self, from: TaskId, dep: TaskDependency) {
-        if let Some(task) = self.tasks.get_mut(&from) {
-            if !task.task_depends.contains(&dep) {
+        if let Some(task) = self.tasks.get_mut(&from)
+            && !task.task_depends.contains(&dep) {
                 task.task_depends.push(dep);
             }
-        }
     }
 
     // === Provider Resolution ===
@@ -484,7 +481,7 @@ impl RecipeGraph {
             dot.push_str(&format!("  \"{}\" [label=\"{}\"];\n", recipe.id.0, label));
         }
 
-        dot.push_str("\n");
+        dot.push('\n');
 
         // Edges
         for recipe in self.recipes.values() {

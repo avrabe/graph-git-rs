@@ -173,21 +173,19 @@ impl TaskCollection {
 
     /// Get build-time dependencies for a task
     pub fn get_build_dependencies(&self, task_name: &str) -> Vec<TaskDependency> {
-        if let Some(task) = self.get_task(task_name) {
-            if let Some(depends) = task.flags.get("depends") {
+        if let Some(task) = self.get_task(task_name)
+            && let Some(depends) = task.flags.get("depends") {
                 return TaskDependency::parse_depends(depends);
             }
-        }
         Vec::new()
     }
 
     /// Get runtime dependencies for a task
     pub fn get_runtime_dependencies(&self, task_name: &str) -> Vec<TaskDependency> {
-        if let Some(task) = self.get_task(task_name) {
-            if let Some(rdepends) = task.flags.get("rdepends") {
+        if let Some(task) = self.get_task(task_name)
+            && let Some(rdepends) = task.flags.get("rdepends") {
                 return TaskDependency::parse_rdepends(rdepends);
             }
-        }
         Vec::new()
     }
 }
@@ -250,13 +248,12 @@ pub fn parse_task_flag(line: &str) -> Option<(String, String, String)> {
         let left = left.trim();
         let right = right.trim().trim_matches('"').trim_matches('\'');
 
-        if let Some(bracket_start) = left.find('[') {
-            if let Some(bracket_end) = left.find(']') {
+        if let Some(bracket_start) = left.find('[')
+            && let Some(bracket_end) = left.find(']') {
                 let task_name = left[..bracket_start].trim().to_string();
                 let flag_name = left[bracket_start + 1..bracket_end].trim().to_string();
                 return Some((task_name, flag_name, right.to_string()));
             }
-        }
     }
 
     None

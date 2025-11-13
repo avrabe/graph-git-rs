@@ -7,7 +7,7 @@ use super::types::{ExecutionResult, TaskOutput};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Task execution state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,8 +244,8 @@ impl TaskMonitor {
             let task_name = task.task_name.clone();
 
             // Pop from timing stack
-            if let Some((tid, start)) = inner.timing_stack.pop() {
-                if tid == task_id {
+            if let Some((tid, start)) = inner.timing_stack.pop()
+                && tid == task_id {
                     let duration = start.elapsed();
                     tracing::info!(
                         task_id = %task_id,
@@ -256,7 +256,6 @@ impl TaskMonitor {
                         "Task completed"
                     );
                 }
-            }
         }
     }
 

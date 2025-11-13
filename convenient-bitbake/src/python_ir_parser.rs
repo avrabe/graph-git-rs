@@ -304,8 +304,8 @@ impl PythonIRParser {
         }
 
         // 6. Check for assignment with bb.utils.contains
-        if line.contains("=") && line.contains("bb.utils.contains") {
-            if let Some(eq_pos) = line.find('=') {
+        if line.contains("=") && line.contains("bb.utils.contains")
+            && let Some(eq_pos) = line.find('=') {
                 let lhs = line[..eq_pos].trim();
                 let rhs = line[eq_pos + 1..].trim();
 
@@ -322,7 +322,6 @@ impl PythonIRParser {
                     return true;
                 }
             }
-        }
 
         // If we get here, we couldn't parse this line
         false
@@ -372,7 +371,7 @@ impl PythonIRParser {
     }
 
     /// Parse inline Python expression ${@...}
-    pub fn parse_inline_expression(&self, expr: &str, initial_vars: HashMap<String, String>) -> Option<PythonIR> {
+    pub fn parse_inline_expression(&self, expr: &str, _initial_vars: HashMap<String, String>) -> Option<PythonIR> {
         let mut builder = PythonIRBuilder::new();
 
         // Simple patterns for inline expressions
