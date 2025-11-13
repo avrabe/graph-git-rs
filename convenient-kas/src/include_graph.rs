@@ -14,19 +14,27 @@ use sha2::{Digest, Sha256};
 /// Complete kas configuration (header + content)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KasConfig {
+    /// Kas file header with version and includes
     pub header: KasHeader,
+    /// Target machine (e.g., "qemux86-64")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub machine: Option<String>,
+    /// Distribution to build (e.g., "poky")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distro: Option<String>,
+    /// Build targets/recipes (e.g., ["core-image-minimal"])
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<Vec<String>>,
+    /// Repository configurations
     #[serde(default)]
     pub repos: HashMap<String, KasRepo>,
+    /// Custom headers for bblayers.conf
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bblayers_conf_header: Option<HashMap<String, String>>,
+    /// Custom headers for local.conf
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_conf_header: Option<HashMap<String, String>>,
+    /// Environment variables to set
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
 }
@@ -34,7 +42,9 @@ pub struct KasConfig {
 /// Kas file header with version and includes
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KasHeader {
+    /// Kas format version (current: 14)
     pub version: u32,
+    /// List of kas files to include
     #[serde(skip_serializing_if = "Option::is_none")]
     pub includes: Option<Vec<String>>,
 }
@@ -42,20 +52,28 @@ pub struct KasHeader {
 /// Repository configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KasRepo {
+    /// Git repository URL
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Git refspec to checkout
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refspec: Option<String>,
+    /// Git branch to checkout
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// Git commit SHA to checkout
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
+    /// Git tag to checkout
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    /// Local path to repository (alternative to URL)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Layers within this repository
     #[serde(default)]
     pub layers: HashMap<String, KasLayer>,
+    /// Patches to apply to this repository
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patches: Option<HashMap<String, Vec<String>>>,
 }
@@ -63,6 +81,7 @@ pub struct KasRepo {
 /// Layer configuration within a repository
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct KasLayer {
+    /// Relative path to layer within repository
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
 }
@@ -70,8 +89,11 @@ pub struct KasLayer {
 /// Kas file with metadata
 #[derive(Debug, Clone)]
 pub struct KasFile {
+    /// Path to the kas file
     pub path: PathBuf,
+    /// Parsed configuration
     pub config: KasConfig,
+    /// SHA256 checksum for cache invalidation
     pub checksum: String,
 }
 
@@ -126,8 +148,11 @@ impl KasFile {
 /// Kas include dependency graph
 #[derive(Debug)]
 pub struct KasIncludeGraph {
+    /// All kas files indexed by path
     files: HashMap<PathBuf, KasFile>,
+    /// Include dependencies (path -> included paths)
     dependencies: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Root kas file path
     root: PathBuf,
 }
 
@@ -288,26 +313,37 @@ impl KasIncludeGraph {
     }
 
     /// Get root kas file
+    ///
+    /// # Panics
+    ///
+    /// Panics if the root file is not found in the graph (should never happen if graph was built successfully)
     pub fn root(&self) -> &KasFile {
-        self.files.get(&self.root).unwrap()
+        self.files
+            .get(&self.root)
+            .expect("root file must exist in graph")
     }
 }
 
 /// Kas error types
 #[derive(Debug, thiserror::Error)]
 pub enum KasError {
+    /// File system I/O error
     #[error("IO error reading {0}: {1}")]
     IoError(PathBuf, String),
 
+    /// YAML parsing error
     #[error("Parse error in {0}: {1}")]
     ParseError(PathBuf, String),
 
+    /// Include file not found
     #[error("Include not found: {0}")]
     IncludeNotFound(PathBuf),
 
+    /// Circular include dependency detected
     #[error("Circular include detected: {0}")]
     CircularInclude(String),
 
+    /// Invalid repository configuration
     #[error("Invalid repository configuration: {0}")]
     InvalidRepo(String),
 }

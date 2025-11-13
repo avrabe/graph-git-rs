@@ -183,18 +183,23 @@ impl RepositoryManager {
 /// Repository error types
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {
+    /// File system I/O error
     #[error("IO error at {0}: {1}")]
     IoError(PathBuf, String),
 
+    /// Git operation error
     #[error("Git error: {0}")]
     Git(#[from] GitError),
 
+    /// Repository URL not specified in configuration
     #[error("Missing URL for repository: {0}")]
     MissingUrl(String),
 
+    /// Local repository path does not exist
     #[error("Local repository not found: {0}")]
     LocalRepoNotFound(PathBuf),
 
+    /// Failed to apply patch to repository
     #[error("Patch application failed: {0}")]
     PatchError(String),
 }
