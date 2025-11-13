@@ -1,5 +1,6 @@
 //! Cache management commands - Bazel-inspired CLI for Bitzel cache
 
+#[allow(unused_imports)]
 use super::cache::{ActionCache, ContentAddressableStore};
 use super::types::ExecutionResult;
 use std::path::Path;

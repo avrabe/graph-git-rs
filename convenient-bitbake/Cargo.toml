@@ -17,6 +17,8 @@ thiserror = "1.0.50"
 glob = "0.3.1"
 sha2 = "0.10"
 uuid = { version = "1.0", features = ["v4"] }
+tokio = { version = "1.48", features = ["rt", "rt-multi-thread", "sync", "time"], optional = true }
+futures = "0.3"
 
 # Rowan for resilient CST parsing (rust-analyzer approach)
 rowan = "0.15.15"
@@ -32,9 +34,11 @@ home = "=0.5.9"
 [features]
 default = []
 python-execution = ["rustpython", "rustpython-vm"]
+async-executor = ["tokio"]
 
 [dev-dependencies]
 tracing-test = "0.2.5"
 tracing-subscriber = "0.3"
 tempfile = "3.8.0"
 walkdir = "2"
+tokio = { version = "1.48", features = ["rt", "macros"] }
