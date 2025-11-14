@@ -65,31 +65,25 @@ fn execute_child(
 ) -> Result<i32, ExecutionError> {
     use std::fs::File;
 
-    // Create new mount and PID namespaces
-    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID)
+    // Create new PID namespace only (skip mount namespace for now to access /bin)
+    // TODO: Add proper mount namespace with bind mounts for /bin, /usr, etc.
+    unshare(CloneFlags::CLONE_NEWPID)
         .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {}", e)))?;
 
-    // Make / private to prevent mount propagation
-    mount(
-        None::<&str>,
-        "/",
-        None::<&str>,
-        MsFlags::MS_PRIVATE | MsFlags::MS_REC,
-        None::<&str>,
-    ).map_err(|e| ExecutionError::SandboxError(format!("mount --make-private failed: {}", e)))?;
-
-    // Change to work directory
-    chdir(work_dir)
-        .map_err(|e| ExecutionError::SandboxError(format!("chdir failed: {}", e)))?;
-
-    // Setup stdout/stderr capture
-    let stdout_path = work_dir.join("../stdout.log");
-    let stderr_path = work_dir.join("../stderr.log");
+    // Setup stdout/stderr capture (BEFORE chdir)
+    let sandbox_root = work_dir.parent()
+        .ok_or_else(|| ExecutionError::SandboxError("work_dir has no parent".to_string()))?;
+    let stdout_path = sandbox_root.join("stdout.log");
+    let stderr_path = sandbox_root.join("stderr.log");
 
     let stdout_file = File::create(&stdout_path)
         .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stdout.log: {}", e)))?;
     let stderr_file = File::create(&stderr_path)
         .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stderr.log: {}", e)))?;
+
+    // Change to work directory
+    chdir(work_dir)
+        .map_err(|e| ExecutionError::SandboxError(format!("chdir failed: {}", e)))?;
 
     // Execute command
     let mut cmd = Command::new("bash");
@@ -129,9 +123,11 @@ fn wait_for_child(
         .map_err(|e| ExecutionError::SandboxError(format!("waitpid failed: {}", e)))?
     {
         WaitStatus::Exited(_pid, code) => {
-            // Read captured output
-            let stdout_path = work_dir.join("../stdout.log");
-            let stderr_path = work_dir.join("../stderr.log");
+            // Read captured output (from sandbox root, not work dir)
+            let sandbox_root = work_dir.parent()
+                .ok_or_else(|| ExecutionError::SandboxError("work_dir has no parent".to_string()))?;
+            let stdout_path = sandbox_root.join("stdout.log");
+            let stderr_path = sandbox_root.join("stderr.log");
 
             let stdout = fs::read_to_string(&stdout_path).unwrap_or_default();
             let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
