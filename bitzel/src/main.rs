@@ -10,7 +10,10 @@
 //! 7. Task graph construction (using TaskGraphBuilder)
 //! 8. Cached execution (using AsyncTaskExecutor)
 
-use convenient_bitbake::{BuildContext, ExtractionConfig, RecipeExtractor, RecipeGraph};
+use convenient_bitbake::{
+    BuildContext, ExtractionConfig, RecipeExtractor, RecipeGraph,
+    TaskGraphBuilder, InteractiveExecutor, InteractiveOptions, TaskSpec,
+};
 use convenient_kas::{ConfigGenerator, include_graph::KasIncludeGraph};
 use std::collections::HashMap;
 use std::fs;
@@ -240,11 +243,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ========== Step 7: Build Execution Plan ==========
     println!("📊 Building execution plan...");
 
-    // Get topological sort of recipes
+    // Check for circular dependencies (warn but continue)
     let build_order = match graph.topological_sort() {
-        Ok(order) => order,
-        Err(e) => {
-            eprintln!("❌ Cannot build - circular dependencies detected!");
+        Ok(order) => {
+            println!("  Build order: {} recipes", order.len());
+            order
+        }
+        Err(_e) => {
+            eprintln!("⚠️  Warning: Circular dependencies detected!");
             let cycles = graph.detect_cycles();
             if !cycles.is_empty() {
                 eprintln!("\nCircular dependency cycles found:");
@@ -256,12 +262,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("  • {}", names.join(" → "));
                     }
                 }
+                eprintln!("\n💡 Continuing with partial build (TaskGraphBuilder will handle cycles)...\n");
             }
-            return Err(e.into());
+            // Return empty order, let TaskGraphBuilder handle it
+            Vec::new()
         }
     };
-
-    println!("  Build order: {} recipes", build_order.len());
 
     // Show build plan for target recipes
     if let Some(targets) = &kas_config.target {
@@ -286,10 +292,130 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n✅ Build plan complete!");
+    println!();
+
+    // ========== Step 8: Build Task Execution Graph ==========
+    println!("🔨 Building task execution graph...");
+
+    let task_builder = TaskGraphBuilder::new(graph);
+    let task_graph = match task_builder.build_full_graph() {
+        Ok(tg) => tg,
+        Err(e) => {
+            eprintln!("❌ Failed to build task graph: {}", e);
+            return Err(e.into());
+        }
+    };
+
+    let stats = task_graph.stats();
+    println!("  Total tasks:   {}", stats.total_tasks);
+    println!("  Root tasks:    {}", stats.root_tasks);
+    println!("  Leaf tasks:    {}", stats.leaf_tasks);
+    println!("  Max depth:     {}", stats.max_depth);
+    println!();
+
+    // ========== Step 9: Create Task Specifications ==========
+    // TODO: Extract actual bash task implementations from recipe files
+    // For now, create placeholder specs for testing the execution infrastructure
+    println!("📝 Creating task specifications...");
+
+    let mut task_specs = HashMap::new();
+    let tmp_dir = build_dir.join("tmp");
+    fs::create_dir_all(&tmp_dir)?;
+
+    for (task_id, task) in &task_graph.tasks {
+        let task_key = format!("{}:{}", task.recipe_name, task.task_name);
+
+        // Create placeholder script
+        // TODO: Parse actual do_task() bash functions from recipe files
+        let output_file = format!("{}.done", task.task_name);
+        let script = format!(
+            "set -e; echo '[{}] {} - {}'; mkdir -p /work/outputs; echo 'completed' > /work/outputs/{}",
+            task_id.0, task.recipe_name, task.task_name, output_file
+        );
+
+        let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
+        fs::create_dir_all(&task_workdir)?;
+
+        let spec = TaskSpec {
+            name: task.task_name.clone(),
+            recipe: task.recipe_name.clone(),
+            script,
+            workdir: task_workdir,
+            env: HashMap::new(),  // TODO: Extract from recipe variables
+            outputs: vec![PathBuf::from(&output_file)],  // Relative to sandbox root
+            timeout: Some(300),  // 5 minute default timeout
+        };
+
+        task_specs.insert(task_key, spec);
+    }
+
+    println!("  Created {} task specifications", task_specs.len());
+    println!();
+
+    // ========== Step 10: Execute with Interactive Executor ==========
+    println!("🚀 Initializing interactive executor...");
+
+    let cache_dir = build_dir.join("bitzel-cache");
+    fs::create_dir_all(&cache_dir)?;
+
+    let json_output = build_dir.join("execution-report.json");
+    let options = InteractiveOptions {
+        break_on_failure: true,
+        interactive_mode: false,  // Set to true for wave-by-wave execution
+        show_progress: true,
+        export_json: Some(json_output.clone()),
+    };
+
+    let mut executor = InteractiveExecutor::new(&cache_dir, options)?;
+
+    println!("  Cache directory: {}", cache_dir.display());
+    println!("  JSON report:     {}", json_output.display());
+    println!();
+
+    // Execute the task graph
+    println!("⚡ Starting execution...\n");
+
+    match executor.execute_graph(&task_graph, task_specs) {
+        Ok(outputs) => {
+            println!("\n✅ Execution completed successfully!");
+            println!("   Tasks completed: {}", outputs.len());
+
+            // Show statistics
+            let monitor = executor.monitor();
+            let stats = monitor.get_stats();
+            println!("\n📊 Execution Statistics:");
+            println!("   Completed:     {}", stats.completed);
+            println!("   Failed:        {}", stats.failed);
+            println!("   Cached:        {}", stats.cached);
+            println!("   Cache hit:     {:.1}%", stats.cache_hit_rate * 100.0);
+            println!("   Duration:      {:.2}s", stats.total_duration_ms as f64 / 1000.0);
+            println!("   Avg task time: {:.0}ms", stats.avg_task_duration_ms);
+
+            // Export JSON report
+            if json_output.exists() {
+                println!("\n📄 Machine-readable report: {}", json_output.display());
+            }
+        }
+        Err(e) => {
+            eprintln!("\n❌ Execution failed: {}", e);
+
+            // Show partial statistics
+            let monitor = executor.monitor();
+            let stats = monitor.get_stats();
+            eprintln!("\n📊 Partial Statistics:");
+            eprintln!("   Completed:  {}", stats.completed);
+            eprintln!("   Failed:     {}", stats.failed);
+            eprintln!("   Cached:     {}", stats.cached);
+
+            return Err(e.into());
+        }
+    }
+
     println!("\n💡 Next steps:");
-    println!("  1. Use TaskGraphBuilder to create executable task graph");
-    println!("  2. Use AsyncTaskExecutor for parallel, cached, hermetic execution");
-    println!("  3. Configuration files ready in build/conf/\n");
+    println!("  1. Extract actual bash task implementations from recipes");
+    println!("  2. Integrate OverrideResolver for MACHINE/DISTRO conditionals");
+    println!("  3. Apply bbappends using BuildContext.parse_recipe_with_context()");
+    println!("  4. Enable remote caching with Bazel Remote API v2\n");
 
     Ok(())
 }
