@@ -13,6 +13,7 @@
 use convenient_bitbake::{
     BuildContext, ExtractionConfig, RecipeExtractor, RecipeGraph,
     TaskGraphBuilder, InteractiveExecutor, InteractiveOptions, TaskSpec,
+    TaskExtractor, TaskImplementation,
 };
 use convenient_kas::{ConfigGenerator, include_graph::KasIncludeGraph};
 use std::collections::HashMap;
@@ -187,9 +188,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     extraction_config.use_python_executor = false;
 
     let extractor = RecipeExtractor::new(extraction_config);
+    let task_extractor = TaskExtractor::new();
     let mut graph = RecipeGraph::new();
     let mut extractions = Vec::new();
     let mut recipe_count = 0;
+
+    // Store task implementations by recipe name
+    let mut recipe_task_impls: HashMap<String, HashMap<String, TaskImplementation>> = HashMap::new();
 
     // Scan all layers for .bb files
     for layer_path in layer_paths.values().flatten() {
@@ -217,6 +222,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(extraction) => {
                         recipe_count += 1;
                         extractions.push(extraction);
+
+                        // Extract task implementations
+                        let task_impls = task_extractor.extract_from_content(&content);
+                        if !task_impls.is_empty() {
+                            recipe_task_impls.insert(recipe_name.clone(), task_impls);
+                        }
                     }
                     Err(e) => {
                         tracing::debug!("Skipping {}: {}", recipe_name, e);
@@ -314,35 +325,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // ========== Step 9: Create Task Specifications ==========
-    // TODO: Extract actual bash task implementations from recipe files
-    // For now, create placeholder specs for testing the execution infrastructure
-    println!("📝 Creating task specifications...");
+    println!("📝 Creating task specifications with real implementations...");
 
     let mut task_specs = HashMap::new();
+    let mut tasks_with_impl = 0;
+    let mut tasks_with_placeholder = 0;
     let tmp_dir = build_dir.join("tmp");
     fs::create_dir_all(&tmp_dir)?;
 
-    for (task_id, task) in &task_graph.tasks {
+    for (_task_id, task) in &task_graph.tasks {
         let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
-        // Create placeholder script
-        // TODO: Parse actual do_task() bash functions from recipe files
-        let output_file = format!("{}.done", task.task_name);
-        let script = format!(
-            "set -e; echo '[{}] {} - {}'; mkdir -p /work/outputs; echo 'completed' > /work/outputs/{}",
-            task_id.0, task.recipe_name, task.task_name, output_file
-        );
+        // Try to find real task implementation
+        let script = if let Some(recipe_impls) = recipe_task_impls.get(&task.recipe_name) {
+            if let Some(task_impl) = recipe_impls.get(&task.task_name) {
+                tasks_with_impl += 1;
+
+                // Use real implementation
+                let mut full_script = String::new();
+
+                // Add BitBake environment variables that tasks expect
+                full_script.push_str("set -e\n");
+                full_script.push_str("# BitBake environment\n");
+                full_script.push_str("export PN=\"${PN:-");
+                full_script.push_str(&task.recipe_name);
+                full_script.push_str("}\"\n");
+                full_script.push_str("export WORKDIR=\"${WORKDIR:-/work}\"\n");
+                full_script.push_str("export S=\"${S:-${WORKDIR}/src}\"\n");
+                full_script.push_str("export B=\"${B:-${WORKDIR}/build}\"\n");
+                full_script.push_str("export D=\"${D:-${WORKDIR}/outputs}\"\n\n");
+
+                // Add the actual task implementation
+                full_script.push_str(&task_impl.code);
+                full_script.push_str("\n\n");
+
+                // Create output marker for verification
+                let output_file = format!("{}.done", task.task_name);
+                full_script.push_str(&format!(
+                    "# Mark task complete\nmkdir -p /work/outputs\necho 'completed' > /work/outputs/{}\n",
+                    output_file
+                ));
+
+                full_script
+            } else {
+                tasks_with_placeholder += 1;
+                create_placeholder_script(&task.recipe_name, &task.task_name)
+            }
+        } else {
+            tasks_with_placeholder += 1;
+            create_placeholder_script(&task.recipe_name, &task.task_name)
+        };
 
         let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
         fs::create_dir_all(&task_workdir)?;
 
+        let output_file = format!("{}.done", task.task_name);
         let spec = TaskSpec {
             name: task.task_name.clone(),
             recipe: task.recipe_name.clone(),
             script,
             workdir: task_workdir,
             env: HashMap::new(),  // TODO: Extract from recipe variables
-            outputs: vec![PathBuf::from(&output_file)],  // Relative to sandbox root
+            outputs: vec![PathBuf::from(&output_file)],
             timeout: Some(300),  // 5 minute default timeout
         };
 
@@ -350,6 +394,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("  Created {} task specifications", task_specs.len());
+    println!("    • {} tasks with real implementations", tasks_with_impl);
+    println!("    • {} tasks with placeholders", tasks_with_placeholder);
     println!();
 
     // ========== Step 10: Execute with Interactive Executor ==========
@@ -418,6 +464,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  4. Enable remote caching with Bazel Remote API v2\n");
 
     Ok(())
+}
+
+/// Create a placeholder script for tasks without implementation
+fn create_placeholder_script(recipe_name: &str, task_name: &str) -> String {
+    let output_file = format!("{}.done", task_name);
+    format!(
+        "set -e\necho '[PLACEHOLDER] {} - {}'\nmkdir -p /work/outputs\necho 'completed' > /work/outputs/{}",
+        recipe_name, task_name, output_file
+    )
 }
 
 /// Recursively find all .bb recipe files in a layer
