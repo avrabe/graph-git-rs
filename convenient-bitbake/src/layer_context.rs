@@ -355,6 +355,24 @@ impl BuildContext {
         resolver
     }
 
+    /// Create an override resolver with MACHINE/DISTRO overrides configured
+    pub fn create_override_resolver(&self, recipe: &BitbakeRecipe) -> crate::override_resolver::OverrideResolver {
+        // Create base resolver with build context
+        let base_resolver = self.create_resolver(recipe);
+
+        // Create override resolver
+        let mut override_resolver = crate::override_resolver::OverrideResolver::new(base_resolver);
+
+        // Configure overrides from MACHINE and DISTRO
+        override_resolver.build_overrides_from_context(
+            self.machine.as_deref(),
+            self.distro.as_deref(),
+            &[], // No additional overrides for now
+        );
+
+        override_resolver
+    }
+
     /// Get layer information
     pub fn get_layers_info(&self) -> Vec<(String, i32, PathBuf)> {
         self.layers
@@ -524,5 +542,57 @@ LAYERDEPENDS_test = "core meta-oe"
         let config = LayerConfig::parse(layer_dir.join("conf/layer.conf")).unwrap();
 
         assert_eq!(config.depends, vec!["core", "meta-oe"]);
+    }
+
+    #[test]
+    fn test_override_resolver_integration() {
+        let temp_dir = TempDir::new().unwrap();
+        let layer_dir = temp_dir.path().join("meta-test");
+        fs::create_dir_all(&layer_dir).unwrap();
+
+        // Create a simple recipe with machine/distro overrides
+        let recipe_content = r#"
+DESCRIPTION = "Test recipe with overrides"
+LICENSE = "MIT"
+
+SRC_URI = "file://base.tar.gz"
+SRC_URI:append:qemux86-64 = " file://x86-patch.patch"
+
+DEPENDS = "base-dep"
+DEPENDS:append:poky = " poky-dep"
+"#;
+        let recipe_path = layer_dir.join("test-recipe_1.0.bb");
+        fs::write(&recipe_path, recipe_content).unwrap();
+
+        // Create BuildContext with MACHINE and DISTRO
+        let mut build_context = BuildContext::new();
+        build_context.set_machine("qemux86-64".to_string());
+        build_context.set_distro("poky".to_string());
+
+        // Parse recipe
+        let recipe = BitbakeRecipe::parse_file(&recipe_path).unwrap();
+
+        // Create override resolver with build context
+        let resolver = build_context.create_override_resolver(&recipe);
+
+        // Verify overrides are properly configured
+        let overrides = resolver.active_overrides();
+        assert!(overrides.contains(&"qemux86-64".to_string()), "Should have qemux86-64 override");
+        assert!(overrides.contains(&"poky".to_string()), "Should have poky override");
+        assert!(overrides.contains(&"x86".to_string()), "Should auto-detect x86 from qemux86-64");
+        assert!(overrides.contains(&"64".to_string()), "Should auto-detect 64 from qemux86-64");
+    }
+
+    #[test]
+    fn test_build_context_machine_distro() {
+        let mut ctx = BuildContext::new();
+
+        ctx.set_machine("qemuarm64".to_string());
+        ctx.set_distro("poky".to_string());
+
+        assert_eq!(ctx.machine, Some("qemuarm64".to_string()));
+        assert_eq!(ctx.distro, Some("poky".to_string()));
+        assert_eq!(ctx.global_variables.get("MACHINE"), Some(&"qemuarm64".to_string()));
+        assert_eq!(ctx.global_variables.get("DISTRO"), Some(&"poky".to_string()));
     }
 }

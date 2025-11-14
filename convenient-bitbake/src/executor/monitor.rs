@@ -436,6 +436,8 @@ mod tests {
             output_files: HashMap::new(),
             stdout: String::new(),
             stderr: String::new(),
+            exit_code: 0,
+            duration_ms: 100,
         };
 
         monitor.task_completed("task1", &output, false);
