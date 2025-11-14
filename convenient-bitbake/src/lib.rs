@@ -39,6 +39,7 @@ pub mod executor;
 pub mod pipeline;
 pub mod signature_cache;
 pub mod build_orchestrator;
+pub mod query;
 
 #[cfg(feature = "python-execution")]
 pub mod python_executor;
