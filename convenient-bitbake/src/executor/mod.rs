@@ -8,6 +8,7 @@
 pub mod types;
 pub mod cache;
 pub mod sandbox_backend;
+pub mod native_sandbox;
 pub mod sandbox;
 pub mod executor;
 pub mod execution_log;
