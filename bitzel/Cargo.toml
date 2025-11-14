@@ -19,6 +19,8 @@ thiserror = "2.0"
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2.5"
+sha2 = "0.10"
+num_cpus = "1.16"
 
 # Bitzel components
 convenient-graph = { path = "../convenient-graph" }
