@@ -151,6 +151,36 @@ fn cleanup_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
     Ok(())
 }
 
+/// Install BitBake prelude script to /bitzel/prelude.sh
+///
+/// This creates the /bitzel directory and writes the shared prelude script
+/// that is sourced by all task scripts. The prelude provides:
+/// - Standard BitBake environment variables
+/// - Error handling (set -e, set -u, set -o pipefail)
+/// - Helper functions (bb_note, bb_warn, bb_fatal, etc.)
+#[cfg(target_os = "linux")]
+fn install_prelude_script() -> std::io::Result<()> {
+    const PRELUDE_CONTENT: &str = include_str!("prelude.sh");
+
+    // Create /bitzel directory
+    fs::create_dir_all("/bitzel")?;
+
+    // Write prelude script
+    fs::write("/bitzel/prelude.sh", PRELUDE_CONTENT)?;
+
+    // Make executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata("/bitzel/prelude.sh")?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions("/bitzel/prelude.sh", perms)?;
+    }
+
+    debug!("Installed BitBake prelude to /bitzel/prelude.sh");
+    Ok(())
+}
+
 /// Execute command in native Linux namespace sandbox
 ///
 /// This implementation uses:
@@ -548,6 +578,10 @@ fn execute_child_without_userns(
             }
         }
     }
+
+    // Install BitBake prelude script
+    install_prelude_script()
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to install prelude: {}", e)))?;
 
     // Setup stdout/stderr capture
     let sandbox_root = work_dir.parent()

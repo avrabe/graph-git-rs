@@ -356,20 +356,21 @@ impl BuildOrchestrator {
     fn create_task_script(&self, recipe_name: &str, task_name: &str, code: &str) -> String {
         let mut script = String::new();
 
-        script.push_str("set -e\n");
-        script.push_str("# BitBake environment\n");
-        script.push_str(&format!("export PN=\"{}\"\n", recipe_name));
-        script.push_str("export WORKDIR=\"${WORKDIR:-/work}\"\n");
-        script.push_str("export S=\"${S:-${WORKDIR}/src}\"\n");
-        script.push_str("export B=\"${B:-${WORKDIR}/build}\"\n");
-        script.push_str("export D=\"${D:-${WORKDIR}/outputs}\"\n\n");
+        // Source shared prelude for common environment and functions
+        script.push_str("#!/bin/bash\n");
+        script.push_str(". /bitzel/prelude.sh\n\n");
 
+        // Set recipe-specific variables
+        script.push_str(&format!("export PN=\"{}\"\n\n", recipe_name));
+
+        // Task code
         script.push_str(code);
         script.push_str("\n\n");
 
+        // Mark task complete
         let output_file = format!("{}.done", task_name);
         script.push_str(&format!(
-            "# Mark task complete\nmkdir -p /work/outputs\necho 'completed' > /work/outputs/{}\n",
+            "# Mark task complete\ntouch \"$D/{}\"\n",
             output_file
         ));
 
@@ -380,7 +381,7 @@ impl BuildOrchestrator {
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
         let output_file = format!("{}.done", task_name);
         format!(
-            "set -e\necho '[PLACEHOLDER] {} - {}'\nmkdir -p /work/outputs\necho 'completed' > /work/outputs/{}",
+            "#!/bin/bash\n. /bitzel/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\ntouch \"$D/{}\"",
             recipe_name, task_name, output_file
         )
     }
