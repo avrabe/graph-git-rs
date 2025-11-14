@@ -1,11 +1,12 @@
 //! Content-addressable storage and action cache
 
 use super::types::{ContentHash, TaskOutput, ExecutionError, ExecutionResult};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::OpenOptionsExt;
+use std::time::SystemTime;
 
 /// Write data to a file atomically with fsync for durability
 ///
@@ -80,22 +81,59 @@ fn acquire_lock(path: &Path) -> ExecutionResult<File> {
     Ok(lock_file)
 }
 
+/// Cache configuration for garbage collection
+#[derive(Debug, Clone)]
+pub struct CacheConfig {
+    /// Maximum total cache size in bytes (None = unlimited)
+    pub max_size_bytes: Option<u64>,
+    /// Trigger GC when cache exceeds this size
+    pub gc_threshold_bytes: u64,
+    /// Target size after GC (should be < gc_threshold)
+    pub gc_target_bytes: u64,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            max_size_bytes: Some(10 * 1024 * 1024 * 1024), // 10 GB default
+            gc_threshold_bytes: 8 * 1024 * 1024 * 1024,     // Trigger at 8 GB
+            gc_target_bytes: 6 * 1024 * 1024 * 1024,        // Clean down to 6 GB
+        }
+    }
+}
+
+/// Metadata for cached objects (used for GC and LRU)
+#[derive(Debug, Clone)]
+struct ObjectMetadata {
+    path: PathBuf,
+    size_bytes: u64,
+    last_access_time: SystemTime,
+}
+
 /// Content-Addressable Store - stores files by their SHA-256 hash
 pub struct ContentAddressableStore {
     root: PathBuf,
-    /// In-memory index for fast lookups
-    index: HashMap<ContentHash, PathBuf>,
+    /// In-memory index with metadata for GC/LRU
+    index: HashMap<ContentHash, ObjectMetadata>,
+    /// Cache configuration
+    config: CacheConfig,
 }
 
 impl ContentAddressableStore {
     /// Create or open a CAS at the given root directory
     pub fn new(root: impl Into<PathBuf>) -> ExecutionResult<Self> {
+        Self::with_config(root, CacheConfig::default())
+    }
+
+    /// Create or open a CAS with custom configuration
+    pub fn with_config(root: impl Into<PathBuf>, config: CacheConfig) -> ExecutionResult<Self> {
         let root = root.into();
         fs::create_dir_all(&root)?;
 
         let mut cas = Self {
             root,
             index: HashMap::new(),
+            config,
         };
 
         // Rebuild index by scanning filesystem
@@ -109,8 +147,11 @@ impl ContentAddressableStore {
         let hash = ContentHash::from_bytes(content);
         let path = self.hash_to_path(&hash);
 
-        // Skip if already exists
+        // Skip if already exists (update access time)
         if path.exists() {
+            if let Some(metadata) = self.index.get_mut(&hash) {
+                metadata.last_access_time = SystemTime::now();
+            }
             return Ok(hash);
         }
 
@@ -128,15 +169,29 @@ impl ContentAddressableStore {
         // Write atomically with fsync for durability
         atomic_write(&path, content)?;
 
-        // Update index
-        self.index.insert(hash.clone(), path);
+        // Update index with metadata
+        let metadata = ObjectMetadata {
+            path: path.clone(),
+            size_bytes: content.len() as u64,
+            last_access_time: SystemTime::now(),
+        };
+        self.index.insert(hash.clone(), metadata);
+
+        // Trigger GC if cache is too large
+        self.gc_if_needed()?;
 
         Ok(hash)
     }
 
     /// Retrieve content by hash
-    pub fn get(&self, hash: &ContentHash) -> ExecutionResult<Vec<u8>> {
+    pub fn get(&mut self, hash: &ContentHash) -> ExecutionResult<Vec<u8>> {
         let path = self.hash_to_path(hash);
+
+        // Update access time for LRU tracking
+        if let Some(metadata) = self.index.get_mut(hash) {
+            metadata.last_access_time = SystemTime::now();
+        }
+
         fs::read(&path).map_err(|e| {
             ExecutionError::CacheError(format!("Failed to read {}: {}", hash, e))
         })
@@ -211,13 +266,23 @@ impl ContentAddressableStore {
                 let path = entry.path();
                 // Extract hash from filename
                 if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                    // Skip temp files
-                    if filename.ends_with(".tmp") {
-                        let _ = fs::remove_file(path); // Clean up temp files
+                    // Skip temp and lock files
+                    if filename.ends_with(".tmp") || filename.ends_with(".lock") {
+                        let _ = fs::remove_file(path); // Clean up temp/lock files
                         continue;
                     }
-                    let hash = ContentHash::from_hex(filename);
-                    self.index.insert(hash, path.to_path_buf());
+
+                    // Get file metadata
+                    if let Ok(file_metadata) = fs::metadata(path) {
+                        let hash = ContentHash::from_hex(filename);
+                        let obj_metadata = ObjectMetadata {
+                            path: path.to_path_buf(),
+                            size_bytes: file_metadata.len(),
+                            last_access_time: file_metadata.modified()
+                                .unwrap_or_else(|_| SystemTime::now()),
+                        };
+                        self.index.insert(hash, obj_metadata);
+                    }
                 }
             }
         }
@@ -236,15 +301,150 @@ impl ContentAddressableStore {
     fn compute_total_size(&self) -> u64 {
         self.index
             .values()
-            .filter_map(|path| fs::metadata(path).ok())
-            .map(|meta| meta.len())
+            .map(|metadata| metadata.size_bytes)
             .sum()
     }
 
-    /// Garbage collect unused objects (placeholder)
-    pub fn gc(&mut self, _keep: &[ContentHash]) -> ExecutionResult<usize> {
-        // TODO: Implement garbage collection
-        Ok(0)
+    /// Trigger GC if cache exceeds threshold
+    ///
+    /// Automatic GC only performs LRU eviction (not mark-and-sweep) because
+    /// it doesn't have access to the ActionCache to determine reachability.
+    /// For proper garbage collection, use gc_with_action_cache() explicitly.
+    fn gc_if_needed(&mut self) -> ExecutionResult<()> {
+        let total_size = self.compute_total_size();
+
+        if total_size > self.config.gc_threshold_bytes {
+            let bytes_to_free = total_size.saturating_sub(self.config.gc_target_bytes);
+            eprintln!(
+                "Cache size {} bytes exceeds threshold {} bytes, performing LRU eviction",
+                total_size, self.config.gc_threshold_bytes
+            );
+            eprintln!("Target: free {} bytes to reach {} bytes", bytes_to_free, self.config.gc_target_bytes);
+
+            // Only do LRU eviction in automatic GC (no mark-and-sweep)
+            let evicted = self.evict_lru(bytes_to_free)?;
+            eprintln!("Automatic GC: evicted {} oldest objects", evicted);
+        }
+
+        Ok(())
+    }
+
+    /// Garbage collect: mark-and-sweep + LRU eviction
+    ///
+    /// This is a manual GC operation. Provide a list of content hashes that must
+    /// be kept (all others will be deleted as unreachable). After sweep, if the
+    /// cache is still over the target size, LRU eviction will be performed.
+    ///
+    /// For typical usage, prefer `gc_with_action_cache()` which automatically
+    /// determines reachable objects from the ActionCache.
+    pub fn gc(&mut self, keep: &[ContentHash]) -> ExecutionResult<usize> {
+        let initial_count = self.index.len();
+        let initial_size = self.compute_total_size();
+
+        eprintln!(
+            "Starting GC: {} objects, {} bytes",
+            initial_count, initial_size
+        );
+
+        // Mark phase: identify objects to keep
+        let mut reachable: HashSet<ContentHash> = keep.iter().cloned().collect();
+
+        // Sweep phase: delete unreachable objects
+        let mut deleted = 0;
+        let mut hashes_to_remove = Vec::new();
+
+        for (hash, metadata) in &self.index {
+            if !reachable.contains(hash) {
+                // Delete from disk
+                if let Err(e) = fs::remove_file(&metadata.path) {
+                    eprintln!("Warning: Failed to delete {}: {}", hash, e);
+                } else {
+                    hashes_to_remove.push(hash.clone());
+                    deleted += 1;
+                }
+            }
+        }
+
+        // Remove from index
+        for hash in &hashes_to_remove {
+            self.index.remove(hash);
+        }
+
+        let size_after_sweep = self.compute_total_size();
+
+        eprintln!(
+            "Sweep complete: deleted {} unreachable objects, size now {} bytes",
+            deleted, size_after_sweep
+        );
+
+        // LRU eviction: if still over target, evict oldest objects
+        if size_after_sweep > self.config.gc_target_bytes {
+            let evicted = self.evict_lru(size_after_sweep - self.config.gc_target_bytes)?;
+            eprintln!("LRU eviction: removed {} objects", evicted);
+            deleted += evicted;
+        }
+
+        let final_size = self.compute_total_size();
+        eprintln!(
+            "GC complete: {} → {} objects, {} → {} bytes",
+            initial_count,
+            self.index.len(),
+            initial_size,
+            final_size
+        );
+
+        Ok(deleted)
+    }
+
+    /// Evict least recently used objects to free up space
+    fn evict_lru(&mut self, bytes_to_free: u64) -> ExecutionResult<usize> {
+        // Collect all objects with access times
+        let mut objects: Vec<(ContentHash, SystemTime, u64)> = self
+            .index
+            .iter()
+            .map(|(hash, metadata)| (hash.clone(), metadata.last_access_time, metadata.size_bytes))
+            .collect();
+
+        // Sort by access time (oldest first)
+        objects.sort_by_key(|(_, access_time, _)| *access_time);
+
+        let mut freed = 0u64;
+        let mut evicted = 0;
+
+        for (hash, _, size) in objects {
+            if freed >= bytes_to_free {
+                break;
+            }
+
+            // Remove object
+            if let Some(metadata) = self.index.remove(&hash) {
+                if let Err(e) = fs::remove_file(&metadata.path) {
+                    eprintln!("Warning: Failed to evict {}: {}", hash, e);
+                } else {
+                    freed += size;
+                    evicted += 1;
+                }
+            }
+        }
+
+        Ok(evicted)
+    }
+
+    /// Perform garbage collection with mark-and-sweep using ActionCache references
+    ///
+    /// This is the recommended way to run GC: it walks the ActionCache to find
+    /// all referenced content hashes, then deletes unreachable objects.
+    pub fn gc_with_action_cache(&mut self, action_cache: &ActionCache) -> ExecutionResult<usize> {
+        // Mark phase: collect all reachable content hashes from action cache
+        let reachable = action_cache.get_referenced_content_hashes();
+
+        eprintln!(
+            "Mark phase: found {} reachable content hashes from action cache",
+            reachable.len()
+        );
+
+        // Run GC with the reachable set
+        self.gc(&reachable.into_iter().collect::<Vec<_>>())
     }
 }
 
@@ -363,6 +563,22 @@ impl ActionCache {
         ActionCacheStats {
             entry_count: self.cache.len(),
         }
+    }
+
+    /// Get all content hashes referenced by cached task outputs
+    ///
+    /// This is used by GC to identify reachable objects in the CAS.
+    pub fn get_referenced_content_hashes(&self) -> HashSet<ContentHash> {
+        let mut hashes = HashSet::new();
+
+        for output in self.cache.values() {
+            // Add all output file hashes
+            for hash in output.output_files.values() {
+                hashes.insert(hash.clone());
+            }
+        }
+
+        hashes
     }
 }
 
