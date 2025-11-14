@@ -21,6 +21,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2.5"
 num_cpus = "1.16"  # For detecting CPU count in CLI configuration
 
+# Sandboxing with Linux namespaces
+nix = { version = "0.29", features = ["mount", "sched", "process", "user", "fs"] }
+
 # Bitzel components
 convenient-graph = { path = "../convenient-graph" }
 convenient-cache = { path = "../convenient-cache" }
