@@ -480,6 +480,7 @@ dependencies = [
  "glob",
  "hostname",
  "logos",
+ "nix 0.29.0",
  "num_cpus",
  "regex",
  "rowan",
