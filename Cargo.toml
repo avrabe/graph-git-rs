@@ -8,7 +8,7 @@ members = [
     "convenient-kas",
     "convenient-repo",
     "graph-git-cli",
-    "accuracy-measurement", "convenient-graph", "convenient-cache",
+    "accuracy-measurement", "convenient-graph", "convenient-cache", "bitzel",
 ]
 
 [profile.release]
@@ -22,4 +22,5 @@ tracing = { version = "0.1.41", features = ["attributes"] }
 serde = { version = "1.0.217", features = ["derive"] }
 git2 = "0.20.0"
 tokio = { version = "1.42", features = ["full"] }
+chrono = "0.4"
 
