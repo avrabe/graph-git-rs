@@ -22,6 +22,11 @@ futures = "0.3"
 chrono = "0.4"
 hostname = "0.4"
 
+# Bitzel dependencies
+convenient-graph = { path = "../convenient-graph" }
+convenient-cache = { path = "../convenient-cache" }
+convenient-kas = { path = "../convenient-kas" }
+
 # Rowan for resilient CST parsing (rust-analyzer approach)
 rowan = "0.15.15"
 logos = "0.14.0"

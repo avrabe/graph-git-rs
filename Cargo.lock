@@ -225,6 +225,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "bitzel"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "convenient-bitbake",
+ "convenient-cache",
+ "convenient-graph",
+ "convenient-kas",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "blake2"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -452,6 +470,9 @@ name = "convenient-bitbake"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "convenient-cache",
+ "convenient-graph",
+ "convenient-kas",
  "futures",
  "glob",
  "hostname",
