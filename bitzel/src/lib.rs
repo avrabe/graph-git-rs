@@ -71,3 +71,10 @@ pub use convenient_cache::{
 
 // Re-export graph library
 pub use convenient_graph::DAG;
+
+// Sandboxing with Linux namespaces and OverlayFS
+pub mod sandbox;
+pub use sandbox::{
+    Sandbox, SandboxBuilder, SandboxConfig, SandboxError,
+    DependencyLayer, Result as SandboxResult,
+};
