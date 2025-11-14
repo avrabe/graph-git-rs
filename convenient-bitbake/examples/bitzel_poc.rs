@@ -12,7 +12,7 @@
 //! 4. do_install: Install to staging area
 
 use convenient_bitbake::{TaskExecutor, TaskSpec, ExecutionResult};
-use convenient_bitbake::executor::types::NetworkPolicy;
+use convenient_bitbake::executor::types::{NetworkPolicy, ResourceLimits};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -175,6 +175,7 @@ echo "Stamp file created successfully"
         outputs: vec![PathBuf::from("fetch.stamp")],
         timeout: Some(Duration::from_secs(30)),
         network_policy: NetworkPolicy::LoopbackOnly,
+            resource_limits: ResourceLimits::default(),
     };
 
     executor.execute_task(spec)
@@ -195,6 +196,7 @@ echo "Sources unpacked" > "$D/unpack.stamp"
         outputs: vec![PathBuf::from("unpack.stamp")],
         timeout: Some(Duration::from_secs(30)),
         network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
     };
 
     executor.execute_task(spec)
@@ -222,6 +224,7 @@ fi
         outputs: vec![PathBuf::from("hello-world"), PathBuf::from("compile.stamp")],
         timeout: Some(Duration::from_secs(60)),
         network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
     };
 
     executor.execute_task(spec)
@@ -245,6 +248,7 @@ ls -R "$D"
         outputs: vec![PathBuf::from("usr/bin/hello-world"), PathBuf::from("install.stamp")],
         timeout: Some(Duration::from_secs(30)),
         network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
     };
 
     executor.execute_task(spec)

@@ -25,6 +25,60 @@ impl Default for NetworkPolicy {
     }
 }
 
+/// Resource limits for cgroup v2
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    /// CPU quota in microseconds per 100ms period
+    /// Example: 50000 = 50% of one CPU core
+    pub cpu_quota_us: Option<u64>,
+
+    /// Memory limit in bytes
+    /// Example: 1073741824 = 1 GB
+    pub memory_bytes: Option<u64>,
+
+    /// Maximum number of PIDs (processes/threads)
+    /// Prevents fork bombs
+    pub pids_max: Option<u64>,
+
+    /// I/O weight (10-1000, default 100)
+    /// Higher = more I/O bandwidth
+    pub io_weight: Option<u16>,
+}
+
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            // Conservative defaults for build tasks
+            cpu_quota_us: None,         // Unlimited CPU
+            memory_bytes: Some(4 * 1024 * 1024 * 1024), // 4 GB default
+            pids_max: Some(1024),       // Prevent fork bombs
+            io_weight: Some(100),       // Default I/O priority
+        }
+    }
+}
+
+impl ResourceLimits {
+    /// No limits (for trusted tasks)
+    pub fn unlimited() -> Self {
+        Self {
+            cpu_quota_us: None,
+            memory_bytes: None,
+            pids_max: None,
+            io_weight: None,
+        }
+    }
+
+    /// Strict limits (for untrusted tasks)
+    pub fn strict() -> Self {
+        Self {
+            cpu_quota_us: Some(100_000),  // 1 CPU core max
+            memory_bytes: Some(2 * 1024 * 1024 * 1024), // 2 GB
+            pids_max: Some(512),           // 512 processes max
+            io_weight: Some(50),           // Lower I/O priority
+        }
+    }
+}
+
 /// Content hash (SHA-256)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ContentHash(String);
@@ -168,6 +222,9 @@ pub struct TaskSpec {
 
     /// Network policy for this task
     pub network_policy: NetworkPolicy,
+
+    /// Resource limits for this task
+    pub resource_limits: ResourceLimits,
 }
 
 /// Sandbox specification
@@ -196,6 +253,9 @@ pub struct SandboxSpec {
 
     /// Temp directory size limit (MB)
     pub tmp_size_mb: Option<usize>,
+
+    /// Resource limits (cgroup v2)
+    pub resource_limits: ResourceLimits,
 }
 
 impl SandboxSpec {
@@ -209,6 +269,7 @@ impl SandboxSpec {
             cwd: PathBuf::from("/work"),
             network_policy: NetworkPolicy::default(), // Isolated by default
             tmp_size_mb: Some(1024), // 1GB temp
+            resource_limits: ResourceLimits::default(), // Conservative defaults
         }
     }
 }

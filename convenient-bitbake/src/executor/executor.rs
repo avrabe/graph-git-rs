@@ -3,7 +3,7 @@
 use super::cache::{ActionCache, ContentAddressableStore};
 use super::sandbox::SandboxManager;
 use super::types::{
-    ContentHash, ExecutionError, ExecutionResult, NetworkPolicy, SandboxSpec,
+    ContentHash, ExecutionError, ExecutionResult, NetworkPolicy, ResourceLimits, SandboxSpec,
     TaskOutput, TaskSignature, TaskSpec,
 };
 use std::collections::HashMap;
@@ -274,6 +274,7 @@ mod tests {
             outputs: vec![PathBuf::from("result.txt")],
             timeout: None,
             network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
         };
 
         std::fs::create_dir_all(&spec.workdir).unwrap();
@@ -302,6 +303,7 @@ mod tests {
             outputs: vec![PathBuf::from("out.txt")],
             timeout: None,
             network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
         };
 
         // First execution - cache miss
@@ -332,6 +334,7 @@ mod tests {
             outputs: vec![],
             timeout: None,
             network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
         };
 
         let result = executor.execute_task(spec);

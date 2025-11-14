@@ -1,6 +1,6 @@
 // Test native namespace sandbox implementation
 use convenient_bitbake::executor::native_sandbox::execute_in_namespace;
-use convenient_bitbake::executor::types::NetworkPolicy;
+use convenient_bitbake::executor::types::{NetworkPolicy, ResourceLimits};
 use std::collections::HashMap;
 use tempfile::TempDir;
 
