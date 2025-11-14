@@ -305,10 +305,16 @@ impl SandboxBackend {
         fs::create_dir_all(&work_dir)?;
         cmd.current_dir(&work_dir);
 
-        // Set environment variables
+        // Set environment variables, remapping /work paths to actual sandbox directory
         cmd.env_clear();
         for (key, value) in &spec.env {
-            cmd.env(key, value);
+            // Remap paths starting with /work to the actual sandbox work directory
+            let remapped_value = if value.starts_with("/work") {
+                value.replacen("/work", work_dir.to_str().unwrap(), 1)
+            } else {
+                value.clone()
+            };
+            cmd.env(key, remapped_value);
         }
 
         // Essential environment
