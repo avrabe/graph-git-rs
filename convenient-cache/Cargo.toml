@@ -1,0 +1,34 @@
+[package]
+name = "convenient-cache"
+version = "0.1.0"
+edition = "2024"
+authors = ["Bitzel Contributors"]
+description = "Bazel Remote Execution API v2 cache client for Bitzel"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/avrabe/graph-git-rs"
+keywords = ["bazel", "cache", "remote-execution", "build", "bitbake"]
+categories = ["caching", "development-tools::build-utils"]
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+unused_results = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
