@@ -17,11 +17,13 @@ use convenient_bitbake::{
     Pipeline, PipelineConfig,
     SignatureCache, SignatureStats, EnhancedTaskSignature,
 };
+use convenient_bitbake::executor::types::{NetworkPolicy, ResourceLimits};
 use convenient_kas::{ConfigGenerator, include_graph::KasIncludeGraph};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -461,6 +463,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         fs::create_dir_all(&task_workdir)?;
 
         let output_file = format!("{}.done", task.task_name);
+
+        // Determine network policy based on task type
+        let network_policy = if task.task_name == "do_fetch" || task.task_name.contains("fetch") {
+            NetworkPolicy::LoopbackOnly
+        } else {
+            NetworkPolicy::Isolated
+        };
+
         let spec = TaskSpec {
             name: task.task_name.clone(),
             recipe: task.recipe_name.clone(),
@@ -468,7 +478,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             workdir: task_workdir,
             env: HashMap::new(),  // TODO: Extract from recipe variables
             outputs: vec![PathBuf::from(&output_file)],
-            timeout: Some(300),  // 5 minute default timeout
+            timeout: Some(Duration::from_secs(300)),  // 5 minute default timeout
+            network_policy,
+            resource_limits: ResourceLimits::default(),
         };
 
         task_specs.insert(task_key, spec);

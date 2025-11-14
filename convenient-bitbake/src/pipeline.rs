@@ -15,7 +15,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
@@ -284,10 +284,15 @@ impl Pipeline {
         hasher.update(content.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
 
-        // Extract task implementations (CPU-bound work)
+        // Extract task implementations from main file
+        let recipe_path = recipe_file.path.clone();
         let task_impls = tokio::task::spawn_blocking({
             let content = content.clone();
-            move || task_extractor.extract_from_content(&content)
+            let task_extractor = Arc::clone(&task_extractor);
+            let recipe_path = recipe_path.clone();
+            move || {
+                Self::extract_tasks_with_includes(&content, &recipe_path, &task_extractor)
+            }
         })
         .await?;
 
@@ -297,6 +302,114 @@ impl Pipeline {
             task_impls,
             hash,
         }))
+    }
+
+    /// Extract task implementations from recipe and all its included files
+    fn extract_tasks_with_includes(
+        content: &str,
+        recipe_path: &Path,
+        task_extractor: &TaskExtractor,
+    ) -> HashMap<String, TaskImplementation> {
+        // Extract tasks from main recipe
+        let mut all_tasks = task_extractor.extract_from_content(content);
+        let main_task_count = all_tasks.len();
+
+        // Find all require and include directives
+        let includes = Self::find_include_directives(content);
+
+        // Get the directory containing the recipe
+        let recipe_dir = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+
+        // Process each included file
+        for include_path in &includes {
+            // Try to find the include file
+            if let Some(resolved_path) = Self::resolve_include_path(include_path, recipe_dir) {
+                // Read and parse the include file
+                if let Ok(include_content) = std::fs::read_to_string(&resolved_path) {
+                    let include_tasks = task_extractor.extract_from_content(&include_content);
+
+                    if !include_tasks.is_empty() {
+                        info!("✓ Extracted {} tasks from {:?} for recipe {:?}",
+                              include_tasks.len(),
+                              resolved_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")),
+                              recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
+                    }
+
+                    // Merge tasks from include file
+                    // Include files are processed first, so recipe can override
+                    all_tasks = task_extractor.merge_implementations(&include_tasks, &all_tasks);
+                } else {
+                    info!("✗ Failed to read include file: {:?}", resolved_path);
+                }
+            } else {
+                if include_path.ends_with(".inc") {
+                    info!("✗ Include file not found: {} (recipe: {:?})",
+                          include_path,
+                          recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
+                }
+            }
+        }
+
+        let total_tasks = all_tasks.len();
+        if total_tasks > main_task_count {
+            info!("Recipe {:?}: {} tasks total ({} from main, {} from includes)",
+                  recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")),
+                  total_tasks, main_task_count, total_tasks - main_task_count);
+        }
+
+        all_tasks
+    }
+
+    /// Find all require and include directives in recipe content
+    fn find_include_directives(content: &str) -> Vec<String> {
+        let mut includes = Vec::new();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            // Match: require filename.inc
+            if trimmed.starts_with("require ") {
+                if let Some(path) = trimmed.strip_prefix("require ") {
+                    let path = path.trim();
+                    if !path.is_empty() {
+                        includes.push(path.to_string());
+                    }
+                }
+            }
+
+            // Match: include filename.inc
+            if trimmed.starts_with("include ") {
+                if let Some(path) = trimmed.strip_prefix("include ") {
+                    let path = path.trim();
+                    if !path.is_empty() {
+                        includes.push(path.to_string());
+                    }
+                }
+            }
+        }
+
+        includes
+    }
+
+    /// Resolve an include path relative to recipe directory
+    fn resolve_include_path(include_path: &str, recipe_dir: &Path) -> Option<PathBuf> {
+        // First try relative to recipe's directory
+        let relative_path = recipe_dir.join(include_path);
+        if relative_path.exists() {
+            return Some(relative_path);
+        }
+
+        // Try in the same directory (common for .inc files)
+        if let Some(filename) = Path::new(include_path).file_name() {
+            let same_dir = recipe_dir.join(filename);
+            if same_dir.exists() {
+                return Some(same_dir);
+            }
+        }
+
+        // Could expand to search in BBPATH, classes directory, etc.
+        // For now, just these two locations
+        None
     }
 
     /// Stage 3: Build recipe graph (sequential - needs all recipes)
@@ -321,6 +434,35 @@ impl Pipeline {
                 }
             }
         }
+
+        // Add tasks from extracted task implementations
+        info!("Adding tasks from extracted implementations");
+
+        // Collect tasks to add (to avoid borrow checker issues)
+        let mut tasks_to_add = Vec::new();
+        for parsed in parsed_recipes {
+            if let Some(recipe_id) = graph.find_recipe(&parsed.file.name) {
+                // Get existing tasks for this recipe
+                let existing_tasks = graph.get_recipe_tasks(recipe_id);
+                let existing_names: HashSet<&str> = existing_tasks.iter()
+                    .map(|t| t.name.as_str())
+                    .collect();
+
+                for task_name in parsed.task_impls.keys() {
+                    // Only add if task doesn't already exist for this recipe
+                    if !existing_names.contains(task_name.as_str()) {
+                        tasks_to_add.push((recipe_id, task_name.clone()));
+                    }
+                }
+            }
+        }
+
+        // Add all tasks
+        for (recipe_id, task_name) in &tasks_to_add {
+            graph.add_task(*recipe_id, task_name);
+        }
+
+        info!("  Added {} tasks from implementations", tasks_to_add.len());
 
         // Populate dependencies
         extractor.populate_dependencies(&mut graph, &extractions)?;
