@@ -25,12 +25,131 @@ use std::os::fd::{OwnedFd, AsRawFd};
 use nix::sys::wait::{waitpid, WaitStatus};
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::os::unix::process::ExitStatusExt;
 
-use super::types::{ExecutionError, NetworkPolicy};
+use super::types::{ExecutionError, NetworkPolicy, ResourceLimits};
 use tracing::{debug, info, warn};
+
+/// Setup cgroup v2 for resource limits
+///
+/// Creates a cgroup under /sys/fs/cgroup/bitzel/<cgroup_name> and applies resource limits.
+/// Returns the cgroup path for cleanup.
+#[cfg(target_os = "linux")]
+fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, ExecutionError> {
+    let cgroup_root = Path::new("/sys/fs/cgroup");
+
+    // Check if cgroup v2 is available
+    if !cgroup_root.join("cgroup.controllers").exists() {
+        warn!("cgroup v2 not available, resource limits will not be enforced");
+        return Err(ExecutionError::SandboxError(
+            "cgroup v2 not available (unified hierarchy required)".to_string()
+        ));
+    }
+
+    // Create bitzel parent cgroup if needed
+    let bitzel_cgroup = cgroup_root.join("bitzel");
+    if !bitzel_cgroup.exists() {
+        fs::create_dir(&bitzel_cgroup)
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to create bitzel cgroup: {}", e)))?;
+
+        // Enable controllers in parent
+        let subtree_control = bitzel_cgroup.join("cgroup.subtree_control");
+        let controllers = "+cpu +memory +pids +io";
+        fs::write(&subtree_control, controllers)
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to enable controllers: {}", e)))?;
+    }
+
+    // Create task-specific cgroup
+    let task_cgroup = bitzel_cgroup.join(cgroup_name);
+    if task_cgroup.exists() {
+        // Clean up old cgroup
+        let _ = fs::remove_dir(&task_cgroup);
+    }
+
+    fs::create_dir(&task_cgroup)
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create task cgroup: {}", e)))?;
+
+    debug!("Created cgroup: {}", task_cgroup.display());
+
+    // Apply CPU limits
+    if let Some(cpu_quota_us) = limits.cpu_quota_us {
+        let cpu_max = task_cgroup.join("cpu.max");
+        // Format: "quota period" where period is 100000 (100ms)
+        let value = format!("{} 100000", cpu_quota_us);
+        fs::write(&cpu_max, value)
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set cpu.max: {}", e)))?;
+        debug!("Set CPU quota: {} µs per 100ms", cpu_quota_us);
+    }
+
+    // Apply memory limits
+    if let Some(memory_bytes) = limits.memory_bytes {
+        let memory_max = task_cgroup.join("memory.max");
+        fs::write(&memory_max, memory_bytes.to_string())
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set memory.max: {}", e)))?;
+        debug!("Set memory limit: {} bytes ({} GB)", memory_bytes, memory_bytes / (1024 * 1024 * 1024));
+    }
+
+    // Apply PID limits
+    if let Some(pids_max) = limits.pids_max {
+        let pids_max_file = task_cgroup.join("pids.max");
+        fs::write(&pids_max_file, pids_max.to_string())
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set pids.max: {}", e)))?;
+        debug!("Set PID limit: {}", pids_max);
+    }
+
+    // Apply I/O weight
+    if let Some(io_weight) = limits.io_weight {
+        let io_weight_file = task_cgroup.join("io.weight");
+        // Format: "default <weight>" where weight is 1-10000
+        let value = format!("default {}", io_weight);
+        fs::write(&io_weight_file, value)
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set io.weight: {}", e)))?;
+        debug!("Set I/O weight: {}", io_weight);
+    }
+
+    Ok(task_cgroup)
+}
+
+/// Move current process into cgroup
+#[cfg(target_os = "linux")]
+fn move_to_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
+    let procs_file = cgroup_path.join("cgroup.procs");
+    let pid = std::process::id();
+
+    fs::write(&procs_file, pid.to_string())
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to move to cgroup: {}", e)))?;
+
+    debug!("Moved PID {} to cgroup: {}", pid, cgroup_path.display());
+    Ok(())
+}
+
+/// Cleanup cgroup after task completes
+#[cfg(target_os = "linux")]
+fn cleanup_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
+    if cgroup_path.exists() {
+        // Kill any remaining processes
+        let procs_file = cgroup_path.join("cgroup.procs");
+        if let Ok(procs) = fs::read_to_string(&procs_file) {
+            for line in procs.lines() {
+                if let Ok(pid) = line.trim().parse::<i32>() {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid),
+                        nix::sys::signal::Signal::SIGKILL
+                    );
+                }
+            }
+        }
+
+        // Remove cgroup directory
+        fs::remove_dir(cgroup_path)
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to cleanup cgroup: {}", e)))?;
+
+        debug!("Cleaned up cgroup: {}", cgroup_path.display());
+    }
+    Ok(())
+}
 
 /// Execute command in native Linux namespace sandbox
 ///
@@ -38,36 +157,55 @@ use tracing::{debug, info, warn};
 /// 1. Mount namespace with bind mounts for controlled filesystem access
 /// 2. PID namespace for process isolation
 /// 3. Network namespace for network isolation (CLONE_NEWNET)
+/// 4. cgroup v2 for resource limits (CPU, memory, PIDs, I/O)
 ///
 /// NOTE: User namespace support is available but requires kernel configuration
-/// (max_user_namespaces > 0). For now, using mount+PID+network only.
+/// (max_user_namespaces > 0). For now, using mount+PID+network+cgroup only.
 #[cfg(target_os = "linux")]
 pub fn execute_in_namespace(
     script: &str,
     work_dir: &Path,
     env: &std::collections::HashMap<String, String>,
     network_policy: NetworkPolicy,
+    resource_limits: &ResourceLimits,
 ) -> Result<(i32, String, String), ExecutionError> {
-    info!("Executing in native Linux namespace sandbox (mount+pid+network): {:?}", network_policy);
+    info!("Executing in native Linux namespace sandbox (mount+pid+network+cgroup): {:?}", network_policy);
 
     // Create work directory
     fs::create_dir_all(work_dir)
         .map_err(|e| ExecutionError::SandboxError(format!("Failed to create work dir: {}", e)))?;
 
+    // Setup cgroup for resource limits (before fork)
+    let cgroup_name = format!("task-{}", std::process::id());
+    let cgroup_path = match setup_cgroup(&cgroup_name, resource_limits) {
+        Ok(path) => Some(path),
+        Err(e) => {
+            warn!("Failed to setup cgroup: {}. Continuing without resource limits", e);
+            None
+        }
+    };
+
     // Fork for namespace isolation
-    match unsafe { fork() }
+    let result = match unsafe { fork() }
         .map_err(|e| ExecutionError::SandboxError(format!("Fork failed: {}", e)))?
     {
         ForkResult::Parent { child } => {
             debug!("Parent process: child PID = {}", child);
             // Wait for child and collect results
-            wait_for_child(child, work_dir)
+            let result = wait_for_child(child, work_dir);
+
+            // Cleanup cgroup after child finishes
+            if let Some(ref path) = cgroup_path {
+                let _ = cleanup_cgroup(path);
+            }
+
+            result
         }
         ForkResult::Child => {
             debug!("Child process: starting namespace setup");
 
             // Execute in namespace (mount+PID+network without user namespace)
-            match execute_child_without_userns(script, work_dir, env, network_policy) {
+            match execute_child_without_userns(script, work_dir, env, network_policy, cgroup_path.as_deref()) {
                 Ok(exit_code) => {
                     debug!("Child: execution completed with code {}", exit_code);
                     std::process::exit(exit_code);
@@ -78,7 +216,9 @@ pub fn execute_in_namespace(
                 }
             }
         }
-    }
+    };
+
+    result
 }
 
 /// Setup UID/GID mapping for child process
@@ -328,10 +468,16 @@ fn execute_child_without_userns(
     work_dir: &Path,
     env: &std::collections::HashMap<String, String>,
     network_policy: NetworkPolicy,
+    cgroup_path: Option<&Path>,
 ) -> Result<i32, ExecutionError> {
     use std::fs::File;
 
     debug!("Child: creating mount, PID, and network namespaces (no user namespace)");
+
+    // Move to cgroup BEFORE creating namespaces (so child inherits cgroup)
+    if let Some(path) = cgroup_path {
+        move_to_cgroup(path)?;
+    }
 
     // Create mount, PID, and network namespaces directly (no user namespace)
     unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET)
@@ -498,6 +644,7 @@ pub fn execute_in_namespace(
     _work_dir: &Path,
     _env: &std::collections::HashMap<String, String>,
     _network_policy: NetworkPolicy,
+    _resource_limits: &ResourceLimits,
 ) -> Result<(i32, String, String), ExecutionError> {
     Err(ExecutionError::SandboxError(
         "Native namespace sandbox only available on Linux".to_string()
@@ -520,7 +667,7 @@ mod tests {
         let env = HashMap::new();
         let script = "echo 'Hello from sandbox'; echo $$ > /tmp/pid.txt; cat /tmp/pid.txt";
 
-        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated);
+        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated, &ResourceLimits::default());
 
         assert!(result.is_ok());
         let (exit_code, stdout, stderr) = result.unwrap();
@@ -540,7 +687,7 @@ mod tests {
         // Test that we can access system binaries
         let script = "ls /bin/bash && echo 'System access OK'";
 
-        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated);
+        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated, &ResourceLimits::default());
 
         assert!(result.is_ok());
         let (exit_code, stdout, _) = result.unwrap();
@@ -559,7 +706,7 @@ mod tests {
 
         let script = "echo $TEST_VAR";
 
-        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated);
+        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated, &ResourceLimits::default());
 
         assert!(result.is_ok());
         let (exit_code, stdout, _) = result.unwrap();

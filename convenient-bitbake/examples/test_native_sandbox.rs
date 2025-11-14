@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ls -la /bin/bash
     "#;
 
-    match execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated) {
+    match execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated, &ResourceLimits::default()) {
         Ok((exit_code, stdout, stderr)) => {
             println!("✓ Test 1 PASSED");
             println!("Exit code: {}", exit_code);
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ls -la test_file.txt
     "#;
 
-    match execute_in_namespace(script2, &work_dir2, &HashMap::new(), NetworkPolicy::Isolated) {
+    match execute_in_namespace(script2, &work_dir2, &HashMap::new(), NetworkPolicy::Isolated, &ResourceLimits::default()) {
         Ok((exit_code, stdout, _stderr)) => {
             println!("✓ Test 2 PASSED");
             println!("Exit code: {}", exit_code);
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         echo "WORKDIR=$WORKDIR"
     "#;
 
-    match execute_in_namespace(script3, &work_dir3, &env3, NetworkPolicy::Isolated) {
+    match execute_in_namespace(script3, &work_dir3, &env3, NetworkPolicy::Isolated, &ResourceLimits::default()) {
         Ok((exit_code, stdout, _stderr)) => {
             println!("✓ Test 3 PASSED");
             println!("--- stdout ---\n{}", stdout);

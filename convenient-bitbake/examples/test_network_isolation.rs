@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         echo "✓ Network fully isolated - no loopback, no external"
     "#;
 
-    match execute_in_namespace(script1, &work_dir1, &HashMap::new(), NetworkPolicy::Isolated) {
+    match execute_in_namespace(script1, &work_dir1, &HashMap::new(), NetworkPolicy::Isolated, &ResourceLimits::default()) {
         Ok((exit_code, stdout, stderr)) => {
             println!("✓ Test 1 PASSED");
             println!("Exit code: {}", exit_code);
@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fi
     "#;
 
-    match execute_in_namespace(script2, &work_dir2, &HashMap::new(), NetworkPolicy::LoopbackOnly) {
+    match execute_in_namespace(script2, &work_dir2, &HashMap::new(), NetworkPolicy::LoopbackOnly, &ResourceLimits::default()) {
         Ok((exit_code, stdout, _stderr)) => {
             println!("✓ Test 2 PASSED");
             println!("Exit code: {}", exit_code);
@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         echo "✓ DNS resolution blocked (network isolated)"
     "#;
 
-    match execute_in_namespace(script3, &work_dir3, &HashMap::new(), NetworkPolicy::Isolated) {
+    match execute_in_namespace(script3, &work_dir3, &HashMap::new(), NetworkPolicy::Isolated, &ResourceLimits::default()) {
         Ok((exit_code, stdout, _stderr)) => {
             println!("✓ Test 3 PASSED");
             println!("Exit code: {}", exit_code);
