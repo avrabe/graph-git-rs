@@ -1,5 +1,6 @@
 // Test native namespace sandbox implementation
 use convenient_bitbake::executor::native_sandbox::execute_in_namespace;
+use convenient_bitbake::executor::types::NetworkPolicy;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
@@ -21,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ls -la /bin/bash
     "#;
 
-    match execute_in_namespace(script, &work_dir, &env) {
+    match execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated) {
         Ok((exit_code, stdout, stderr)) => {
             println!("✓ Test 1 PASSED");
             println!("Exit code: {}", exit_code);
@@ -51,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ls -la test_file.txt
     "#;
 
-    match execute_in_namespace(script2, &work_dir2, &HashMap::new()) {
+    match execute_in_namespace(script2, &work_dir2, &HashMap::new(), NetworkPolicy::Isolated) {
         Ok((exit_code, stdout, _stderr)) => {
             println!("✓ Test 2 PASSED");
             println!("Exit code: {}", exit_code);
@@ -82,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         echo "WORKDIR=$WORKDIR"
     "#;
 
-    match execute_in_namespace(script3, &work_dir3, &env3) {
+    match execute_in_namespace(script3, &work_dir3, &env3, NetworkPolicy::Isolated) {
         Ok((exit_code, stdout, _stderr)) => {
             println!("✓ Test 3 PASSED");
             println!("--- stdout ---\n{}", stdout);
@@ -102,6 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ✓ User namespace with UID/GID mapping");
     println!("  ✓ Mount namespace with read-only bind mounts");
     println!("  ✓ PID namespace (process isolation)");
+    println!("  ✓ Network namespace (network isolation)");
     println!("  ✓ Output capture (stdout/stderr)");
     println!("  ✓ Environment variable injection");
     println!("  ✓ Work directory access");

@@ -8,9 +8,11 @@ use crate::{
     RecipeExtractor, RecipeGraph, SignatureCache, TaskExtractor, TaskGraph,
     TaskGraphBuilder, TaskImplementation, TaskSpec,
 };
+use crate::executor::types::NetworkPolicy;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tracing::info;
 
 /// Configuration for build orchestration
@@ -324,6 +326,14 @@ impl BuildOrchestrator {
             fs::create_dir_all(&task_workdir)?;
 
             let output_file = format!("{}.done", task.task_name);
+
+            // Determine network policy based on task type
+            let network_policy = if task.task_name == "do_fetch" || task.task_name.contains("fetch") {
+                NetworkPolicy::LoopbackOnly  // Fetch tasks need network access
+            } else {
+                NetworkPolicy::Isolated  // Build tasks should be hermetic
+            };
+
             let spec = TaskSpec {
                 name: task.task_name.clone(),
                 recipe: task.recipe_name.clone(),
@@ -331,7 +341,8 @@ impl BuildOrchestrator {
                 workdir: task_workdir,
                 env: HashMap::new(),
                 outputs: vec![PathBuf::from(&output_file)],
-                timeout: Some(300),
+                timeout: Some(Duration::from_secs(300)),
+                network_policy,
             };
 
             specs.insert(task_key, spec);

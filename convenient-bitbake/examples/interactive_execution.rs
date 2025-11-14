@@ -8,9 +8,11 @@
 //! 5. Performance statistics and timing analysis
 
 use convenient_bitbake::executor::{InteractiveExecutor, InteractiveOptions, TaskSpec};
+use convenient_bitbake::executor::types::NetworkPolicy;
 use convenient_bitbake::recipe_graph::{RecipeGraph, TaskDependency};
 use convenient_bitbake::task_graph::TaskGraphBuilder;
 use std::collections::HashMap;
+use std::time::Duration;
 use tempfile::TempDir;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -370,6 +372,12 @@ echo "Done" > "$D/{}.stamp"
             ),
         };
 
+        let network_policy = if task.task_name.contains("fetch") {
+            NetworkPolicy::LoopbackOnly
+        } else {
+            NetworkPolicy::Isolated
+        };
+
         let spec = TaskSpec {
             name: task.task_name.clone(),
             recipe: task.recipe_name.clone(),
@@ -377,7 +385,8 @@ echo "Done" > "$D/{}.stamp"
             workdir: task_work_dir,
             env: HashMap::new(),
             outputs: vec![],
-            timeout: Some(30),
+            timeout: Some(Duration::from_secs(30)),
+            network_policy,
         };
 
         specs.insert(task_key, spec);

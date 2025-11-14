@@ -6,9 +6,11 @@
 //! 3. Verifying cache reuse on second run (incremental builds)
 
 use convenient_bitbake::executor::{AsyncTaskExecutor, TaskExecutor, TaskSpec};
+use convenient_bitbake::executor::types::NetworkPolicy;
 use convenient_bitbake::recipe_graph::{RecipeGraph, TaskDependency};
 use convenient_bitbake::task_graph::TaskGraphBuilder;
 use std::collections::HashMap;
+use std::time::Duration;
 use tempfile::TempDir;
 
 #[cfg(feature = "async-executor")]
@@ -346,6 +348,12 @@ echo "Task completed" > "$D/{}.stamp"
             ),
         };
 
+        let network_policy = if task.task_name.contains("fetch") {
+            NetworkPolicy::LoopbackOnly
+        } else {
+            NetworkPolicy::Isolated
+        };
+
         let spec = TaskSpec {
             name: task.task_name.clone(),
             recipe: task.recipe_name.clone(),
@@ -353,7 +361,8 @@ echo "Task completed" > "$D/{}.stamp"
             workdir: task_work_dir,
             env: HashMap::new(),
             outputs: vec![],
-            timeout: Some(30),
+            timeout: Some(Duration::from_secs(30)),
+            network_policy,
         };
 
         specs.insert(task_key, spec);

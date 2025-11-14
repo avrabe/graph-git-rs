@@ -12,9 +12,11 @@
 //! 4. do_install: Install to staging area
 
 use convenient_bitbake::{TaskExecutor, TaskSpec, ExecutionResult};
+use convenient_bitbake::executor::types::NetworkPolicy;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tempfile::TempDir;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -171,7 +173,8 @@ echo "Stamp file created successfully"
         workdir: src_dir,
         env: create_bitbake_env("hello-world", "1.0"),
         outputs: vec![PathBuf::from("fetch.stamp")],
-        timeout: Some(30),
+        timeout: Some(Duration::from_secs(30)),
+        network_policy: NetworkPolicy::LoopbackOnly,
     };
 
     executor.execute_task(spec)
@@ -190,7 +193,8 @@ echo "Sources unpacked" > "$D/unpack.stamp"
         workdir: workdir.join("src"),
         env: create_bitbake_env("hello-world", "1.0"),
         outputs: vec![PathBuf::from("unpack.stamp")],
-        timeout: Some(30),
+        timeout: Some(Duration::from_secs(30)),
+        network_policy: NetworkPolicy::Isolated,
     };
 
     executor.execute_task(spec)
@@ -216,7 +220,8 @@ fi
         workdir: workdir.join("src"),
         env: create_bitbake_env("hello-world", "1.0"),
         outputs: vec![PathBuf::from("hello-world"), PathBuf::from("compile.stamp")],
-        timeout: Some(60),
+        timeout: Some(Duration::from_secs(60)),
+        network_policy: NetworkPolicy::Isolated,
     };
 
     executor.execute_task(spec)
@@ -238,7 +243,8 @@ ls -R "$D"
         workdir: workdir.join("src"),
         env: create_bitbake_env("hello-world", "1.0"),
         outputs: vec![PathBuf::from("usr/bin/hello-world"), PathBuf::from("install.stamp")],
-        timeout: Some(30),
+        timeout: Some(Duration::from_secs(30)),
+        network_policy: NetworkPolicy::Isolated,
     };
 
     executor.execute_task(spec)

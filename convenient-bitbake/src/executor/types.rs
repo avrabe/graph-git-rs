@@ -3,7 +3,27 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 use sha2::{Sha256, Digest};
+
+/// Network isolation policy for sandbox
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NetworkPolicy {
+    /// No network access (default, most hermetic)
+    Isolated,
+
+    /// Loopback only (127.0.0.1 accessible)
+    LoopbackOnly,
+
+    /// Controlled external access with allow-list (not yet implemented)
+    Controlled,
+}
+
+impl Default for NetworkPolicy {
+    fn default() -> Self {
+        NetworkPolicy::Isolated  // Safe by default
+    }
+}
 
 /// Content hash (SHA-256)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -143,8 +163,11 @@ pub struct TaskSpec {
     /// Declared outputs (relative to workdir)
     pub outputs: Vec<PathBuf>,
 
-    /// Timeout in seconds
-    pub timeout: Option<u64>,
+    /// Timeout
+    pub timeout: Option<Duration>,
+
+    /// Network policy for this task
+    pub network_policy: NetworkPolicy,
 }
 
 /// Sandbox specification
@@ -168,8 +191,8 @@ pub struct SandboxSpec {
     /// Working directory (inside sandbox)
     pub cwd: PathBuf,
 
-    /// Network access allowed?
-    pub network: bool,
+    /// Network policy
+    pub network_policy: NetworkPolicy,
 
     /// Temp directory size limit (MB)
     pub tmp_size_mb: Option<usize>,
@@ -184,7 +207,7 @@ impl SandboxSpec {
             env: HashMap::new(),
             command,
             cwd: PathBuf::from("/work"),
-            network: false,
+            network_policy: NetworkPolicy::default(), // Isolated by default
             tmp_size_mb: Some(1024), // 1GB temp
         }
     }
