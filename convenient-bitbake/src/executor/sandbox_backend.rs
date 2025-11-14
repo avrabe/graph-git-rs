@@ -369,6 +369,7 @@ impl SandboxBackend {
             &work_dir,
             &spec.env,
             spec.network_policy,
+            &spec.resource_limits,
         )?;
 
         let duration = start.elapsed();
