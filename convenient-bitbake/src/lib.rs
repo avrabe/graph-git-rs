@@ -69,6 +69,7 @@ pub use executor::{TaskExecutor, TaskSpec, TaskOutput, TaskSignature, ContentHas
 pub use executor::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
 pub use executor::{AsyncTaskExecutor, TaskMonitor, TaskInfo, TaskState, BuildStats};
 pub use executor::{InteractiveExecutor, InteractiveOptions, ExecutionControlHandle};
+pub use executor::{SandboxBackend, ExecutionLog, ExecutionOutcome, ExecutionError, ErrorCategory, ExecutionMetrics};
 pub use pipeline::{Pipeline, PipelineConfig, StageHash, RecipeFile, ParsedRecipe};
 pub use signature_cache::{SignatureCache, EnhancedTaskSignature, SignatureStats};
 pub use build_orchestrator::{BuildOrchestrator, OrchestratorConfig, BuildPlan, IncrementalStats};
