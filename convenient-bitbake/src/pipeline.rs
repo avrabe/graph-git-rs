@@ -9,7 +9,7 @@
 //!
 //! Each stage computes content hashes to enable incremental builds.
 
-use convenient_bitbake::{
+use crate::{
     BuildContext, ContentHash, ExtractionConfig, RecipeExtractor, RecipeGraph,
     TaskExtractor, TaskImplementation,
 };

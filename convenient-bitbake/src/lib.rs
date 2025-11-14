@@ -36,6 +36,9 @@ pub mod recipe_extractor;
 pub mod simple_python_eval;
 pub mod class_dependencies;
 pub mod executor;
+pub mod pipeline;
+pub mod signature_cache;
+pub mod build_orchestrator;
 
 #[cfg(feature = "python-execution")]
 pub mod python_executor;
@@ -66,6 +69,9 @@ pub use executor::{TaskExecutor, TaskSpec, TaskOutput, TaskSignature, ContentHas
 pub use executor::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
 pub use executor::{AsyncTaskExecutor, TaskMonitor, TaskInfo, TaskState, BuildStats};
 pub use executor::{InteractiveExecutor, InteractiveOptions, ExecutionControlHandle};
+pub use pipeline::{Pipeline, PipelineConfig, StageHash, RecipeFile, ParsedRecipe};
+pub use signature_cache::{SignatureCache, EnhancedTaskSignature, SignatureStats};
+pub use build_orchestrator::{BuildOrchestrator, OrchestratorConfig, BuildPlan, IncrementalStats};
 
 #[cfg(feature = "python-execution")]
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
