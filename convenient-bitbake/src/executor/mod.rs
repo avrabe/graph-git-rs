@@ -10,6 +10,7 @@ pub mod cache;
 pub mod sandbox_backend;
 pub mod sandbox;
 pub mod executor;
+pub mod execution_log;
 pub mod cache_manager;
 pub mod async_executor;
 pub mod monitor;
@@ -22,7 +23,9 @@ pub use types::{
 };
 pub use cache::{ContentAddressableStore, ActionCache};
 pub use sandbox::SandboxManager;
+pub use sandbox_backend::SandboxBackend;
 pub use executor::TaskExecutor;
+pub use execution_log::{ExecutionLog, ExecutionOutcome, ExecutionError, ErrorCategory, ExecutionMetrics};
 pub use cache_manager::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
 pub use async_executor::AsyncTaskExecutor;
 pub use monitor::{TaskMonitor, TaskInfo, TaskState, BuildStats};
