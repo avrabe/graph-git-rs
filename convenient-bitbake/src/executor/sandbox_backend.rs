@@ -347,13 +347,39 @@ impl SandboxBackend {
         spec: &SandboxSpec,
         sandbox_root: &Path,
     ) -> ExecutionResult<SandboxResult> {
+        use super::native_sandbox;
+
+        let start = std::time::Instant::now();
         info!("Using native Linux namespace sandbox");
 
-        // TODO: Full implementation using nix crate for namespace creation
-        // For now, delegate to basic sandbox
-        // Full implementation available in bitzel/src/sandbox.rs
-        warn!("Native namespace backend not yet fully integrated, using basic sandbox");
-        self.execute_basic(spec, sandbox_root)
+        // Prepare work directory
+        let work_dir = sandbox_root.join("work");
+        fs::create_dir_all(&work_dir)?;
+
+        // Build script from command
+        let script = if spec.command.len() == 1 {
+            spec.command[0].clone()
+        } else {
+            spec.command.join(" ")
+        };
+
+        // Execute in namespace
+        let (exit_code, stdout, stderr) = native_sandbox::execute_in_namespace(
+            &script,
+            &work_dir,
+            &spec.env,
+        )?;
+
+        let duration = start.elapsed();
+
+        debug!("Native sandbox execution completed: exit_code={}", exit_code);
+
+        Ok(SandboxResult {
+            exit_code,
+            stdout,
+            stderr,
+            duration_ms: duration.as_millis() as u64,
+        })
     }
 
     /// Execute using native Linux namespaces (non-Linux fallback)
