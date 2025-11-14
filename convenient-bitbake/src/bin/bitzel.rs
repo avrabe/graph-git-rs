@@ -6,7 +6,10 @@
 //!   bitzel clean                         Clean build artifacts
 //!   bitzel gc                            Run garbage collection
 
-use convenient_bitbake::{BuildOrchestrator, OrchestratorConfig};
+use convenient_bitbake::{
+    BuildOrchestrator, OrchestratorConfig,
+    TaskExecutor, AsyncTaskExecutor,
+};
 use convenient_kas::{KasFile, RepositoryManager};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -44,6 +47,10 @@ enum Commands {
         #[arg(short, long)]
         recipe: Option<String>,
 
+        /// Execute tasks after planning (default: true)
+        #[arg(long, default_value = "true")]
+        execute: bool,
+
         /// Number of parallel I/O operations
         #[arg(long, default_value = "8")]
         io_parallel: usize,
@@ -51,6 +58,10 @@ enum Commands {
         /// Number of parallel CPU operations
         #[arg(long)]
         cpu_parallel: Option<usize>,
+
+        /// Maximum number of tasks to execute (0 = no limit)
+        #[arg(long, default_value = "0")]
+        max_tasks: usize,
     },
 
     /// Clean build artifacts
@@ -84,8 +95,10 @@ async fn main() {
         Commands::Build {
             kas_file,
             recipe,
+            execute,
             io_parallel,
             cpu_parallel,
+            max_tasks,
         } => {
             build_command(
                 &kas_file,
@@ -94,6 +107,8 @@ async fn main() {
                 &cli.workspace,
                 io_parallel,
                 cpu_parallel.unwrap_or_else(num_cpus::get),
+                execute,
+                max_tasks,
             )
             .await
         }
@@ -114,6 +129,8 @@ async fn build_command(
     workspace: &Path,
     io_parallel: usize,
     cpu_parallel: usize,
+    execute: bool,
+    max_tasks: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Bitzel Build ===");
     println!("Kas file: {}", kas_file.display());
@@ -180,8 +197,67 @@ async fn build_command(
     print_build_summary(&build_plan)?;
 
     println!("\n=== Build Plan Complete ===");
-    println!("\nTo execute tasks, use: bitzel execute");
-    println!("Note: Task execution will be added in the next phase");
+
+    // Execute tasks if requested
+    if execute && !build_plan.task_specs.is_empty() {
+        println!("\n=== Executing Tasks ===");
+
+        // Determine how many tasks to execute
+        let total_tasks = build_plan.task_graph.tasks.len();
+        let tasks_to_execute = if max_tasks > 0 && max_tasks < total_tasks {
+            println!("  Limiting execution to first {} tasks (of {})", max_tasks, total_tasks);
+            max_tasks
+        } else {
+            println!("  Executing {} tasks", total_tasks);
+            total_tasks
+        };
+
+        // Initialize task executor
+        let cache_dir = build_dir.join("bitzel-cache");
+        let executor = TaskExecutor::new(&cache_dir)
+            .map_err(|e| format!("Failed to create executor: {}", e))?;
+        let async_executor = AsyncTaskExecutor::new(executor);
+
+        // Execute tasks
+        println!("  Starting parallel execution...\n");
+
+        // If max_tasks is set, limit the task specs
+        let task_specs = if max_tasks > 0 {
+            build_plan.task_specs.iter()
+                .take(max_tasks)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        } else {
+            build_plan.task_specs.clone()
+        };
+
+        let results = async_executor.execute_graph(&build_plan.task_graph, task_specs).await
+            .map_err(|e| format!("Execution failed: {}", e))?;
+
+        // Print execution summary
+        println!("\n=== Execution Summary ===");
+        println!("  ✓ Tasks executed: {}", results.len());
+
+        let successful = results.values().filter(|r| r.exit_code == 0).count();
+        let failed = results.values().filter(|r| r.exit_code != 0).count();
+
+        println!("  ✓ Successful: {}", successful);
+        if failed > 0 {
+            println!("  ✗ Failed: {}", failed);
+        }
+
+        let total_time_ms: u64 = results.values().map(|r| r.duration_ms).sum();
+        println!("  ⏱ Total time: {:.2}s", total_time_ms as f64 / 1000.0);
+
+        if failed > 0 {
+            println!("\n⚠ Some tasks failed. Check logs for details.");
+            return Err("Task execution failed".into());
+        }
+    } else if !execute {
+        println!("\nSkipping execution (use --execute to run tasks)");
+    } else {
+        println!("\nNo tasks to execute");
+    }
 
     Ok(())
 }

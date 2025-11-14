@@ -44,7 +44,8 @@ rustpython = { version = "0.3", optional = true }
 rustpython-vm = { version = "0.3", optional = true }
 
 [features]
-default = []
+default = ["async-executor"]
+async-executor = []
 python-execution = ["rustpython", "rustpython-vm"]
 
 [dev-dependencies]
