@@ -8,7 +8,7 @@ use crate::{
     RecipeExtractor, RecipeGraph, SignatureCache, TaskExtractor, TaskGraph,
     TaskGraphBuilder, TaskImplementation, TaskSpec,
 };
-use crate::executor::types::NetworkPolicy;
+use crate::executor::types::{NetworkPolicy, ResourceLimits};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -343,6 +343,7 @@ impl BuildOrchestrator {
                 outputs: vec![PathBuf::from(&output_file)],
                 timeout: Some(Duration::from_secs(300)),
                 network_policy,
+                resource_limits: ResourceLimits::default(),
             };
 
             specs.insert(task_key, spec);
