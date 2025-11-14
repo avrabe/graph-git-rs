@@ -17,6 +17,8 @@ pub mod async_executor;
 pub mod monitor;
 pub mod interactive;
 pub mod remote_cache;
+pub mod script_analyzer;
+pub mod direct_executor;
 
 pub use types::{
     TaskSignature, TaskOutput, TaskSpec, SandboxSpec,
@@ -32,3 +34,5 @@ pub use async_executor::AsyncTaskExecutor;
 pub use monitor::{TaskMonitor, TaskInfo, TaskState, BuildStats};
 pub use interactive::{InteractiveExecutor, InteractiveOptions, ExecutionControlHandle};
 pub use remote_cache::{RemoteCacheClient, RemoteCacheConfig, ActionResult, OutputFile, ExecutionMetadata};
+pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script};
+pub use direct_executor::{execute_direct, DirectExecutionResult};

@@ -30,6 +30,8 @@ use std::process::Command;
 use std::os::unix::process::ExitStatusExt;
 
 use super::types::{ExecutionError, NetworkPolicy, ResourceLimits};
+use super::script_analyzer::analyze_script;
+use super::direct_executor::execute_direct;
 use tracing::{debug, info, warn};
 
 /// Setup cgroup v2 for resource limits
@@ -490,6 +492,42 @@ fn setup_loopback() -> Result<(), ExecutionError> {
     )))
 }
 
+/// Execute script using bash (fallback for complex scripts)
+#[cfg(target_os = "linux")]
+fn execute_with_bash(
+    script: &str,
+    work_dir: &Path,
+    env: &std::collections::HashMap<String, String>,
+    stdout_file: std::fs::File,
+    stderr_file: std::fs::File,
+) -> Result<i32, ExecutionError> {
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c")
+       .arg(script)
+       .current_dir(work_dir)
+       .stdout(stdout_file)
+       .stderr(stderr_file);
+
+    // Set environment variables
+    cmd.env_clear();
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+
+    // Add essential environment
+    cmd.env("HOME", "/tmp");
+    cmd.env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+    cmd.env("SHELL", "/bin/bash");
+
+    debug!("Executing with bash: {:?}", script);
+
+    // Execute and get status
+    let status = cmd.status()
+        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed: {}", e)))?;
+
+    Ok(status.code().unwrap_or(1))
+}
+
 /// Child process: create mount+PID+network namespaces without user namespace
 /// (requires CAP_SYS_ADMIN or running in privileged mode)
 #[cfg(target_os = "linux")]
@@ -600,34 +638,46 @@ fn execute_child_without_userns(
 
     debug!("Child: changed to work directory: {}", work_dir.display());
 
-    // Execute command
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c")
-       .arg(script)
-       .current_dir(work_dir)
-       .stdout(stdout_file)
-       .stderr(stderr_file);
+    // Try fast path: analyze script for direct execution
+    let analysis = analyze_script(script);
 
-    // Set environment variables
-    cmd.env_clear();
-    for (key, value) in env {
-        cmd.env(key, value);
-    }
+    let exit_code = if analysis.is_simple {
+        info!("Fast path: executing {} actions directly (no bash)", analysis.actions.len());
 
-    // Add essential environment
-    cmd.env("HOME", "/tmp");
-    cmd.env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-    cmd.env("SHELL", "/bin/bash");
+        // Execute directly without bash (2-5x faster)
+        match execute_direct(&analysis, work_dir, env) {
+            Ok(result) => {
+                // Write output to files
+                use std::io::Write;
+                let mut stdout_f = fs::OpenOptions::new()
+                    .write(true)
+                    .open(&stdout_path)
+                    .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stdout: {}", e)))?;
+                stdout_f.write_all(result.stdout.as_bytes())?;
 
-    debug!("Child: executing: bash -c {:?}", script);
+                let mut stderr_f = fs::OpenOptions::new()
+                    .write(true)
+                    .open(&stderr_path)
+                    .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stderr: {}", e)))?;
+                stderr_f.write_all(result.stderr.as_bytes())?;
 
-    // Execute and get status
-    let status = cmd.status()
-        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed: {}", e)))?;
+                debug!("Fast path completed in {} ms (exit code {})", result.duration_ms, result.exit_code);
+                result.exit_code
+            }
+            Err(e) => {
+                warn!("Fast path failed, falling back to bash: {}", e);
+                // Fall back to bash
+                execute_with_bash(script, work_dir, env, stdout_file, stderr_file)?
+            }
+        }
+    } else {
+        debug!("Complex script detected ({}), using bash: {:?}",
+            analysis.complexity_reason.as_deref().unwrap_or("unknown"), script);
+        // Use bash for complex scripts
+        execute_with_bash(script, work_dir, env, stdout_file, stderr_file)?
+    };
 
-    let exit_code = status.code().unwrap_or(1);
     debug!("Child: command completed with exit code: {}", exit_code);
-
     Ok(exit_code)
 }
 
