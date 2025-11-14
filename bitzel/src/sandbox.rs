@@ -93,61 +93,17 @@ impl Sandbox {
 
     /// Execute task in sandbox
     pub fn execute(&self) -> Result<std::process::Output> {
-        use nix::unistd::{getuid, getgid, pipe};
-        use std::os::unix::io::{AsRawFd};
-        use std::io::{Read, Write};
-
         // Prepare sandbox directory structure
         self.setup_sandbox_dirs()?;
-
-        // Get current UID/GID for mapping
-        let uid = getuid();
-        let gid = getgid();
-
-        // Create pipe for synchronization
-        let (mut read_fd, mut write_fd) = pipe()?;
-        let read_raw = read_fd.as_raw_fd();
 
         // Fork process for namespace isolation
         match unsafe { fork() }? {
             ForkResult::Parent { child } => {
-                // Parent: Close read end, keep write end
-                drop(read_fd);
-
-                // Setup UID/GID mapping for child's user namespace
-                let uid_map = format!("/proc/{}/uid_map", child);
-                let gid_map = format!("/proc/{}/gid_map", child);
-                let setgroups = format!("/proc/{}/setgroups", child);
-
-                // Write mappings (parent has permission to do this)
-                fs::write(&uid_map, format!("0 {} 1", uid))
-                    .map_err(|e| SandboxError::NamespaceError(format!("uid_map: {}", e)))?;
-                fs::write(&setgroups, "deny")
-                    .map_err(|e| SandboxError::NamespaceError(format!("setgroups: {}", e)))?;
-                fs::write(&gid_map, format!("0 {} 1", gid))
-                    .map_err(|e| SandboxError::NamespaceError(format!("gid_map: {}", e)))?;
-
-                // Signal child that mapping is done
-                write_fd.write_all(b"ok")
-                    .map_err(|e| SandboxError::Io(e))?;
-                drop(write_fd);
-
                 // Wait for child
                 self.wait_for_child(child)
             }
             ForkResult::Child => {
-                // Child: Close write end, keep read end
-                drop(write_fd);
-
-                // Create user namespace FIRST (so parent can write uid_map)
-                unshare(CloneFlags::CLONE_NEWUSER).unwrap();
-
-                // Wait for parent to setup uid/gid mapping
-                let mut buf = [0u8; 2];
-                nix::unistd::read(read_raw, &mut buf).unwrap();
-                drop(read_fd);
-
-                // Child process: create remaining namespaces and execute
+                // Child process: create namespaces and execute
                 match self.execute_in_namespace() {
                     Ok(output) => {
                         // Exit with success
