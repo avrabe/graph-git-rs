@@ -278,12 +278,14 @@ wstd = "0.1"  # WebAssembly async runtime
 futures = "0.3"  # For join_all
 ```
 
-### Execution Code
+### Execution Code with Concurrency Limiting
+
+**CRITICAL**: Limit concurrent tasks to avoid overwhelming the system!
 
 ```rust
 use wstd::runtime;
 use futures::future::join_all;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 fn main() -> Result<()> {
@@ -291,9 +293,12 @@ fn main() -> Result<()> {
     let signature_cache = SignatureCache::new()?;
     let artifact_cache = ArtifactCache::new()?;
 
+    // Limit to number of CPU cores (or user-specified)
+    let max_parallel = num_cpus::get();
+
     // Run async execution with wstd runtime
     runtime::block_on(async {
-        execute_task_graph(&task_graph, &signature_cache, &artifact_cache).await
+        execute_task_graph(&task_graph, &signature_cache, &artifact_cache, max_parallel).await
     })
 }
 
@@ -301,76 +306,99 @@ pub async fn execute_task_graph(
     task_graph: &TaskGraph,
     signature_cache: &SignatureCache,
     artifact_cache: &ArtifactCache,
+    max_parallel: usize,
 ) -> Result<ExecutionStats> {
 
     // Thread-safe completed set
     let completed = Arc::new(Mutex::new(HashSet::new()));
     let cached = Arc::new(Mutex::new(HashSet::new()));
     let executed = Arc::new(Mutex::new(HashSet::new()));
+    let failed = Arc::new(Mutex::new(HashSet::new()));
 
     loop {
         // Get ready tasks (dependencies satisfied)
         let ready_tasks = {
             let completed = completed.lock().unwrap();
+            let failed = failed.lock().unwrap();
             task_graph.get_ready_tasks(&completed)
+                .into_iter()
+                .filter(|task_id| !failed.contains(task_id))
+                .collect::<Vec<_>>()
         };
 
         if ready_tasks.is_empty() {
             break;  // All done!
         }
 
-        println!("Wave: {} tasks ready", ready_tasks.len());
+        println!("Wave: {} tasks ready, processing in batches of {}", ready_tasks.len(), max_parallel);
 
-        // Spawn parallel async tasks
-        let futures: Vec<_> = ready_tasks
-            .into_iter()
-            .map(|task_id| {
-                let task = task_graph.tasks[&task_id].clone();
-                let sig_cache = signature_cache.clone();
-                let art_cache = artifact_cache.clone();
+        // Process ready tasks in batches to limit concurrency
+        let mut queue: VecDeque<_> = ready_tasks.into_iter().collect();
 
-                async move {
-                    // Check cache
-                    let sig = sig_cache.get_signature(&task.recipe_name, &task.task_name);
+        while !queue.is_empty() {
+            // Take up to max_parallel tasks from queue
+            let batch_size = queue.len().min(max_parallel);
+            let batch: Vec<_> = queue.drain(..batch_size).collect();
 
-                    if art_cache.has_artifact(&task.recipe_name, &task.task_name, &sig) {
-                        println!("✓ Cache HIT: {}:{}", task.recipe_name, task.task_name);
-                        (task_id, CacheResult::CacheHit)
-                    } else {
-                        println!("⚙ Executing: {}:{}", task.recipe_name, task.task_name);
+            println!("  Batch: {} tasks executing in parallel", batch.len());
 
-                        // Execute task (blocks waiting for process, but that's OK in async)
-                        match execute_task_in_sandbox(&task, &sig, &art_cache) {
-                            Ok(_) => (task_id, CacheResult::Executed),
-                            Err(e) => {
-                                eprintln!("❌ Failed: {}:{} - {}", task.recipe_name, task.task_name, e);
-                                (task_id, CacheResult::Failed)
+            // Spawn parallel async tasks for this batch
+            let futures: Vec<_> = batch
+                .into_iter()
+                .map(|task_id| {
+                    let task = task_graph.tasks[&task_id].clone();
+                    let sig_cache = signature_cache.clone();
+                    let art_cache = artifact_cache.clone();
+
+                    async move {
+                        // Check cache
+                        let sig = sig_cache.get_signature(&task.recipe_name, &task.task_name);
+
+                        if art_cache.has_artifact(&task.recipe_name, &task.task_name, &sig) {
+                            println!("✓ Cache HIT: {}:{}", task.recipe_name, task.task_name);
+                            (task_id, CacheResult::CacheHit)
+                        } else {
+                            println!("⚙ Executing: {}:{}", task.recipe_name, task.task_name);
+
+                            // Execute task (blocks waiting for process, but that's OK in async)
+                            match execute_task_in_sandbox(&task, &sig, &art_cache) {
+                                Ok(_) => (task_id, CacheResult::Executed),
+                                Err(e) => {
+                                    eprintln!("❌ Failed: {}:{} - {}", task.recipe_name, task.task_name, e);
+                                    (task_id, CacheResult::Failed)
+                                }
                             }
                         }
                     }
-                }
-            })
-            .collect();
+                })
+                .collect();
 
-        // Wait for all parallel tasks to complete
-        let results = join_all(futures).await;
+            // Wait for this batch to complete before starting next batch
+            let results = join_all(futures).await;
 
-        // Update completed set
-        {
-            let mut completed = completed.lock().unwrap();
-            let mut cached_set = cached.lock().unwrap();
-            let mut executed_set = executed.lock().unwrap();
+            // Update completed set
+            {
+                let mut completed = completed.lock().unwrap();
+                let mut cached_set = cached.lock().unwrap();
+                let mut executed_set = executed.lock().unwrap();
+                let mut failed_set = failed.lock().unwrap();
 
-            for (task_id, result) in results {
-                completed.insert(task_id);
+                for (task_id, result) in results {
+                    completed.insert(task_id);
 
-                match result {
-                    CacheResult::CacheHit => { cached_set.insert(task_id); }
-                    CacheResult::Executed => { executed_set.insert(task_id); }
-                    CacheResult::Failed => { /* handle error */ }
+                    match result {
+                        CacheResult::CacheHit => { cached_set.insert(task_id); }
+                        CacheResult::Executed => { executed_set.insert(task_id); }
+                        CacheResult::Failed => { failed_set.insert(task_id); }
+                    }
                 }
             }
         }
+    }
+
+    let failed_count = failed.lock().unwrap().len();
+    if failed_count > 0 {
+        return Err(format!("{} tasks failed", failed_count).into());
     }
 
     Ok(ExecutionStats {
@@ -415,9 +443,35 @@ fn execute_task_in_sandbox(
 
 1. **wstd provides async runtime** - Designed for WebAssembly/WASI environments
 2. **Async coordination** - Clean wave-based scheduling with async/await
-3. **Blocks are fine** - Tasks can block on Command::output() within async context
-4. **Parallel execution** - Multiple tasks run concurrently via futures
-5. **Dependency awareness** - get_ready_tasks() ensures proper ordering
+3. **Concurrency limiting** - Process tasks in batches to avoid overwhelming the system
+4. **Blocks are fine** - Tasks can block on Command::output() within async context
+5. **Parallel execution** - Multiple tasks run concurrently via futures (up to max_parallel)
+6. **Dependency awareness** - get_ready_tasks() ensures proper ordering
+
+### Concurrency Limiting Strategy
+
+**Problem**: If 1000 tasks are ready, spawning them all simultaneously would overwhelm the system.
+
+**Solution**: Batch processing with configurable parallelism
+
+```
+Wave 1: 1000 tasks ready, processing in batches of 8
+  Batch 1: 8 tasks executing in parallel
+  Batch 2: 8 tasks executing in parallel
+  ... (125 batches total)
+  Batch 125: 8 tasks executing in parallel
+
+Wave 2: 500 tasks ready (unblocked after wave 1)
+  Batch 1: 8 tasks executing in parallel
+  ...
+```
+
+**Key points**:
+- `max_parallel` defaults to `num_cpus::get()` but can be user-configured
+- Each wave processes all ready tasks in batches
+- Next wave only starts after current wave completes
+- Failed tasks don't block dependent tasks (filtered out)
+- System load stays bounded at `max_parallel` concurrent processes
 
 ## Comparison: Real Execution
 
