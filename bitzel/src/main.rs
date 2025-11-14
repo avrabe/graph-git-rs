@@ -22,8 +22,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod pipeline;
+use pipeline::{Pipeline, PipelineConfig};
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Initialize tracing
     tracing_subscriber::registry()
         .with(
@@ -178,9 +181,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    // ========== Step 5: Parse Recipes with Full Context ==========
-    println!("🔍 Parsing BitBake recipes with layer context...");
-    // TODO: Apply OverrideResolver for MACHINE/DISTRO conditionals
+    // ========== Step 5: Parse Recipes with Parallel Pipeline ==========
+    println!("🔍 Parsing BitBake recipes with parallel pipeline...");
+
+    // Configure parallel pipeline
+    let pipeline_config = PipelineConfig {
+        max_io_parallelism: 32,
+        max_cpu_parallelism: num_cpus::get(),
+        enable_cache: true,
+        cache_dir: build_dir.join("bitzel-cache/pipeline"),
+    };
+
+    println!("  Parallelism: {} I/O tasks, {} CPU cores",
+             pipeline_config.max_io_parallelism,
+             pipeline_config.max_cpu_parallelism);
+
+    let pipeline = Pipeline::new(pipeline_config, build_context);
+
+    // Stage 1: Discover recipes in parallel
+    let (recipe_files, discover_hash) = pipeline.discover_recipes(&layer_paths).await?;
+    pipeline.save_stage_hash(&discover_hash).await?;
+
+    // Stage 2: Parse recipes in parallel
+    let (parsed_recipes, parse_hash) = pipeline.parse_recipes(recipe_files).await?;
+    pipeline.save_stage_hash(&parse_hash).await?;
+
+    // Extract task implementations from parsed recipes
+    let mut recipe_task_impls: HashMap<String, HashMap<String, TaskImplementation>> = HashMap::new();
+    for parsed in &parsed_recipes {
+        if !parsed.task_impls.is_empty() {
+            recipe_task_impls.insert(parsed.file.name.clone(), parsed.task_impls.clone());
+        }
+    }
+
+    println!("  Extracted {} task implementations from {} recipes",
+             recipe_task_impls.values().map(|m| m.len()).sum::<usize>(),
+             recipe_task_impls.len());
+    println!();
+
+    // ========== Step 6: Build Recipe Graph ==========
+    println!("🔗 Building recipe dependency graph...");
 
     let mut extraction_config = ExtractionConfig::default();
     extraction_config.extract_tasks = true;
@@ -188,61 +228,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     extraction_config.use_python_executor = false;
 
     let extractor = RecipeExtractor::new(extraction_config);
-    let task_extractor = TaskExtractor::new();
-    let mut graph = RecipeGraph::new();
-    let mut extractions = Vec::new();
-    let mut recipe_count = 0;
 
-    // Store task implementations by recipe name
-    let mut recipe_task_impls: HashMap<String, HashMap<String, TaskImplementation>> = HashMap::new();
-
-    // Scan all layers for .bb files
-    for layer_path in layer_paths.values().flatten() {
-        let recipes = find_recipes(layer_path);
-        tracing::info!(
-            "Found {} recipes in {}",
-            recipes.len(),
-            layer_path.file_name().unwrap().to_string_lossy()
-        );
-
-        for recipe_path in recipes {
-            // Read recipe content
-            if let Ok(content) = fs::read_to_string(&recipe_path) {
-                // Extract recipe name from filename
-                let recipe_name = recipe_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .and_then(|s| s.split('_').next())
-                    .unwrap_or("unknown")
-                    .to_string();
-
-                // Extract recipe metadata
-                // TODO: Integrate BuildContext.parse_recipe_with_context for bbappend merging
-                match extractor.extract_from_content(&mut graph, &recipe_name, &content) {
-                    Ok(extraction) => {
-                        recipe_count += 1;
-                        extractions.push(extraction);
-
-                        // Extract task implementations
-                        let task_impls = task_extractor.extract_from_content(&content);
-                        if !task_impls.is_empty() {
-                            recipe_task_impls.insert(recipe_name.clone(), task_impls);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::debug!("Skipping {}: {}", recipe_name, e);
-                    }
-                }
-            }
-        }
-    }
-
-    println!("  Extracted {} recipes with override resolution", recipe_count);
-    println!();
-
-    // ========== Step 6: Populate Dependencies ==========
-    println!("🔗 Resolving dependencies...");
-    extractor.populate_dependencies(&mut graph, &extractions)?;
+    // Stage 3: Build recipe graph (sequential - needs all recipes)
+    let (graph, graph_hash) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
+    pipeline.save_stage_hash(&graph_hash).await?;
 
     let stats = graph.statistics();
     println!("  Recipes:       {}", stats.recipe_count);
