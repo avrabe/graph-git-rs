@@ -2,8 +2,83 @@
 
 use super::types::{ContentHash, TaskOutput, ExecutionError, ExecutionResult};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::os::unix::fs::OpenOptionsExt;
+
+/// Write data to a file atomically with fsync for durability
+///
+/// This implements the write-fsync-rename pattern for atomic writes:
+/// 1. Write data to a temporary file
+/// 2. fsync the temp file (flush to disk)
+/// 3. Rename temp file to final destination (atomic operation)
+/// 4. fsync the parent directory (ensure directory entry is durable)
+fn atomic_write(path: &Path, data: &[u8]) -> ExecutionResult<()> {
+    // Create parent directories if needed
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    // Write to temp file
+    let temp_path = path.with_extension("tmp");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(&temp_path)
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to create temp file: {}", e)))?;
+
+    file.write_all(data)
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to write data: {}", e)))?;
+
+    // CRITICAL: fsync the file data to disk before rename
+    file.sync_all()
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to fsync file: {}", e)))?;
+
+    // Close file before rename
+    drop(file);
+
+    // Atomic rename (POSIX guarantees atomicity)
+    fs::rename(&temp_path, path)
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to rename: {}", e)))?;
+
+    // CRITICAL: fsync parent directory to ensure directory entry is durable
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all(); // Best effort - some filesystems don't support this
+        }
+    }
+
+    Ok(())
+}
+
+/// Acquire an exclusive lock on a file
+///
+/// Returns a file handle that holds the lock. The lock is released when the file is dropped.
+#[cfg(unix)]
+fn acquire_lock(path: &Path) -> ExecutionResult<File> {
+    use std::os::unix::io::AsRawFd;
+    use nix::fcntl::{flock, FlockArg};
+
+    // Create lock directory if needed
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to create lock file: {}", e)))?;
+
+    // Acquire exclusive lock (blocks if already locked)
+    flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to acquire lock: {}", e)))?;
+
+    Ok(lock_file)
+}
 
 /// Content-Addressable Store - stores files by their SHA-256 hash
 pub struct ContentAddressableStore {
@@ -39,15 +114,19 @@ impl ContentAddressableStore {
             return Ok(hash);
         }
 
-        // Create parent directories
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+        // Acquire lock to prevent concurrent writes to same hash
+        #[cfg(unix)]
+        let lock_path = path.with_extension("lock");
+        #[cfg(unix)]
+        let _lock = acquire_lock(&lock_path)?;
+
+        // Double-check after acquiring lock (another process might have written it)
+        if path.exists() {
+            return Ok(hash);
         }
 
-        // Write atomically (write to temp, then rename)
-        let temp_path = path.with_extension("tmp");
-        fs::write(&temp_path, content)?;
-        fs::rename(&temp_path, &path)?;
+        // Write atomically with fsync for durability
+        atomic_write(&path, content)?;
 
         // Update index
         self.index.insert(hash.clone(), path);
@@ -207,14 +286,19 @@ impl ActionCache {
 
     /// Store task output
     pub fn put(&mut self, signature: ContentHash, output: TaskOutput) -> ExecutionResult<()> {
-        // Write to disk
         let path = self.signature_to_path(&signature);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
 
+        // Acquire lock to prevent concurrent writes
+        #[cfg(unix)]
+        let lock_path = path.with_extension("lock");
+        #[cfg(unix)]
+        let _lock = acquire_lock(&lock_path)?;
+
+        // Serialize to JSON
         let json = serde_json::to_string_pretty(&output)?;
-        fs::write(&path, json)?;
+
+        // Write atomically with fsync for durability
+        atomic_write(&path, json.as_bytes())?;
 
         // Update in-memory cache
         self.cache.insert(signature, output);
