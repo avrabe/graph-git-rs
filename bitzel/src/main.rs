@@ -25,6 +25,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod pipeline;
 use pipeline::{Pipeline, PipelineConfig};
 
+mod signature_cache;
+use signature_cache::{SignatureCache, SignatureStats, EnhancedTaskSignature};
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Initialize tracing
@@ -311,6 +314,99 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("  Root tasks:    {}", stats.root_tasks);
     println!("  Leaf tasks:    {}", stats.leaf_tasks);
     println!("  Max depth:     {}", stats.max_depth);
+    println!();
+
+    // ========== Step 8.5: Compute Task Signatures ==========
+    println!("🔑 Computing task signatures (content-addressable cache)...");
+
+    // Build recipe hash map from parsed recipes
+    let mut recipe_hashes = HashMap::new();
+    for parsed in &parsed_recipes {
+        recipe_hashes.insert(parsed.file.name.clone(), parsed.hash.clone());
+    }
+
+    // Initialize signature cache
+    let mut sig_cache = SignatureCache::new(build_dir.join("bitzel-cache/signatures"));
+
+    // Load previous signatures for comparison BEFORE computing new ones
+    let cache_path = build_dir.join("bitzel-cache/signatures/signatures.json");
+    let previous_signatures = if cache_path.exists() {
+        let json = tokio::fs::read_to_string(&cache_path).await?;
+        serde_json::from_str::<HashMap<String, EnhancedTaskSignature>>(&json)
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    // Compute NEW signatures for all tasks (don't load old ones first)
+    sig_cache.compute_signatures(
+        &task_graph,
+        &recipe_hashes,
+        &recipe_task_impls,
+        kas_config.machine.as_deref(),
+        kas_config.distro.as_deref(),
+    ).await?;
+
+    // ========== Step 8.6: Analyze Incremental Build Requirements ==========
+    println!("📊 Analyzing incremental build requirements...");
+
+    // Analyze which tasks need rebuilding
+    let mut tasks_to_rebuild = Vec::new();
+    let mut tasks_unchanged = Vec::new();
+    let mut new_tasks = Vec::new();
+
+    for (_task_id, task) in &task_graph.tasks {
+        let task_key = format!("{}:{}", task.recipe_name, task.task_name);
+
+        // Get current signature
+        if let Some(current_sig_str) = sig_cache.get_signature(&task.recipe_name, &task.task_name) {
+            // Check if we have a previous signature
+            if let Some(prev_sig) = previous_signatures.get(&task_key) {
+                if let Some(prev_sig_str) = &prev_sig.signature {
+                    if current_sig_str == prev_sig_str {
+                        tasks_unchanged.push(task_key.clone());
+                    } else {
+                        tasks_to_rebuild.push((task_key.clone(), "signature changed".to_string()));
+                    }
+                } else {
+                    tasks_to_rebuild.push((task_key.clone(), "no previous signature".to_string()));
+                }
+            } else {
+                new_tasks.push(task_key.clone());
+            }
+        }
+    }
+
+    // Save updated signatures
+    sig_cache.save().await?;
+
+    // Report statistics
+    let total_tasks = task_graph.tasks.len();
+    println!("  Total tasks:       {}", total_tasks);
+    println!("  Unchanged:         {} ({:.1}%)",
+        tasks_unchanged.len(),
+        (tasks_unchanged.len() as f64 / total_tasks as f64) * 100.0
+    );
+    println!("  Need rebuild:      {} ({:.1}%)",
+        tasks_to_rebuild.len(),
+        (tasks_to_rebuild.len() as f64 / total_tasks as f64) * 100.0
+    );
+    println!("  New tasks:         {} ({:.1}%)",
+        new_tasks.len(),
+        (new_tasks.len() as f64 / total_tasks as f64) * 100.0
+    );
+
+    // Show reasons for rebuild (first 10)
+    if !tasks_to_rebuild.is_empty() {
+        println!("\n  Sample rebuild reasons:");
+        for (task_key, reason) in tasks_to_rebuild.iter().take(10) {
+            println!("    • {}: {}", task_key, reason);
+        }
+        if tasks_to_rebuild.len() > 10 {
+            println!("    ... and {} more", tasks_to_rebuild.len() - 10);
+        }
+    }
+
     println!();
 
     // ========== Step 9: Create Task Specifications ==========
