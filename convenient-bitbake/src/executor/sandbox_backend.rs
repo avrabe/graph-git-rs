@@ -368,6 +368,7 @@ impl SandboxBackend {
             &script,
             &work_dir,
             &spec.env,
+            spec.network_policy,
         )?;
 
         let duration = start.elapsed();

@@ -29,7 +29,7 @@ use std::path::Path;
 use std::process::Command;
 use std::os::unix::process::ExitStatusExt;
 
-use super::types::ExecutionError;
+use super::types::{ExecutionError, NetworkPolicy};
 use tracing::{debug, info, warn};
 
 /// Execute command in native Linux namespace sandbox
@@ -37,16 +37,18 @@ use tracing::{debug, info, warn};
 /// This implementation uses:
 /// 1. Mount namespace with bind mounts for controlled filesystem access
 /// 2. PID namespace for process isolation
+/// 3. Network namespace for network isolation (CLONE_NEWNET)
 ///
 /// NOTE: User namespace support is available but requires kernel configuration
-/// (max_user_namespaces > 0). For now, using mount+PID only.
+/// (max_user_namespaces > 0). For now, using mount+PID+network only.
 #[cfg(target_os = "linux")]
 pub fn execute_in_namespace(
     script: &str,
     work_dir: &Path,
     env: &std::collections::HashMap<String, String>,
+    network_policy: NetworkPolicy,
 ) -> Result<(i32, String, String), ExecutionError> {
-    info!("Executing in native Linux namespace sandbox (mount+pid)");
+    info!("Executing in native Linux namespace sandbox (mount+pid+network): {:?}", network_policy);
 
     // Create work directory
     fs::create_dir_all(work_dir)
@@ -64,8 +66,8 @@ pub fn execute_in_namespace(
         ForkResult::Child => {
             debug!("Child process: starting namespace setup");
 
-            // Execute in namespace (mount+PID without user namespace)
-            match execute_child_without_userns(script, work_dir, env) {
+            // Execute in namespace (mount+PID+network without user namespace)
+            match execute_child_without_userns(script, work_dir, env, network_policy) {
                 Ok(exit_code) => {
                     debug!("Child: execution completed with code {}", exit_code);
                     std::process::exit(exit_code);
@@ -118,13 +120,14 @@ fn setup_uid_gid_mapping(child: Pid, write_fd: OwnedFd) -> Result<(), ExecutionE
     Ok(())
 }
 
-/// Child process: create user namespace, wait for mapping, then create mount+PID namespaces
+/// Child process: create user namespace, wait for mapping, then create mount+PID+network namespaces
 #[cfg(target_os = "linux")]
 fn execute_child_with_userns(
     script: &str,
     work_dir: &Path,
     env: &std::collections::HashMap<String, String>,
     read_fd: OwnedFd,
+    network_policy: NetworkPolicy,
 ) -> Result<i32, ExecutionError> {
     use std::fs::File;
 
@@ -157,13 +160,30 @@ fn execute_child_with_userns(
     // read_fd will be automatically closed when it goes out of scope
     drop(read_fd);
 
-    debug!("Child: UID/GID mapping confirmed, creating mount and PID namespaces");
+    debug!("Child: UID/GID mapping confirmed, creating mount, PID, and network namespaces");
 
-    // Step 3: Create mount and PID namespaces
-    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID)
-        .map_err(|e| ExecutionError::SandboxError(format!("unshare(NEWNS|NEWPID) failed: {}", e)))?;
+    // Step 3: Create mount, PID, and network namespaces
+    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET)
+        .map_err(|e| ExecutionError::SandboxError(format!("unshare(NEWNS|NEWPID|NEWNET) failed: {}", e)))?;
 
-    debug!("Child: mount and PID namespaces created");
+    debug!("Child: mount, PID, and network namespaces created");
+
+    // Setup network according to policy
+    match network_policy {
+        NetworkPolicy::Isolated => {
+            debug!("Network: Full isolation (no network access)");
+            // Do nothing - isolated by default in new network namespace
+        }
+        NetworkPolicy::LoopbackOnly => {
+            setup_loopback()?;
+            debug!("Network: Loopback only (127.0.0.1 accessible)");
+        }
+        NetworkPolicy::Controlled => {
+            return Err(ExecutionError::SandboxError(
+                "Controlled network access not yet implemented".to_string()
+            ));
+        }
+    }
 
     // Step 4: Make / private to prevent mount propagation
     mount(
@@ -181,6 +201,7 @@ fn execute_child_with_userns(
     // These allow access to system binaries and libraries while maintaining isolation
     let system_dirs = [
         "/bin",
+        "/sbin",
         "/usr",
         "/lib",
         "/lib64",
@@ -248,7 +269,7 @@ fn execute_child_with_userns(
 
     // Add essential environment
     cmd.env("HOME", "/tmp");
-    cmd.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+    cmd.env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
     cmd.env("SHELL", "/bin/bash");
 
     debug!("Child: executing: bash -c {:?}", script);
@@ -263,23 +284,77 @@ fn execute_child_with_userns(
     Ok(exit_code)
 }
 
-/// Child process: create mount+PID namespaces without user namespace
+/// Setup loopback interface in network namespace
+#[cfg(target_os = "linux")]
+fn setup_loopback() -> Result<(), ExecutionError> {
+    debug!("Setting up loopback interface");
+
+    // Try multiple possible paths for the 'ip' command
+    let ip_paths = ["/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip", "ip"];
+
+    let mut last_error = String::new();
+    for ip_path in &ip_paths {
+        match Command::new(ip_path)
+            .args(&["link", "set", "lo", "up"])
+            .output()
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    debug!("Loopback interface is up (using {})", ip_path);
+                    return Ok(());
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    last_error = format!("ip command failed: {}", stderr);
+                }
+            }
+            Err(e) => {
+                last_error = format!("Failed to execute {}: {}", ip_path, e);
+                continue;
+            }
+        }
+    }
+
+    Err(ExecutionError::SandboxError(format!(
+        "Failed to setup loopback: {}. Tried paths: {:?}",
+        last_error, ip_paths
+    )))
+}
+
+/// Child process: create mount+PID+network namespaces without user namespace
 /// (requires CAP_SYS_ADMIN or running in privileged mode)
 #[cfg(target_os = "linux")]
 fn execute_child_without_userns(
     script: &str,
     work_dir: &Path,
     env: &std::collections::HashMap<String, String>,
+    network_policy: NetworkPolicy,
 ) -> Result<i32, ExecutionError> {
     use std::fs::File;
 
-    debug!("Child: creating mount and PID namespaces (no user namespace)");
+    debug!("Child: creating mount, PID, and network namespaces (no user namespace)");
 
-    // Create mount and PID namespaces directly (no user namespace)
-    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID)
-        .map_err(|e| ExecutionError::SandboxError(format!("unshare(NEWNS|NEWPID) failed: {}", e)))?;
+    // Create mount, PID, and network namespaces directly (no user namespace)
+    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET)
+        .map_err(|e| ExecutionError::SandboxError(format!("unshare(NEWNS|NEWPID|NEWNET) failed: {}", e)))?;
 
-    debug!("Child: mount and PID namespaces created");
+    debug!("Child: mount, PID, and network namespaces created");
+
+    // Setup network according to policy
+    match network_policy {
+        NetworkPolicy::Isolated => {
+            debug!("Network: Full isolation (no network access)");
+            // Do nothing - isolated by default in new network namespace
+        }
+        NetworkPolicy::LoopbackOnly => {
+            setup_loopback()?;
+            debug!("Network: Loopback only (127.0.0.1 accessible)");
+        }
+        NetworkPolicy::Controlled => {
+            return Err(ExecutionError::SandboxError(
+                "Controlled network access not yet implemented".to_string()
+            ));
+        }
+    }
 
     // Make / private to prevent mount propagation
     mount(
@@ -296,6 +371,7 @@ fn execute_child_without_userns(
     // Bind mount essential system directories (read-only)
     let system_dirs = [
         "/bin",
+        "/sbin",
         "/usr",
         "/lib",
         "/lib64",
@@ -360,7 +436,7 @@ fn execute_child_without_userns(
 
     // Add essential environment
     cmd.env("HOME", "/tmp");
-    cmd.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
+    cmd.env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
     cmd.env("SHELL", "/bin/bash");
 
     debug!("Child: executing: bash -c {:?}", script);
@@ -421,6 +497,7 @@ pub fn execute_in_namespace(
     _script: &str,
     _work_dir: &Path,
     _env: &std::collections::HashMap<String, String>,
+    _network_policy: NetworkPolicy,
 ) -> Result<(i32, String, String), ExecutionError> {
     Err(ExecutionError::SandboxError(
         "Native namespace sandbox only available on Linux".to_string()
@@ -443,7 +520,7 @@ mod tests {
         let env = HashMap::new();
         let script = "echo 'Hello from sandbox'; echo $$ > /tmp/pid.txt; cat /tmp/pid.txt";
 
-        let result = execute_in_namespace(script, &work_dir, &env);
+        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated);
 
         assert!(result.is_ok());
         let (exit_code, stdout, stderr) = result.unwrap();
@@ -463,7 +540,7 @@ mod tests {
         // Test that we can access system binaries
         let script = "ls /bin/bash && echo 'System access OK'";
 
-        let result = execute_in_namespace(script, &work_dir, &env);
+        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated);
 
         assert!(result.is_ok());
         let (exit_code, stdout, _) = result.unwrap();
@@ -482,7 +559,7 @@ mod tests {
 
         let script = "echo $TEST_VAR";
 
-        let result = execute_in_namespace(script, &work_dir, &env);
+        let result = execute_in_namespace(script, &work_dir, &env, NetworkPolicy::Isolated);
 
         assert!(result.is_ok());
         let (exit_code, stdout, _) = result.unwrap();
