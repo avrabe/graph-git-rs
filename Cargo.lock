@@ -473,6 +473,7 @@ name = "convenient-bitbake"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap 4.5.51",
  "convenient-cache",
  "convenient-graph",
  "convenient-kas",
