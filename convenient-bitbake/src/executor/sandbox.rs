@@ -1,28 +1,41 @@
 //! Sandboxed task execution
 //!
-//! For the initial POC, we implement a simple directory-based sandbox.
-//! Future versions will add Linux namespace isolation.
+//! Provides secure execution environments using platform-specific sandboxing:
+//! - Linux: Bubblewrap (user namespaces)
+//! - macOS: sandbox-exec (App Sandbox)
+//! - Fallback: Basic directory isolation
 
+use super::sandbox_backend::{SandboxBackend, SandboxResult};
 use super::types::{SandboxSpec, ExecutionError, ExecutionResult};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Instant;
 
 /// Manages sandbox creation and execution
 pub struct SandboxManager {
     /// Root directory for all sandboxes
     root: PathBuf,
+
+    /// Sandboxing backend to use
+    backend: SandboxBackend,
 }
 
 impl SandboxManager {
-    /// Create a new sandbox manager
+    /// Create a new sandbox manager with auto-detected backend
     pub fn new(root: impl Into<PathBuf>) -> ExecutionResult<Self> {
         let root = root.into();
         fs::create_dir_all(&root)?;
+        let backend = SandboxBackend::detect();
 
-        Ok(Self { root })
+        Ok(Self { root, backend })
+    }
+
+    /// Create a new sandbox manager with explicit backend
+    pub fn with_backend(root: impl Into<PathBuf>, backend: SandboxBackend) -> ExecutionResult<Self> {
+        let root = root.into();
+        fs::create_dir_all(&root)?;
+
+        Ok(Self { root, backend })
     }
 
     /// Create a sandbox from spec
@@ -31,7 +44,7 @@ impl SandboxManager {
         let sandbox_id = uuid::Uuid::new_v4().to_string();
         let sandbox_root = self.root.join(&sandbox_id);
 
-        Sandbox::create(sandbox_root, spec)
+        Sandbox::create(sandbox_root, spec, self.backend)
     }
 
     /// Clean up old sandboxes
@@ -56,11 +69,13 @@ pub struct Sandbox {
     root: PathBuf,
     /// Sandbox specification
     spec: SandboxSpec,
+    /// Sandboxing backend
+    backend: SandboxBackend,
 }
 
 impl Sandbox {
     /// Create a new sandbox
-    fn create(root: PathBuf, spec: SandboxSpec) -> ExecutionResult<Self> {
+    fn create(root: PathBuf, spec: SandboxSpec, backend: SandboxBackend) -> ExecutionResult<Self> {
         fs::create_dir_all(&root)?;
 
         // Create writable directories
@@ -86,7 +101,7 @@ impl Sandbox {
             }
         }
 
-        Ok(Self { root, spec })
+        Ok(Self { root, spec, backend })
     }
 
     /// Update environment variables
@@ -94,56 +109,9 @@ impl Sandbox {
         self.spec.env = env;
     }
 
-    /// Execute command in sandbox
+    /// Execute command in sandbox using the configured backend
     pub fn execute(&self) -> ExecutionResult<SandboxResult> {
-        let start = Instant::now();
-
-        // Prepare command
-        let mut cmd = if self.spec.command.len() == 1 {
-            // Single command, use shell
-            let mut c = Command::new("bash");
-            c.arg("-c").arg(&self.spec.command[0]);
-            c
-        } else {
-            // Multiple args, execute directly
-            let mut c = Command::new(&self.spec.command[0]);
-            c.args(&self.spec.command[1..]);
-            c
-        };
-
-        // Set working directory
-        let cwd = self.root.join(self.spec.cwd.strip_prefix("/").unwrap_or(&self.spec.cwd));
-        fs::create_dir_all(&cwd)?;
-        cmd.current_dir(&cwd);
-
-        // Set environment variables
-        cmd.env_clear();  // Start with clean environment
-        for (key, value) in &self.spec.env {
-            cmd.env(key, value);
-        }
-
-        // Essential environment
-        cmd.env("HOME", "/tmp");
-        cmd.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
-        cmd.env("SHELL", "/bin/bash");
-
-        // Capture output
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-
-        // Execute
-        let output = cmd.output().map_err(|e| {
-            ExecutionError::SandboxError(format!("Failed to execute command: {}", e))
-        })?;
-
-        let duration = start.elapsed();
-
-        Ok(SandboxResult {
-            exit_code: output.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            duration_ms: duration.as_millis() as u64,
-        })
+        self.backend.execute(&self.spec, &self.root)
     }
 
     /// Collect outputs from sandbox
@@ -202,21 +170,6 @@ impl Sandbox {
             fs::remove_dir_all(&self.root)?;
         }
         Ok(())
-    }
-}
-
-/// Result of sandbox execution
-#[derive(Debug, Clone)]
-pub struct SandboxResult {
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-    pub duration_ms: u64,
-}
-
-impl SandboxResult {
-    pub fn success(&self) -> bool {
-        self.exit_code == 0
     }
 }
 
