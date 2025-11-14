@@ -39,17 +39,19 @@ fn test_complete_sandboxed_task_execution() {
         r#"
 # Simulate a typical compile task
 echo "Starting compilation..."
+
+# Ensure directories exist (important for Basic sandbox)
+mkdir -p ${S} ${B} ${D}
+
 cd ${S}
 echo "Compiling source files..."
 sleep 0.1
 
 # Create build artifacts
-mkdir -p ${B}
 echo "Build artifact from do_compile" > ${B}/compiled.o
 echo "Compilation log output" > ${B}/compile.log
 
 # Create output marker
-mkdir -p ${D}
 echo "do_compile completed successfully" > ${D}/compile.done
 
 echo "Compilation finished!"
