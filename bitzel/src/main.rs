@@ -14,6 +14,8 @@ use convenient_bitbake::{
     BuildContext, ExtractionConfig, RecipeExtractor, RecipeGraph,
     TaskGraphBuilder, InteractiveExecutor, InteractiveOptions, TaskSpec,
     TaskExtractor, TaskImplementation,
+    Pipeline, PipelineConfig,
+    SignatureCache, SignatureStats, EnhancedTaskSignature,
 };
 use convenient_kas::{ConfigGenerator, include_graph::KasIncludeGraph};
 use std::collections::HashMap;
@@ -21,12 +23,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-mod pipeline;
-use pipeline::{Pipeline, PipelineConfig};
-
-mod signature_cache;
-use signature_cache::{SignatureCache, SignatureStats, EnhancedTaskSignature};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

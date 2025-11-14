@@ -9,7 +9,7 @@
 //!
 //! This ensures that changes propagate correctly through the dependency graph.
 
-use convenient_bitbake::{ContentHash, TaskGraph, TaskImplementation};
+use crate::{ContentHash, TaskGraph, TaskImplementation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
