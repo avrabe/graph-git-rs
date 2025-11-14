@@ -3,8 +3,8 @@
 //! This module provides proper process isolation for BitBake task execution using:
 //! - Mount namespace (isolated filesystem view)
 //! - PID namespace (isolated process tree)
-//! - User namespace (unprivileged execution)
-//! - OverlayFS (efficient dependency merging)
+//! - OverlayFS (efficient dependency merging with zero-copy)
+//! - Network namespace (optional isolation)
 
 use nix::mount::{mount, umount, MsFlags};
 use nix::sched::{unshare, CloneFlags};
@@ -93,17 +93,61 @@ impl Sandbox {
 
     /// Execute task in sandbox
     pub fn execute(&self) -> Result<std::process::Output> {
+        use nix::unistd::{getuid, getgid, pipe};
+        use std::os::unix::io::{AsRawFd};
+        use std::io::{Read, Write};
+
         // Prepare sandbox directory structure
         self.setup_sandbox_dirs()?;
+
+        // Get current UID/GID for mapping
+        let uid = getuid();
+        let gid = getgid();
+
+        // Create pipe for synchronization
+        let (mut read_fd, mut write_fd) = pipe()?;
+        let read_raw = read_fd.as_raw_fd();
 
         // Fork process for namespace isolation
         match unsafe { fork() }? {
             ForkResult::Parent { child } => {
+                // Parent: Close read end, keep write end
+                drop(read_fd);
+
+                // Setup UID/GID mapping for child's user namespace
+                let uid_map = format!("/proc/{}/uid_map", child);
+                let gid_map = format!("/proc/{}/gid_map", child);
+                let setgroups = format!("/proc/{}/setgroups", child);
+
+                // Write mappings (parent has permission to do this)
+                fs::write(&uid_map, format!("0 {} 1", uid))
+                    .map_err(|e| SandboxError::NamespaceError(format!("uid_map: {}", e)))?;
+                fs::write(&setgroups, "deny")
+                    .map_err(|e| SandboxError::NamespaceError(format!("setgroups: {}", e)))?;
+                fs::write(&gid_map, format!("0 {} 1", gid))
+                    .map_err(|e| SandboxError::NamespaceError(format!("gid_map: {}", e)))?;
+
+                // Signal child that mapping is done
+                write_fd.write_all(b"ok")
+                    .map_err(|e| SandboxError::Io(e))?;
+                drop(write_fd);
+
                 // Wait for child
                 self.wait_for_child(child)
             }
             ForkResult::Child => {
-                // Child process: create namespaces and execute
+                // Child: Close write end, keep read end
+                drop(write_fd);
+
+                // Create user namespace FIRST (so parent can write uid_map)
+                unshare(CloneFlags::CLONE_NEWUSER).unwrap();
+
+                // Wait for parent to setup uid/gid mapping
+                let mut buf = [0u8; 2];
+                nix::unistd::read(read_raw, &mut buf).unwrap();
+                drop(read_fd);
+
+                // Child process: create remaining namespaces and execute
                 match self.execute_in_namespace() {
                     Ok(output) => {
                         // Exit with success
@@ -141,11 +185,12 @@ impl Sandbox {
 
     /// Execute task inside namespace
     fn execute_in_namespace(&self) -> Result<std::process::Output> {
-        // Create new namespaces
+        use std::fs::File;
+
+        // Create remaining namespaces (user namespace already created)
         unshare(
             CloneFlags::CLONE_NEWNS    // Mount namespace
             | CloneFlags::CLONE_NEWPID  // PID namespace
-            | CloneFlags::CLONE_NEWUSER // User namespace
             | if !self.config.network {
                 CloneFlags::CLONE_NEWNET  // Network namespace (if disabled)
             } else {
@@ -153,7 +198,7 @@ impl Sandbox {
             }
         ).map_err(|e| SandboxError::NamespaceError(e.to_string()))?;
 
-        // Make / private (so our mounts don't propagate)
+        // Make / private (so our mounts don't propagate to host)
         mount(
             None::<&str>,
             "/",
@@ -169,11 +214,20 @@ impl Sandbox {
         let work_dir = self.config.sandbox_dir.join("work");
         chdir(&work_dir)?;
 
+        // FIX 1: Redirect stdout/stderr to files for capture
+        let stdout_path = self.config.sandbox_dir.join("stdout.log");
+        let stderr_path = self.config.sandbox_dir.join("stderr.log");
+
+        let stdout_file = File::create(&stdout_path)?;
+        let stderr_file = File::create(&stderr_path)?;
+
         // Execute command
         let mut cmd = Command::new("bash");
         cmd.arg("-c")
            .arg(&self.config.script)
-           .current_dir(&work_dir);
+           .current_dir(&work_dir)
+           .stdout(stdout_file)  // Redirect stdout to file
+           .stderr(stderr_file); // Redirect stderr to file
 
         // Set environment variables
         cmd.env("WORKDIR", "/work");  // Virtual path
@@ -185,9 +239,16 @@ impl Sandbox {
             cmd.env(key, value);
         }
 
-        // Execute
-        cmd.output()
-           .map_err(|e| SandboxError::ExecutionError(e.to_string()))
+        // Execute and wait for completion
+        let status = cmd.status()
+           .map_err(|e| SandboxError::ExecutionError(e.to_string()))?;
+
+        // Return empty output (actual output is in files)
+        Ok(std::process::Output {
+            status,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
     }
 
     /// Setup overlay mounts for dependency sysroots
@@ -224,15 +285,23 @@ impl Sandbox {
             return Ok(());
         }
 
-        // Build lowerdir string (colon-separated paths)
+        // FIX 2: Build lowerdir with ABSOLUTE paths (colon-separated)
         // Last dep has highest priority
         let lowerdir = deps
             .iter()
-            .map(|dep| dep.sysroot_path.to_str().unwrap())
+            .map(|dep| {
+                // Canonicalize to get absolute path
+                dep.sysroot_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| dep.sysroot_path.clone())
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            })
             .collect::<Vec<_>>()
             .join(":");
 
-        // Work and upper directories for overlay
+        // FIX 3: Work and upper directories for overlay (ABSOLUTE paths)
         let work_dir = self.config.sandbox_dir
             .join(format!("overlay-work-{}", overlay_type));
         let upper_dir = self.config.sandbox_dir
@@ -241,13 +310,21 @@ impl Sandbox {
         fs::create_dir_all(&work_dir)?;
         fs::create_dir_all(&upper_dir)?;
 
-        // Build overlay options
+        // Get absolute paths for upperdir and workdir
+        let work_dir_abs = work_dir.canonicalize().unwrap_or(work_dir);
+        let upper_dir_abs = upper_dir.canonicalize().unwrap_or(upper_dir);
+
+        // Build overlay options with absolute paths
         let opts = format!(
             "lowerdir={},upperdir={},workdir={}",
             lowerdir,
-            upper_dir.display(),
-            work_dir.display()
+            upper_dir_abs.display(),
+            work_dir_abs.display()
         );
+
+        tracing::debug!("OverlayFS mount options: {}", opts);
+        tracing::debug!("Mount point: {}", mount_point.display());
+        tracing::debug!("Mount point exists: {}", mount_point.exists());
 
         // Mount overlay
         let opts_cstring = CString::new(opts.as_str())
