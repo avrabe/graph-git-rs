@@ -2,7 +2,7 @@
 //! WASM-compatible using platform-agnostic async
 
 use super::executor::TaskExecutor;
-use super::types::{ExecutionResult, TaskOutput, TaskSpec};
+use super::types::{ExecutionResult, TaskOutput, TaskSpec, NetworkPolicy, ResourceLimits};
 use crate::task_graph::TaskGraph;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -156,7 +156,9 @@ mod tests {
             workdir: tmp.path().to_path_buf(),
             env: HashMap::new(),
             outputs: vec![],
-            timeout: Some(30),
+            timeout: Some(std::time::Duration::from_secs(30)),
+            network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
         };
 
         let result = async_executor.execute_task(spec).await;

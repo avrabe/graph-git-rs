@@ -25,6 +25,7 @@ hostname = "0.4"
 filetime = "0.2"
 clap = { version = "4.5.38", features = ["derive"] }
 tracing-subscriber = "0.3.19"
+async-trait = "0.1"
 
 # Linux namespaces for native sandboxing (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
