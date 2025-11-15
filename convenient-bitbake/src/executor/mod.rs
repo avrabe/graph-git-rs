@@ -19,6 +19,7 @@ pub mod interactive;
 pub mod remote_cache;
 pub mod script_analyzer;
 pub mod direct_executor;
+pub mod fetch_handler;
 
 pub use types::{
     TaskSignature, TaskOutput, TaskSpec, SandboxSpec,
@@ -36,3 +37,4 @@ pub use interactive::{InteractiveExecutor, InteractiveOptions, ExecutionControlH
 pub use remote_cache::{RemoteCacheClient, RemoteCacheConfig, ActionResult, OutputFile, ExecutionMetadata};
 pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script};
 pub use direct_executor::{execute_direct, DirectExecutionResult};
+pub use fetch_handler::{fetch_source, FetchError, FetchResult};
