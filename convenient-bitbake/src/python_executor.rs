@@ -108,6 +108,12 @@ mod bitbake_internal {
             self.inner.lock().unwrap().prepend_var(name.as_str().to_string(), value.as_str().to_string());
             Ok(())
         }
+
+        #[pymethod]
+        fn expand(&self, value: PyStrRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+            let expanded = self.inner.lock().unwrap().expand_value(value.as_str());
+            Ok(vm.ctx.new_str(expanded).into())
+        }
     }
 }
 
@@ -276,6 +282,33 @@ impl PythonExecutor {
         Self { timeout }
     }
 
+    /// Dedent Python code by removing common leading whitespace
+    /// Similar to Python's textwrap.dedent()
+    fn dedent(code: &str) -> String {
+        let lines: Vec<&str> = code.lines().collect();
+
+        // Find minimum indentation (excluding empty lines)
+        let min_indent = lines.iter()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.len() - line.trim_start().len())
+            .min()
+            .unwrap_or(0);
+
+        // Remove that amount of indentation from each line
+        lines.iter()
+            .map(|line| {
+                if line.trim().is_empty() {
+                    "" // Keep empty lines empty
+                } else if line.len() >= min_indent {
+                    &line[min_indent..]
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<&str>>()
+            .join("\n")
+    }
+
     /// Execute Python code with a mocked BitBake DataStore
     ///
     /// # Arguments
@@ -355,7 +388,7 @@ impl PythonExecutor {
         // Add 'd' as a global
         scope.globals.set_item("d", d_obj.clone(), vm)?;
 
-        // Create bb.utils module with contains function
+        // Create bb.utils module with contains function and helper functions
         let bb_utils_code = r#"
 class _BBUtils:
     def __init__(self, d_obj):
@@ -375,11 +408,21 @@ class _BB:
         self.utils = _BBUtils(d_obj)
 
 bb = _BB(d)
+
+# Helper function used by os-release recipe
+def sanitise_value(value):
+    """Sanitise value for unquoted OS release fields"""
+    # Simple sanitisation: remove quotes and dangerous characters
+    value = value.replace('"', '').replace("'", '').replace('`', '')
+    return value.strip()
 "#;
         vm.run_block_expr(scope.clone(), bb_utils_code)?;
 
+        // Dedent the Python code to remove common leading whitespace
+        let dedented_code = Self::dedent(python_code);
+
         // Execute the Python code
-        let code_obj = match vm.compile(python_code, rustpython_vm::compiler::Mode::Exec, "<bitbake>".to_owned()) {
+        let code_obj = match vm.compile(&dedented_code, rustpython_vm::compiler::Mode::Exec, "<bitbake>".to_owned()) {
             Ok(code) => code,
             Err(e) => return Ok(PythonExecutionResult::failure(format!("Compile error: {:?}", e))),
         };
@@ -828,5 +871,35 @@ if machine and machine.startswith('qemu'):
         let result = executor.execute(code, &initial);
         assert!(result.success, "Execution should succeed: {:?}", result.error);
         assert_eq!(result.variables_set.get("RDEPENDS"), Some(&" qemu-helper".to_string()));
+    }
+
+    #[test]
+    fn test_dedent() {
+        // Test dedenting code with common leading whitespace
+        let indented_code = "    x = 1\n    y = 2\n    z = x + y";
+        let expected = "x = 1\ny = 2\nz = x + y";
+        assert_eq!(PythonExecutor::dedent(indented_code), expected);
+
+        // Test with mixed indentation
+        let mixed_code = "    line1\n        line2\n    line3";
+        let expected_mixed = "line1\n    line2\nline3";
+        assert_eq!(PythonExecutor::dedent(mixed_code), expected_mixed);
+
+        // Test with empty lines
+        let with_empty = "    x = 1\n\n    y = 2";
+        let expected_empty = "x = 1\n\ny = 2";
+        assert_eq!(PythonExecutor::dedent(with_empty), expected_empty);
+    }
+
+    #[test]
+    fn test_execute_indented_code() {
+        // Test that executor can handle indented code (like from BitBake recipes)
+        let executor = PythonExecutor::new();
+
+        let indented_code = "    x = 1 + 1\n    d.setVar('RESULT', str(x))";
+
+        let result = executor.execute(indented_code, &HashMap::new());
+        assert!(result.success, "Execution should succeed: {:?}", result.error);
+        assert_eq!(result.variables_set.get("RESULT"), Some(&"2".to_string()));
     }
 }
