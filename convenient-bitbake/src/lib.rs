@@ -43,6 +43,7 @@ pub mod query;
 
 // RustPython execution is now always available
 pub mod python_executor;
+pub mod python_bridge;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}};
