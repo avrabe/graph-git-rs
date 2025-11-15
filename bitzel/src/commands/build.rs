@@ -206,6 +206,9 @@ pub async fn execute(
         NetworkPolicy::Isolated
     };
 
+    // Auto-detect execution mode from script
+    let execution_mode = convenient_bitbake::executor::determine_execution_mode(&expanded_script);
+
     // Create TaskSpec
     let task_spec = TaskSpec {
         name: task_impl.name.clone(),
@@ -215,13 +218,20 @@ pub async fn execute(
         env: initial_vars.clone(),
         outputs: vec![],  // Auto-detect outputs
         timeout: Some(Duration::from_secs(600)),  // 10 minute timeout
+        execution_mode,
         network_policy,
         resource_limits: ResourceLimits::default(),
     };
 
-    println!("  Mode: Shell (Linux namespace sandbox)");
-    println!("  Network: {:?}", task_spec.network_policy);
-    println!("  Resource limits: 4GB memory, 1024 PIDs");
+    println!("  Mode: {:?}", task_spec.execution_mode);
+    if task_spec.execution_mode.requires_sandbox() {
+        println!("  Sandbox: Yes (Linux namespace)");
+        println!("  Network: {:?}", task_spec.network_policy);
+        println!("  Resource limits: 4GB memory, 1024 PIDs");
+    } else {
+        println!("  Sandbox: No (direct Rust execution)");
+        println!("  Host contamination: None (hermetic)");
+    }
     println!();
 
     // Execute!

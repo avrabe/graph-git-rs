@@ -9,6 +9,7 @@
 //! - Complex operations: pipes, loops, conditionals → fallback to bash
 //! - ~60% of BitBake tasks are simple enough for fast path
 
+use super::types::ExecutionMode;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -24,14 +25,29 @@ pub enum DirectAction {
     /// Write content to file (echo > file)
     WriteFile { path: String, content: String },
 
+    /// Append content to file (echo >> file)
+    AppendFile { path: String, content: String },
+
     /// Copy file (cp)
-    Copy { src: String, dest: String, mode: Option<u32> },
+    Copy { src: String, dest: String, recursive: bool, mode: Option<u32> },
+
+    /// Move/rename file (mv)
+    Move { src: String, dest: String },
+
+    /// Remove file or directory (rm)
+    Remove { path: String, recursive: bool, force: bool },
+
+    /// Create symbolic link (ln -s)
+    Symlink { target: String, link: String },
 
     /// Log message (echo/bb_note)
     Log { level: LogLevel, message: String },
 
     /// Set environment variable (export)
     SetEnv { key: String, value: String },
+
+    /// Change file permissions (chmod)
+    Chmod { path: String, mode: u32 },
 }
 
 /// Logging level
@@ -233,14 +249,34 @@ fn parse_simple_action(line: &str, env_vars: &HashMap<String, String>) -> Option
         return parse_echo(line);
     }
 
-    // Simple echo redirect: echo "content" > file
+    // Simple echo redirect: echo "content" > file or >> file
     if line.contains("echo ") && (line.contains(" > ") || line.contains(" >> ")) {
         return parse_echo_redirect(line, env_vars);
     }
 
-    // Copy command: cp src dest
+    // Copy command: cp [-r] src dest
     if line.starts_with("cp ") {
         return parse_cp(line, env_vars);
+    }
+
+    // Move command: mv src dest
+    if line.starts_with("mv ") {
+        return parse_mv(line, env_vars);
+    }
+
+    // Remove command: rm [-rf] path
+    if line.starts_with("rm ") {
+        return parse_rm(line, env_vars);
+    }
+
+    // Symlink: ln -s target link
+    if line.starts_with("ln -s ") || line.starts_with("ln -sf ") {
+        return parse_ln(line, env_vars);
+    }
+
+    // Chmod: chmod mode file
+    if line.starts_with("chmod ") {
+        return parse_chmod(line, env_vars);
     }
 
     None
@@ -329,18 +365,17 @@ fn parse_echo(line: &str) -> Option<DirectAction> {
     })
 }
 
-/// Parse echo redirect: echo "content" > file
+/// Parse echo redirect: echo "content" > file or >> file
 fn parse_echo_redirect(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectAction> {
-    // Simple pattern: echo "content" > file or echo content > file
-    let parts: Vec<&str> = if line.contains(" > ") {
-        line.split(" > ").collect()
-    } else if line.contains(" >> ") {
-        // For append, fall back to bash (complex)
-        return None;
-    } else {
-        return None;
-    };
+    // Determine if write or append
+    let is_append = line.contains(" >> ");
+    let separator = if is_append { " >> " } else { " > " };
 
+    if !line.contains(separator) {
+        return None;
+    }
+
+    let parts: Vec<&str> = line.split(separator).collect();
     if parts.len() != 2 {
         return None;
     }
@@ -352,17 +387,148 @@ fn parse_echo_redirect(line: &str, env_vars: &HashMap<String, String>) -> Option
     let path = remove_quotes(file_part);
     let expanded_path = expand_variables(&path, env_vars);
 
-    Some(DirectAction::WriteFile {
-        path: expanded_path,
-        content
+    if is_append {
+        Some(DirectAction::AppendFile {
+            path: expanded_path,
+            content
+        })
+    } else {
+        Some(DirectAction::WriteFile {
+            path: expanded_path,
+            content
+        })
+    }
+}
+
+/// Parse cp command: cp [-r] src dest
+fn parse_cp(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectAction> {
+    let rest = line.strip_prefix("cp ")?.trim();
+
+    // Check for -r flag
+    let (recursive, rest) = if rest.starts_with("-r ") || rest.starts_with("-R ") {
+        (true, rest[3..].trim())
+    } else {
+        (false, rest)
+    };
+
+    // Split into src and dest
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() != 2 {
+        return None; // Complex case with multiple sources
+    }
+
+    let src = remove_quotes(parts[0]);
+    let dest = remove_quotes(parts[1]);
+    let src_expanded = expand_variables(&src, env_vars);
+    let dest_expanded = expand_variables(&dest, env_vars);
+
+    Some(DirectAction::Copy {
+        src: src_expanded,
+        dest: dest_expanded,
+        recursive,
+        mode: None,
     })
 }
 
-/// Parse cp command
-fn parse_cp(line: &str, _env_vars: &HashMap<String, String>) -> Option<DirectAction> {
-    // For now, cp is considered complex (need to handle -a, -r, etc.)
-    // TODO: Implement simple cp parsing
-    None
+/// Parse mv command: mv src dest
+fn parse_mv(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectAction> {
+    let rest = line.strip_prefix("mv ")?.trim();
+
+    // Split into src and dest
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() != 2 {
+        return None; // Complex case
+    }
+
+    let src = remove_quotes(parts[0]);
+    let dest = remove_quotes(parts[1]);
+    let src_expanded = expand_variables(&src, env_vars);
+    let dest_expanded = expand_variables(&dest, env_vars);
+
+    Some(DirectAction::Move {
+        src: src_expanded,
+        dest: dest_expanded,
+    })
+}
+
+/// Parse rm command: rm [-rf] path
+fn parse_rm(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectAction> {
+    let rest = line.strip_prefix("rm ")?.trim();
+
+    let mut recursive = false;
+    let mut force = false;
+    let mut remaining = rest;
+
+    // Parse flags
+    loop {
+        if remaining.starts_with("-rf ") || remaining.starts_with("-fr ") {
+            recursive = true;
+            force = true;
+            remaining = &remaining[4..];
+        } else if remaining.starts_with("-r ") {
+            recursive = true;
+            remaining = &remaining[3..];
+        } else if remaining.starts_with("-f ") {
+            force = true;
+            remaining = &remaining[3..];
+        } else {
+            break;
+        }
+    }
+
+    let path = remove_quotes(remaining.trim());
+    let expanded_path = expand_variables(&path, env_vars);
+
+    Some(DirectAction::Remove {
+        path: expanded_path,
+        recursive,
+        force,
+    })
+}
+
+/// Parse ln command: ln -s target link
+fn parse_ln(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectAction> {
+    // ln -s or ln -sf
+    let rest = if let Some(r) = line.strip_prefix("ln -sf ") {
+        r
+    } else {
+        line.strip_prefix("ln -s ")?
+    };
+
+    let parts: Vec<&str> = rest.trim().split_whitespace().collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let target = remove_quotes(parts[0]);
+    let link = remove_quotes(parts[1]);
+    let target_expanded = expand_variables(&target, env_vars);
+    let link_expanded = expand_variables(&link, env_vars);
+
+    Some(DirectAction::Symlink {
+        target: target_expanded,
+        link: link_expanded,
+    })
+}
+
+/// Parse chmod command: chmod mode file
+fn parse_chmod(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectAction> {
+    let rest = line.strip_prefix("chmod ")?.trim();
+
+    let parts: Vec<&str> = rest.split_whitespace().collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    // Parse mode as octal
+    let mode = u32::from_str_radix(parts[0], 8).ok()?;
+    let path = remove_quotes(parts[1]);
+    let expanded_path = expand_variables(&path, env_vars);
+
+    Some(DirectAction::Chmod {
+        mode,
+        path: expanded_path,
+    })
 }
 
 /// Remove surrounding quotes from string
@@ -480,5 +646,62 @@ fi
     fn test_detect_pipe_complexity() {
         assert!(contains_complexity("ls | grep foo"));
         assert!(!contains_complexity("echo 'test || fail'"));
+    }
+}
+
+/// Determine optimal execution mode for a script
+///
+/// Analyzes the script and returns the best execution mode:
+/// - DirectRust: Simple script with only file operations, no shell needed
+/// - Python: Python script (not yet implemented)
+/// - Shell: Complex script requiring bash
+pub fn determine_execution_mode(script: &str) -> ExecutionMode {
+    // Check if it's a Python script
+    if script.trim_start().starts_with("#!") && script.contains("python") {
+        return ExecutionMode::Python;
+    }
+
+    // Analyze for DirectRust capability
+    let analysis = analyze_script(script);
+
+    if analysis.is_simple {
+        ExecutionMode::DirectRust
+    } else {
+        ExecutionMode::Shell
+    }
+}
+
+#[cfg(test)]
+mod execution_mode_tests {
+    use super::*;
+
+    #[test]
+    fn test_determine_simple_script() {
+        let script = r#"#!/bin/bash
+. /bitzel/prelude.sh
+export PN="test"
+bb_note "Starting"
+touch "$D/output.txt"
+"#;
+        assert_eq!(determine_execution_mode(script), ExecutionMode::DirectRust);
+    }
+
+    #[test]
+    fn test_determine_complex_script() {
+        let script = r#"#!/bin/bash
+. /bitzel/prelude.sh
+for file in *.txt; do
+    echo "Processing $file"
+done
+"#;
+        assert_eq!(determine_execution_mode(script), ExecutionMode::Shell);
+    }
+
+    #[test]
+    fn test_determine_python_script() {
+        let script = r#"#!/usr/bin/env python3
+print("Hello from Python")
+"#;
+        assert_eq!(determine_execution_mode(script), ExecutionMode::Python);
     }
 }
