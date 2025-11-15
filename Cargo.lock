@@ -229,6 +229,7 @@ name = "bitzel"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap 4.5.51",
  "convenient-bitbake",
  "convenient-cache",
  "convenient-graph",
