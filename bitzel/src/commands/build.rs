@@ -361,12 +361,31 @@ pub async fn execute(
                             &resource_limits,
                         ) {
                             Ok((exit_code, stdout, stderr)) => {
-                                println!("  ✓ Task succeeded (exit code: {})", exit_code);
+                                if exit_code == 0 {
+                                    println!("  ✓ Task succeeded (exit code: {})", exit_code);
+                                } else {
+                                    println!("  ✗ Task FAILED (exit code: {})", exit_code);
+                                }
+
                                 if !stdout.is_empty() {
                                     println!("  Stdout: {} bytes", stdout.len());
                                 }
                                 if !stderr.is_empty() {
-                                    println!("  Stderr: {} bytes", stderr.len());
+                                    println!("  Stderr ({} bytes):", stderr.len());
+                                    // Show first 500 chars of stderr for debugging
+                                    let preview = if stderr.len() > 500 {
+                                        format!("{}...\n[{} more bytes]", &stderr[..500], stderr.len() - 500)
+                                    } else {
+                                        stderr.clone()
+                                    };
+                                    for line in preview.lines() {
+                                        println!("    {}", line);
+                                    }
+                                }
+
+                                // Fail if exit code is non-zero
+                                if exit_code != 0 {
+                                    return Err(format!("Task failed with exit code {}", exit_code).into());
                                 }
 
                                 // Collect output files
