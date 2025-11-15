@@ -204,7 +204,7 @@ impl TaskSignature {
 }
 
 /// Specification for task execution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSpec {
     /// Task name
     pub name: String,
@@ -224,7 +224,11 @@ pub struct TaskSpec {
     /// Declared outputs (relative to workdir)
     pub outputs: Vec<PathBuf>,
 
-    /// Timeout
+    /// Timeout (in seconds, for serialization compatibility)
+    #[serde(
+        serialize_with = "serialize_duration",
+        deserialize_with = "deserialize_duration"
+    )]
     pub timeout: Option<Duration>,
 
     /// Network policy for this task
@@ -341,4 +345,23 @@ pub enum ExecutionError {
         expected: ContentHash,
         actual: ContentHash,
     },
+}
+
+// Helper functions for Duration serialization
+fn serialize_duration<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match duration {
+        Some(d) => serializer.serialize_some(&d.as_secs()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn deserialize_duration<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let secs: Option<u64> = Option::deserialize(deserializer)?;
+    Ok(secs.map(Duration::from_secs))
 }
