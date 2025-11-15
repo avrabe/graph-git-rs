@@ -333,14 +333,15 @@ fn execute_child_with_userns(
     drop(read_fd);
 
     // Step 3: Create mount, PID, and optionally network namespaces based on policy
+    // NOTE: Temporarily disabling PID namespace to debug execution issues
     let clone_flags = match network_policy {
         NetworkPolicy::FullNetwork => {
-            debug!("Child: UID/GID mapping confirmed, creating mount+PID namespaces (NO network namespace)");
-            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID
+            debug!("Child: UID/GID mapping confirmed, creating mount namespace only (NO network/PID namespace for now)");
+            CloneFlags::CLONE_NEWNS
         }
         _ => {
-            debug!("Child: UID/GID mapping confirmed, creating mount+PID+network namespaces");
-            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET
+            debug!("Child: UID/GID mapping confirmed, creating mount+network namespaces (NO PID namespace for now)");
+            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET
         }
     };
 
@@ -384,39 +385,65 @@ fn execute_child_with_userns(
 
     // Step 5: Bind mount essential system directories (read-only)
     // These allow access to system binaries and libraries while maintaining isolation
-    let system_dirs = [
-        "/bin",
-        "/sbin",
-        "/usr",
-        "/lib",
-        "/lib64",
-        "/etc/resolv.conf",
-        "/etc/ssl",
-    ];
+    let essential_dirs = ["/bin", "/sbin", "/usr", "/lib", "/lib64"];
+    let optional_files = ["/etc/resolv.conf", "/etc/ssl"];
 
-    for dir_str in &system_dirs {
+    // Mount essential directories - fail if these don't work
+    for dir_str in &essential_dirs {
         let dir = Path::new(dir_str);
         if dir.exists() {
-            // For files (like /etc/resolv.conf), just bind mount directly
-            // For directories, bind mount recursively
-            let flags = if dir.is_file() {
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY
-            } else {
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REC
-            };
-
-            match mount(
+            // Step 1: Bind mount (writable first)
+            mount(
                 Some(dir),
                 dir,
                 None::<&str>,
-                flags,
+                MsFlags::MS_BIND | MsFlags::MS_REC,
+                None::<&str>,
+            )
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to bind mount essential directory {}: {}", dir_str, e)))?;
+
+            // Step 2: Remount as read-only
+            mount(
+                None::<&str>,
+                dir,
+                None::<&str>,
+                MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC,
+                None::<&str>,
+            )
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to remount essential directory {} as read-only: {}", dir_str, e)))?;
+
+            debug!("Child: bind mounted {} (read-only)", dir_str);
+        } else {
+            warn!("Child: essential directory {} does not exist", dir_str);
+        }
+    }
+
+    // Mount optional files - non-fatal if missing
+    for file_str in &optional_files {
+        let file = Path::new(file_str);
+        if file.exists() {
+            // Step 1: Bind mount
+            match mount(
+                Some(file),
+                file,
+                None::<&str>,
+                MsFlags::MS_BIND,
                 None::<&str>,
             ) {
-                Ok(_) => debug!("Child: bind mounted {} (read-only)", dir_str),
-                Err(e) => {
-                    // Non-fatal: some systems might not have all directories
-                    warn!("Child: failed to bind mount {} (skipping): {}", dir_str, e);
+                Ok(_) => {
+                    // Step 2: Remount as read-only
+                    match mount(
+                        None::<&str>,
+                        file,
+                        None::<&str>,
+                        MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
+                        None::<&str>,
+                    ) {
+                        Ok(_) => debug!("Child: bind mounted {} (read-only)", file_str),
+                        Err(e) => warn!("Child: failed to remount optional file {} as read-only (skipping): {}", file_str, e),
+                    }
                 }
+                Err(e) => warn!("Child: failed to bind mount optional file {} (skipping): {}", file_str, e),
             }
         }
     }
@@ -439,7 +466,8 @@ fn execute_child_with_userns(
     debug!("Child: changed to work directory: {}", work_dir.display());
 
     // Step 8: Execute command
-    let mut cmd = Command::new("bash");
+    // Use absolute path to bash to avoid PATH lookups in the new namespace
+    let mut cmd = Command::new("/usr/bin/bash");
     cmd.arg("-c")
        .arg(script)
        .current_dir(work_dir)
@@ -457,11 +485,11 @@ fn execute_child_with_userns(
     cmd.env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
     cmd.env("SHELL", "/bin/bash");
 
-    debug!("Child: executing: bash -c {:?}", script);
+    debug!("Child: executing: /usr/bin/bash -c {:?}", script);
 
     // Execute and get status
     let status = cmd.status()
-        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed (check if /usr/bin/bash is mounted): {}", e)))?;
 
     let exit_code = status.code().unwrap_or(1);
     debug!("Child: command completed with exit code: {}", exit_code);
@@ -514,7 +542,8 @@ fn execute_with_bash(
     stdout_file: std::fs::File,
     stderr_file: std::fs::File,
 ) -> Result<i32, ExecutionError> {
-    let mut cmd = Command::new("bash");
+    // Use /bin/sh for better compatibility (often statically linked or has fewer deps)
+    let mut cmd = Command::new("/bin/sh");
     cmd.arg("-c")
        .arg(script)
        .current_dir(work_dir)
@@ -530,13 +559,27 @@ fn execute_with_bash(
     // Add essential environment
     cmd.env("HOME", "/tmp");
     cmd.env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-    cmd.env("SHELL", "/bin/bash");
+    cmd.env("SHELL", "/bin/sh");
 
-    debug!("Executing with bash: {:?}", script);
+    // Verify work_dir exists
+    if !work_dir.exists() {
+        return Err(ExecutionError::SandboxError(format!("Work directory does not exist: {:?}", work_dir)));
+    }
+
+    // Verify /bin/sh exists
+    if !std::path::Path::new("/bin/sh").exists() {
+        return Err(ExecutionError::SandboxError("/bin/sh does not exist!".to_string()));
+    }
+
+    debug!("Executing with /bin/sh in work_dir {:?}: {:?}", work_dir, &script[..script.len().min(100)]);
+    debug!("Current PID: {}, work_dir exists: {}, /bin/sh exists: {}",
+           std::process::id(), work_dir.exists(), std::path::Path::new("/bin/sh").exists());
 
     // Execute and get status
     let status = cmd.status()
-        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed (shell not found or libs missing - errno {:?}): {}", e.raw_os_error(), e)))?;
+
+    debug!("Command completed with exit code: {:?}", status.code());
 
     Ok(status.code().unwrap_or(1))
 }
@@ -559,22 +602,26 @@ fn execute_child_without_userns(
     }
 
     // Determine which namespaces to create based on network policy
+    // NOTE: Temporarily disabling mount+PID namespaces to debug execution
+    // We'll use network isolation and process isolation without filesystem isolation for now
     let clone_flags = match network_policy {
         NetworkPolicy::FullNetwork => {
-            debug!("Child: creating mount+PID namespaces (NO network namespace for FullNetwork)");
-            // Skip CLONE_NEWNET to inherit host network - needed for real fetching
-            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID
+            debug!("Child: NO namespaces for debugging (full host access)");
+            // No namespace isolation for now
+            CloneFlags::empty()
         }
         _ => {
-            debug!("Child: creating mount+PID+network namespaces");
-            // Create isolated network namespace for hermetic builds
-            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET
+            debug!("Child: creating network namespace only (NO mount/PID namespace for now)");
+            // Only network isolation
+            CloneFlags::CLONE_NEWNET
         }
     };
 
-    // Create namespaces
-    unshare(clone_flags)
-        .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {}", e)))?;
+    // Create namespaces (if any)
+    if !clone_flags.is_empty() {
+        unshare(clone_flags)
+            .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {}", e)))?;
+    }
 
     debug!("Child: namespaces created successfully");
 
@@ -599,52 +646,11 @@ fn execute_child_without_userns(
         }
     }
 
-    // Make / private to prevent mount propagation
-    mount(
-        None::<&str>,
-        "/",
-        None::<&str>,
-        MsFlags::MS_PRIVATE | MsFlags::MS_REC,
-        None::<&str>,
-    )
-    .map_err(|e| ExecutionError::SandboxError(format!("Failed to make / private: {}", e)))?;
+    // NOTE: Mount operations disabled since we're not using mount namespaces
+    // When we add proper mount namespace support, we'll need to properly set up the root
+    // filesystem before bind mounting system directories
 
-    debug!("Child: made / private");
-
-    // Bind mount essential system directories (read-only)
-    let system_dirs = [
-        "/bin",
-        "/sbin",
-        "/usr",
-        "/lib",
-        "/lib64",
-        "/etc/resolv.conf",
-        "/etc/ssl",
-    ];
-
-    for dir_str in &system_dirs {
-        let dir = Path::new(dir_str);
-        if dir.exists() {
-            let flags = if dir.is_file() {
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY
-            } else {
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REC
-            };
-
-            match mount(
-                Some(dir),
-                dir,
-                None::<&str>,
-                flags,
-                None::<&str>,
-            ) {
-                Ok(_) => debug!("Child: bind mounted {} (read-only)", dir_str),
-                Err(e) => {
-                    warn!("Child: failed to bind mount {} (skipping): {}", dir_str, e);
-                }
-            }
-        }
-    }
+    debug!("Child: skipping mount operations (no mount namespace)");
 
     // Install BitBake prelude script
     install_prelude_script()
