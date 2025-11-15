@@ -23,7 +23,7 @@ pub mod fetch_handler;
 
 pub use types::{
     TaskSignature, TaskOutput, TaskSpec, SandboxSpec,
-    ContentHash, ExecutionResult,
+    ContentHash, ExecutionResult, NetworkPolicy, ResourceLimits,
 };
 pub use cache::{ContentAddressableStore, ActionCache};
 pub use sandbox::SandboxManager;
@@ -38,3 +38,6 @@ pub use remote_cache::{RemoteCacheClient, RemoteCacheConfig, ActionResult, Outpu
 pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script};
 pub use direct_executor::{execute_direct, DirectExecutionResult};
 pub use fetch_handler::{fetch_source, FetchError, FetchResult};
+
+#[cfg(target_os = "linux")]
+pub use native_sandbox::execute_in_namespace;
