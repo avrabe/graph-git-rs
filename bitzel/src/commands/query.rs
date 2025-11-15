@@ -18,11 +18,10 @@ pub async fn execute(
     println!("Loading build environment...");
     let env = BuildEnvironment::from_build_dir(build_dir)?;
 
-    let cache_dir = build_dir.join("bitzel-cache");
     let config = OrchestratorConfig {
-        cache_dir,
-        parallel_parse: true,
-        enable_incremental: false, // Don't need incremental for queries
+        build_dir: build_dir.to_path_buf(),
+        machine: env.get_machine().map(|s| s.to_string()),
+        distro: env.get_distro().map(|s| s.to_string()),
         max_io_parallelism: 32,
         max_cpu_parallelism: num_cpus::get(),
     };
@@ -63,7 +62,7 @@ pub async fn execute(
                 if i > 0 {
                     println!(",");
                 }
-                print!("  {{\"recipe\": \"{}\"}}", target.recipe_name);
+                print!("  {{\"recipe\": \"{}\"}}", target.recipe);
             }
             println!();
             println!("]");
@@ -73,20 +72,20 @@ pub async fn execute(
             println!("digraph RecipeDependencies {{");
             println!("  rankdir=LR;");
             for target in &results {
-                println!("  \"{}\";", target.recipe_name);
+                println!("  \"{}\";", target.recipe);
             }
             println!("}}");
         }
         "label" => {
             // Just recipe names
             for target in &results {
-                println!("{}", target.recipe_name);
+                println!("{}", target.recipe);
             }
         }
         _ => {
             // Text format (default)
             for target in &results {
-                println!("  {}", target.recipe_name);
+                println!("  {}", target.recipe);
             }
         }
     }

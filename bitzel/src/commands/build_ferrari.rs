@@ -24,7 +24,7 @@ fn expand_script(
     script: &str,
     env: &HashMap<String, String>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let evaluator = SimplePythonEvaluator::new();
+    let evaluator = SimplePythonEvaluator::new(env.clone());
 
     // Try to evaluate each ${@...} expression
     let mut result = script.to_string();
@@ -154,23 +154,19 @@ pub async fn execute(
     // ========== Cache Statistics ==========
     let cache_dir = build_dir.join("bitzel-cache");
     if cache_dir.exists() {
-        match CacheManager::new(&cache_dir) {
-            Ok(cache_mgr) => {
-                if let Ok(cache_query) = cache_mgr.query() {
-                    println!("💾 Cache Status:");
-                    println!("  CAS objects:      {} ({:.1} MB)",
-                        cache_query.cas_objects,
-                        cache_query.cas_bytes as f64 / 1_000_000.0
-                    );
-                    println!("  Cached tasks:     {}", cache_query.action_cache_entries);
-                    println!("  Active sandboxes: {}", cache_query.active_sandboxes);
-                    println!();
-                }
-            }
-            Err(_) => {
-                println!("💾 Cache: Not initialized yet");
-                println!();
-            }
+        let cache_mgr = CacheManager::new(&cache_dir);
+        if let Ok(cache_query) = cache_mgr.query() {
+            println!("💾 Cache Status:");
+            println!("  CAS objects:      {} ({:.1} MB)",
+                cache_query.cas_objects,
+                cache_query.cas_bytes as f64 / 1_000_000.0
+            );
+            println!("  Cached tasks:     {}", cache_query.action_cache_entries);
+            println!("  Active sandboxes: {}", cache_query.active_sandboxes);
+            println!();
+        } else {
+            println!("💾 Cache: Not initialized yet");
+            println!();
         }
     }
 
@@ -195,7 +191,7 @@ pub async fn execute(
     // ========== Build Execution Graph for Target ==========
     println!("🔗 Building execution graph for {}:{}...", recipe.name, target_task_name);
 
-    let builder = TaskGraphBuilder::new(&build_plan.recipe_graph);
+    let builder = TaskGraphBuilder::new(build_plan.recipe_graph.clone());
     let exec_graph = builder.build_for_task(target_task.task_id)?;
 
     println!("  ✓ Tasks in graph: {}", exec_graph.tasks.len());
@@ -225,8 +221,10 @@ pub async fn execute(
                     Ok(output) => {
                         if output.exit_code == 0 {
                             completed += 1;
-                            if output.from_cache {
-                                from_cache += 1;
+                            // Check cache hit via executor stats
+                            let current_stats = executor.stats();
+                            if current_stats.cache_hits > from_cache {
+                                from_cache = current_stats.cache_hits;
                                 println!("    ✓ Completed (from cache)");
                             } else {
                                 println!("    ✓ Completed ({:.2}s)", output.duration_ms as f64 / 1000.0);

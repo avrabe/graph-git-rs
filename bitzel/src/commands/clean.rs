@@ -6,12 +6,12 @@ use std::path::Path;
 /// Clean build cache (removes action cache, keeps CAS)
 pub fn clean(
     build_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("🧹 Cleaning build cache...");
     println!();
 
     let cache_dir = build_dir.join("bitzel-cache");
-    let manager = CacheManager::new(&cache_dir)?;
+    let manager = CacheManager::new(&cache_dir);
 
     let stats = manager.clean()?;
 
@@ -31,12 +31,12 @@ pub fn clean(
 /// Expunge all cache data (CAS + action cache + sandboxes)
 pub fn expunge(
     build_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("🗑️  Expunging all build cache...");
     println!();
 
     let cache_dir = build_dir.join("bitzel-cache");
-    let manager = CacheManager::new(&cache_dir)?;
+    let manager = CacheManager::new(&cache_dir);
 
     let stats = manager.expunge()?;
 
@@ -58,7 +58,7 @@ pub fn expunge(
 /// Show cache information and statistics
 pub fn info(
     build_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("ℹ️  Cache Information");
     println!("╔════════════════════════════════════════════════════════╗");
     println!();
@@ -72,7 +72,7 @@ pub fn info(
         return Ok(());
     }
 
-    let manager = CacheManager::new(&cache_dir)?;
+    let manager = CacheManager::new(&cache_dir);
     let query = manager.query()?;
 
     println!("Cache directory: {:?}", query.cache_dir);
@@ -127,12 +127,12 @@ pub fn info(
 /// Garbage collect unreferenced cache objects
 pub fn gc(
     build_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("♻️  Running garbage collection...");
     println!();
 
     let cache_dir = build_dir.join("bitzel-cache");
-    let manager = CacheManager::new(&cache_dir)?;
+    let manager = CacheManager::new(&cache_dir);
 
     let stats = manager.gc()?;
 
