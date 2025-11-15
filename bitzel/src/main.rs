@@ -1,13 +1,16 @@
 //! Bitzel - Bazel-inspired build orchestrator for BitBake/Yocto projects
 //!
-//! Supports two modes of operation:
+//! Supports multiple modes of operation:
 //! 1. KAS mode: Build using KAS configuration files
-//! 2. Native BitBake mode: Build using standard BitBake configuration
+//! 2. Build mode: Basic native BitBake builds
+//! 3. Ferrari mode: Full-featured builds with all optimizations
+//! 4. Clean/Cache: Cache management
+//! 5. Query: Dependency exploration
 
 mod commands;
 
 use clap::Parser;
-use commands::{Cli, Commands};
+use commands::{Cli, Commands, CacheOperation};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -24,25 +27,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Parse command-line arguments
     let cli = Cli::parse();
 
-    println!("\n╔════════════════════════════════════════════════════════╗");
-    println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
-    println!("║  Layer-aware BitBake with override resolution         ║");
-    println!("╚════════════════════════════════════════════════════════╝\n");
-
     // Dispatch to appropriate command
     match cli.command {
         Commands::Kas { config, builddir, target } => {
+            println!("\n╔════════════════════════════════════════════════════════╗");
+            println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
+            println!("║  Layer-aware BitBake with override resolution         ║");
+            println!("╚════════════════════════════════════════════════════════╝\n");
             println!("Mode: KAS Configuration");
             println!("Config: {:?}", config);
             println!();
             commands::kas::execute(&config, &builddir, target).await?;
         }
         Commands::Build { builddir, target } => {
-            println!("Mode: Native BitBake");
+            println!("\n╔════════════════════════════════════════════════════════╗");
+            println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
+            println!("║  Layer-aware BitBake with override resolution         ║");
+            println!("╚════════════════════════════════════════════════════════╝\n");
+            println!("Mode: Native BitBake (Basic)");
             println!("Build directory: {:?}", builddir);
             println!("Target: {}", target);
             println!();
             commands::build::execute(&builddir, &target).await?;
+        }
+        Commands::Ferrari { builddir, target } => {
+            commands::build_ferrari::execute(&builddir, &target).await?;
+        }
+        Commands::Clean { builddir, all } => {
+            if all {
+                commands::clean::expunge(&builddir)?;
+            } else {
+                commands::clean::clean(&builddir)?;
+            }
+        }
+        Commands::Cache { builddir, operation } => {
+            match operation {
+                CacheOperation::Info => {
+                    commands::clean::info(&builddir)?;
+                }
+                CacheOperation::Gc => {
+                    commands::clean::gc(&builddir)?;
+                }
+            }
+        }
+        Commands::Query { builddir, query, format } => {
+            commands::query::execute(&builddir, &query, &format).await?;
+        }
+        Commands::QueryHelp => {
+            commands::query::help();
         }
     }
 
