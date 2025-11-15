@@ -41,7 +41,7 @@ pub mod signature_cache;
 pub mod build_orchestrator;
 pub mod query;
 
-#[cfg(feature = "python-execution")]
+// RustPython execution is now always available
 pub mod python_executor;
 
 use serde::{Deserialize, Serialize};
@@ -75,7 +75,7 @@ pub use pipeline::{Pipeline, PipelineConfig, StageHash, RecipeFile, ParsedRecipe
 pub use signature_cache::{SignatureCache, EnhancedTaskSignature, SignatureStats};
 pub use build_orchestrator::{BuildOrchestrator, OrchestratorConfig, BuildPlan, IncrementalStats};
 
-#[cfg(feature = "python-execution")]
+// Always export Python executor types
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
 
 // === Data Models ===

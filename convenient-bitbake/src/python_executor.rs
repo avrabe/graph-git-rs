@@ -1,7 +1,7 @@
 // RustPython-based Python execution for BitBake recipes
-// Executes Python code with mocked BitBake DataStore for high-accuracy variable extraction
-
-#![cfg(feature = "python-execution")]
+// Executes Python code with BitBake DataStore for high-accuracy variable extraction
+//
+// NOTE: RustPython is now ALWAYS enabled (no longer a feature flag)
 
 use rustpython::{
     vm::{builtins::PyStrRef, pyclass, pymodule, PyObjectRef, PyPayload, PyResult, VirtualMachine},
