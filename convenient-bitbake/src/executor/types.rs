@@ -6,6 +6,44 @@ use std::path::PathBuf;
 use std::time::Duration;
 use sha2::{Sha256, Digest};
 
+/// Execution mode for task - determines sandboxing requirements
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionMode {
+    /// Direct Rust execution - no sandbox, no shell, no host contamination
+    /// Only for simple operations: file ops, env vars, logging
+    /// Provides maximum performance and hermetic execution
+    DirectRust,
+
+    /// Shell script execution - requires full sandboxing
+    /// Used when script contains complex bash operations
+    Shell,
+
+    /// Python script execution - requires full sandboxing
+    /// Used for Python tasks with RustPython VM
+    Python,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        ExecutionMode::Shell  // Conservative default
+    }
+}
+
+impl ExecutionMode {
+    /// Whether this mode requires sandboxing
+    pub fn requires_sandbox(&self) -> bool {
+        match self {
+            ExecutionMode::DirectRust => false,
+            ExecutionMode::Shell | ExecutionMode::Python => true,
+        }
+    }
+
+    /// Whether this mode can contaminate the host
+    pub fn can_contaminate_host(&self) -> bool {
+        self.requires_sandbox()
+    }
+}
+
 /// Network isolation policy for sandbox
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetworkPolicy {
@@ -231,10 +269,14 @@ pub struct TaskSpec {
     )]
     pub timeout: Option<Duration>,
 
-    /// Network policy for this task
+    /// Execution mode (determines if sandboxing is needed)
+    #[serde(default)]
+    pub execution_mode: ExecutionMode,
+
+    /// Network policy for this task (only used if execution_mode requires sandbox)
     pub network_policy: NetworkPolicy,
 
-    /// Resource limits for this task
+    /// Resource limits for this task (only used if execution_mode requires sandbox)
     pub resource_limits: ResourceLimits,
 }
 

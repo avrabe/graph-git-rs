@@ -157,6 +157,7 @@ mod tests {
             env: HashMap::new(),
             outputs: vec![],
             timeout: Some(std::time::Duration::from_secs(30)),
+            execution_mode: ExecutionMode::Shell,
             network_policy: NetworkPolicy::Isolated,
             resource_limits: ResourceLimits::default(),
         };

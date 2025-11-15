@@ -29,7 +29,7 @@ pub mod executor_pool;
 
 pub use types::{
     TaskSignature, TaskOutput, TaskSpec, SandboxSpec,
-    ContentHash, ExecutionResult, NetworkPolicy, ResourceLimits,
+    ContentHash, ExecutionResult, ExecutionMode, NetworkPolicy, ResourceLimits,
 };
 pub use cache::{ContentAddressableStore, ActionCache};
 pub use sandbox::SandboxManager;
@@ -41,7 +41,7 @@ pub use async_executor::AsyncTaskExecutor;
 pub use monitor::{TaskMonitor, TaskInfo, TaskState, BuildStats};
 pub use interactive::{InteractiveExecutor, InteractiveOptions, ExecutionControlHandle};
 pub use remote_cache::{RemoteCacheClient, RemoteCacheConfig, ActionResult, OutputFile, ExecutionMetadata};
-pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script};
+pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script, determine_execution_mode};
 pub use direct_executor::{execute_direct, DirectExecutionResult};
 pub use fetch_handler::{fetch_source, FetchError, FetchResult};
 
