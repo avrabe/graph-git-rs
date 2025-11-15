@@ -62,7 +62,7 @@ pub use override_resolver::{OverrideResolver, OverrideOp, OverrideAssignment};
 pub use bitbake_config::{BbLayersConfig, LocalConfig, VariableExpander};
 pub use build_env::BuildEnvironment;
 pub use python_analysis::{PythonAnalyzer, PythonBlock, PythonBlockType, PythonVariableOp, PythonOpType, PythonAnalysisSummary};
-pub use task_parser::{Task, TaskDependency, TaskCollection, parse_addtask_statement, parse_task_flag};
+pub use task_parser::{Task, TaskDependency, TaskCollection, parse_addtask_statement, parse_deltask_statement, parse_task_flag};
 pub use task_extractor::{TaskExtractor, TaskImplementation, TaskImplementationType};
 pub use recipe_graph::{RecipeId, TaskId, Recipe, TaskNode, RecipeGraph, GraphStatistics};
 pub use task_graph::{TaskGraph, TaskGraphBuilder, ExecutableTask, TaskGraphStats};
