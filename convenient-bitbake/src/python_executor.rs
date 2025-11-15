@@ -298,6 +298,24 @@ impl PythonExecutor {
                     "bitbake_internal".to_owned(),
                     Box::new(bitbake_internal::make_module),
                 );
+
+                // Register bb.utils module
+                vm.add_native_module(
+                    "bb.utils".to_owned(),
+                    Box::new(bb_utils::make_module),
+                );
+
+                // Register bb.fetch2 module (Python-to-Rust fetch bridge)
+                vm.add_native_module(
+                    "bb.fetch2".to_owned(),
+                    Box::new(crate::python_bridge::bb_fetch2::make_module),
+                );
+
+                // Register top-level bb module
+                vm.add_native_module(
+                    "bb".to_owned(),
+                    Box::new(crate::python_bridge::bb::make_module),
+                );
             }))
             .interpreter();
 
