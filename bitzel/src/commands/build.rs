@@ -4,8 +4,8 @@
 //! from a build directory (conf/bblayers.conf and conf/local.conf).
 
 use convenient_bitbake::{
-    BuildEnvironment, ExtractionConfig, RecipeExtractor, RecipeGraph,
-    TaskGraphBuilder, Pipeline, PipelineConfig,
+    BuildEnvironment, ExtractionConfig, RecipeExtractor,
+    Pipeline, PipelineConfig,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -115,17 +115,58 @@ pub async fn execute(
         println!("  Found recipe: {} {}", recipe.name, version);
         println!();
 
-        // For now, just show what would be built
-        println!("✅ Native BitBake build configured successfully!");
-        println!("   Target: {}", target);
-        println!("   Recipe: {} {}", recipe.name, version);
+        // ========== Step 4: Show Recipe Tasks ==========
+        println!("📊 Analyzing recipe tasks...");
+
+        // Get tasks from recipe graph
+        let recipe_tasks = graph.get_recipe_tasks(recipe.id);
+        println!("  Found {} tasks for {}", recipe_tasks.len(), recipe.name);
         println!();
-        println!("📊 Build would execute:");
-        println!("  • Download sources to: {:?}", env.dl_dir);
-        println!("  • Build in: {:?}/work", env.tmpdir);
-        println!("  • Deploy to: {:?}/deploy", env.tmpdir);
+
+        // Show tasks that would be executed
+        println!("  Tasks to execute:");
+        for (i, task) in recipe_tasks.iter().enumerate().take(15) {
+            let network = if task.name.contains("fetch") { "network" } else { "isolated" };
+            println!("    {}. {} [{}]", i + 1, task.name, network);
+        }
+        if recipe_tasks.len() > 15 {
+            println!("    ... and {} more tasks", recipe_tasks.len() - 15);
+        }
         println!();
-        println!("   (Execution phase not yet implemented)");
+
+        // ========== Step 5: Show Build Plan ==========
+        println!("🚀 Build Plan:");
+        println!("   Target: {} {}", recipe.name, version);
+        println!("   DL_DIR: {:?}", env.dl_dir);
+        println!("   TMPDIR: {:?}", env.tmpdir);
+        println!();
+
+        // Create necessary directories
+        std::fs::create_dir_all(&env.dl_dir)?;
+        std::fs::create_dir_all(&env.tmpdir)?;
+        std::fs::create_dir_all(env.tmpdir.join("work"))?;
+        std::fs::create_dir_all(env.tmpdir.join("deploy"))?;
+        std::fs::create_dir_all(env.tmpdir.join("stamps"))?;
+
+        println!("  Created build directories:");
+        println!("    ✓ {:?}", env.dl_dir);
+        println!("    ✓ {:?}", env.tmpdir.join("work"));
+        println!("    ✓ {:?}", env.tmpdir.join("deploy"));
+        println!("    ✓ {:?}", env.tmpdir.join("stamps"));
+        println!();
+
+        println!("⚠️  Note: Task execution not yet implemented");
+        println!("   Next steps to complete:");
+        println!("     • Extract task scripts from parsed recipes");
+        println!("     • Execute Python functions via RustPython");
+        println!("     • Set up per-recipe work directories");
+        println!("     • Manage stamp files for incremental builds");
+        println!("     • Handle task dependencies and execution order");
+        println!();
+
+        println!("✅ Build infrastructure ready!");
+        println!("   {} tasks identified for {}", recipe_tasks.len(), recipe.name);
+        println!("   Environment configured for native BitBake builds");
     } else {
         eprintln!("❌ Recipe not found: {}", target);
         eprintln!("   Available recipes:");
