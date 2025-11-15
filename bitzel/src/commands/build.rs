@@ -187,36 +187,53 @@ pub async fn execute(
         println!("    ✓ {:?}", env.tmpdir.join("stamps"));
         println!();
 
-        // ========== Step 6: Get Task Implementation for do_fetch ==========
+        // ========== Step 6: Get Task Implementation ==========
         println!("🔍 Looking for task implementation...");
 
-        // Find the task implementation for this recipe
-        let task_impl = recipe_task_impls.get(&recipe.name)
-            .and_then(|impls| impls.get("do_fetch"));
+        // Find any task implementation for this recipe (try do_fetch first, then do_compile, then any)
+        let (task_name, task_impl) = recipe_task_impls.get(&recipe.name)
+            .and_then(|impls| {
+                impls.get("do_fetch").map(|t| ("do_fetch", t))
+                    .or_else(|| impls.get("do_compile").map(|t| ("do_compile", t)))
+                    .or_else(|| impls.iter().next().map(|(name, t)| (name.as_str(), t)))
+            })
+            .map(|(name, impl_ref)| (name.to_string(), impl_ref.clone()))
+            .unzip();
 
-        if let Some(task_impl) = task_impl {
-            println!("  Found {} implementation for do_fetch",
+        if let (Some(task_name), Some(task_impl)) = (task_name, task_impl) {
+            println!("  Found {} implementation for {}",
                      match task_impl.impl_type {
                          convenient_bitbake::TaskImplementationType::Shell => "shell",
                          convenient_bitbake::TaskImplementationType::Python => "Python",
                          convenient_bitbake::TaskImplementationType::FakerootShell => "fakeroot shell",
-                     });
+                     }, task_name);
             println!("  Code length: {} bytes", task_impl.code.len());
             println!();
 
-            // ========== Step 7: Execute do_fetch Task ==========
-            println!("⚡ Executing do_fetch...");
+            // ========== Step 7: Execute Task ==========
+            println!("⚡ Executing {}...", task_name);
 
             // Build initial variables for execution
             let mut initial_vars = HashMap::new();
             initial_vars.insert("PN".to_string(), recipe.name.clone());
             initial_vars.insert("PV".to_string(), version.to_string());
             initial_vars.insert("WORKDIR".to_string(), recipe_workdir.to_string_lossy().to_string());
+            initial_vars.insert("B".to_string(), recipe_workdir.to_string_lossy().to_string());  // Build directory
+            initial_vars.insert("S".to_string(), recipe_workdir.to_string_lossy().to_string());  // Source directory
+            initial_vars.insert("D".to_string(), recipe_workdir.join("image").to_string_lossy().to_string());  // Destination/install directory
             initial_vars.insert("DL_DIR".to_string(), env.dl_dir.to_string_lossy().to_string());
             initial_vars.insert("TMPDIR".to_string(), env.tmpdir.to_string_lossy().to_string());
             if let Some(machine) = env.get_machine() {
                 initial_vars.insert("MACHINE".to_string(), machine.to_string());
             }
+            if let Some(distro) = env.get_distro() {
+                initial_vars.insert("DISTRO".to_string(), distro.to_string());
+                initial_vars.insert("DISTRO_NAME".to_string(), distro.to_string());
+                initial_vars.insert("DISTRO_VERSION".to_string(), "unknown".to_string());
+            }
+            // Add OS_RELEASE specific variables
+            initial_vars.insert("OS_RELEASE_FIELDS".to_string(), "ID NAME VERSION PRETTY_NAME".to_string());
+            initial_vars.insert("OS_RELEASE_UNQUOTED_FIELDS".to_string(), "ID VERSION_ID".to_string());
 
             // Execute based on task type
             match task_impl.impl_type {
@@ -238,12 +255,12 @@ pub async fn execute(
                         // Create stamp file
                         let stamp_dir = env.tmpdir.join("stamps").join(machine).join(recipe.name.clone());
                         std::fs::create_dir_all(&stamp_dir)?;
-                        let stamp_file = stamp_dir.join(format!("do_fetch.{}", version));
+                        let stamp_file = stamp_dir.join(format!("{}.{}", task_name, version));
                         std::fs::write(&stamp_file, "")?;
                         println!("  ✓ Created stamp file: {:?}", stamp_file);
                     } else {
                         eprintln!("  ✗ Python task failed: {:?}", result.error);
-                        return Err(format!("do_fetch failed: {:?}", result.error).into());
+                        return Err(format!("{} failed: {:?}", task_name, result.error).into());
                     }
                 }
                 convenient_bitbake::TaskImplementationType::Shell |
