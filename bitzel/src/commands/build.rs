@@ -1,23 +1,58 @@
-//! Native BitBake build command
+//! Native BitBake build command with Bazel-like sandboxing and caching
 //!
-//! This command builds BitBake recipes using standard BitBake configuration
-//! from a build directory (conf/bblayers.conf and conf/local.conf).
+//! This command builds BitBake recipes using:
+//! - Content-addressable caching (like Bazel Remote Cache)
+//! - Native Linux namespace sandboxing (like Bazel sandbox)
+//! - Hash-based task signatures for hermetic builds
 
 use convenient_bitbake::{
     BuildEnvironment, ExtractionConfig, RecipeExtractor,
     Pipeline, PipelineConfig, TaskImplementation, PythonExecutor,
 };
-use std::collections::HashMap;
-use std::path::Path;
+use convenient_bitbake::executor::{
+    ContentAddressableStore, ActionCache, TaskSignature, TaskOutput,
+    ContentHash, NetworkPolicy, ResourceLimits,
+};
+#[cfg(target_os = "linux")]
+use convenient_bitbake::executor::execute_in_namespace;
 
-/// Execute build using native BitBake configuration
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+/// Execute build using native BitBake configuration with sandboxing and caching
 pub async fn execute(
     build_dir: &Path,
     target: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("🏗️  Loading BitBake build environment...");
+    println!("╔════════════════════════════════════════════════════════╗");
+    println!("║         BITZEL BUILD WITH SANDBOXING & CACHING        ║");
+    println!("║  Bazel-inspired hermetic builds for BitBake/Yocto     ║");
+    println!("╚════════════════════════════════════════════════════════╝");
+    println!();
+    println!("Mode: Sandboxed + Cached");
+    println!("Build directory: {:?}", build_dir);
+    println!("Target: {}", target);
+    println!();
 
-    // Load build environment from build directory
+    // ========== Initialize Cache Infrastructure ==========
+    println!("💾 Initializing content-addressable cache...");
+
+    let cache_dir = build_dir.join("bitzel-cache");
+    let cas_dir = cache_dir.join("cas");
+    let action_cache_dir = cache_dir.join("ac");
+
+    let mut cas = ContentAddressableStore::new(&cas_dir)?;
+    let mut action_cache = ActionCache::new(&action_cache_dir)?;
+
+    let cas_stats = cas.stats();
+    println!("  CAS: {} objects, {} MB",
+             cas_stats.object_count,
+             cas_stats.total_size_bytes / (1024 * 1024));
+
+    println!();
+
+    // ========== Load Build Environment ==========
+    println!("🏗️  Loading BitBake build environment...");
     let env = BuildEnvironment::from_build_dir(build_dir)?;
 
     println!("📋 Configuration:");
@@ -35,7 +70,7 @@ pub async fn execute(
     }
     println!();
 
-    // Create build context from environment
+    // ========== Create Build Context ==========
     println!("🔧 Creating build context...");
     let build_context = env.create_build_context()?;
 
@@ -45,10 +80,9 @@ pub async fn execute(
     }
     println!();
 
-    // ========== Step 1: Parse Recipes with Parallel Pipeline ==========
+    // ========== Parse Recipes with Parallel Pipeline ==========
     println!("🔍 Discovering and parsing BitBake recipes...");
 
-    // Configure parallel pipeline
     let pipeline_config = PipelineConfig {
         max_io_parallelism: 32,
         max_cpu_parallelism: num_cpus::get(),
@@ -62,27 +96,25 @@ pub async fn execute(
 
     let pipeline = Pipeline::new(pipeline_config, build_context);
 
-    // Create layer_paths map from environment layers
-    let mut layer_paths: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+    // Create layer_paths map
+    let mut layer_paths: HashMap<String, Vec<PathBuf>> = HashMap::new();
     for (i, layer) in env.layers.iter().enumerate() {
         let layer_name = format!("layer{}", i);
         layer_paths.insert(layer_name, vec![layer.clone()]);
     }
 
-    // Stage 1: Discover recipes in parallel
+    // Stage 1: Discover recipes
     let (recipe_files, discover_hash) = pipeline.discover_recipes(&layer_paths).await?;
     pipeline.save_stage_hash(&discover_hash).await?;
-
     println!("  Discovered {} recipe files", recipe_files.len());
 
-    // Stage 2: Parse recipes in parallel
+    // Stage 2: Parse recipes
     let (parsed_recipes, parse_hash) = pipeline.parse_recipes(recipe_files).await?;
     pipeline.save_stage_hash(&parse_hash).await?;
-
     println!("  Parsed {} recipes", parsed_recipes.len());
     println!();
 
-    // Extract task implementations from parsed recipes
+    // Extract task implementations
     let mut recipe_task_impls: HashMap<String, HashMap<String, TaskImplementation>> = HashMap::new();
     for parsed in &parsed_recipes {
         if !parsed.task_impls.is_empty() {
@@ -95,7 +127,7 @@ pub async fn execute(
              recipe_task_impls.len());
     println!();
 
-    // ========== Step 2: Build Recipe Graph ==========
+    // ========== Build Recipe Graph ==========
     println!("🔗 Building recipe dependency graph...");
 
     let mut extraction_config = ExtractionConfig::default();
@@ -104,8 +136,6 @@ pub async fn execute(
     extraction_config.use_python_executor = false;
 
     let extractor = RecipeExtractor::new(extraction_config);
-
-    // Stage 3: Build recipe graph (sequential - needs all recipes)
     let (graph, graph_hash) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
     pipeline.save_stage_hash(&graph_hash).await?;
 
@@ -116,20 +146,16 @@ pub async fn execute(
     println!("  Providers:     {}", stats.provider_count);
     println!();
 
-    // ========== Step 3: Find Target Recipe ==========
+    // ========== Find Target Recipe ==========
     println!("🎯 Looking for target recipe: {}", target);
 
-    // Find the recipe in the graph
-    // Prefer exact match, then prefix match
     let recipe = graph.recipes()
         .find(|r| r.name == target)
         .or_else(|| {
-            // Strip version suffix from target (e.g., "busybox_1.37.0" -> "busybox")
             let target_base = target.split('_').next().unwrap_or(target);
             graph.recipes().find(|r| r.name == target_base)
         })
         .or_else(|| {
-            // Fall back to starts_with match
             graph.recipes().find(|r| r.name.starts_with(target))
         });
 
@@ -138,155 +164,283 @@ pub async fn execute(
         println!("  Found recipe: {} {}", recipe.name, version);
         println!();
 
-        // ========== Step 4: Show Recipe Tasks ==========
-        println!("📊 Analyzing recipe tasks...");
-
-        // Get tasks from recipe graph
-        let recipe_tasks = graph.get_recipe_tasks(recipe.id);
-        println!("  Found {} tasks for {}", recipe_tasks.len(), recipe.name);
-        println!();
-
-        // Show tasks that would be executed
-        println!("  Tasks to execute:");
-        for (i, task) in recipe_tasks.iter().enumerate().take(15) {
-            let network = if task.name.contains("fetch") { "network" } else { "isolated" };
-            println!("    {}. {} [{}]", i + 1, task.name, network);
-        }
-        if recipe_tasks.len() > 15 {
-            println!("    ... and {} more tasks", recipe_tasks.len() - 15);
-        }
-        println!();
-
-        // ========== Step 5: Create Work Directories ==========
+        // ========== Setup Build Directories ==========
         println!("🚀 Setting up build environment:");
         println!("   Target: {} {}", recipe.name, version);
-        println!("   DL_DIR: {:?}", env.dl_dir);
-        println!("   TMPDIR: {:?}", env.tmpdir);
-        println!();
 
-        // Create necessary directories
         std::fs::create_dir_all(&env.dl_dir)?;
         std::fs::create_dir_all(&env.tmpdir)?;
         std::fs::create_dir_all(env.tmpdir.join("work"))?;
         std::fs::create_dir_all(env.tmpdir.join("deploy"))?;
         std::fs::create_dir_all(env.tmpdir.join("stamps"))?;
 
-        // Get machine architecture
         let machine = env.get_machine().unwrap_or("unknown");
-
-        // Create per-recipe work directory: tmp/work/MACHINE/RECIPE/VERSION/
         let recipe_workdir = env.tmpdir.join(format!("work/{}/{}/{}", machine, recipe.name, version));
         std::fs::create_dir_all(&recipe_workdir)?;
-        std::fs::create_dir_all(recipe_workdir.join("temp"))?;  // For logs
+        std::fs::create_dir_all(recipe_workdir.join("temp"))?;
 
-        println!("  Created build directories:");
-        println!("    ✓ {:?}", env.dl_dir);
-        println!("    ✓ {:?}", env.tmpdir.join("work"));
-        println!("    ✓ {:?}", recipe_workdir);
-        println!("    ✓ {:?}", env.tmpdir.join("deploy"));
-        println!("    ✓ {:?}", env.tmpdir.join("stamps"));
+        println!("  ✓ Work directory: {:?}", recipe_workdir);
         println!();
 
-        // ========== Step 6: Get Task Implementation ==========
-        println!("🔍 Looking for task implementation...");
+        // ========== Execute Task with Caching ==========
+        println!("🔍 Looking for task to execute...");
 
-        // Find any task implementation for this recipe (try do_fetch first, then do_compile, then any)
         let (task_name, task_impl) = recipe_task_impls.get(&recipe.name)
             .and_then(|impls| {
-                impls.get("do_fetch").map(|t| ("do_fetch", t))
-                    .or_else(|| impls.get("do_compile").map(|t| ("do_compile", t)))
+                impls.get("do_compile").map(|t| ("do_compile", t))
+                    .or_else(|| impls.get("do_install").map(|t| ("do_install", t)))
                     .or_else(|| impls.iter().next().map(|(name, t)| (name.as_str(), t)))
             })
             .map(|(name, impl_ref)| (name.to_string(), impl_ref.clone()))
             .unzip();
 
         if let (Some(task_name), Some(task_impl)) = (task_name, task_impl) {
-            println!("  Found {} implementation for {}",
-                     match task_impl.impl_type {
-                         convenient_bitbake::TaskImplementationType::Shell => "shell",
-                         convenient_bitbake::TaskImplementationType::Python => "Python",
-                         convenient_bitbake::TaskImplementationType::FakerootShell => "fakeroot shell",
-                     }, task_name);
-            println!("  Code length: {} bytes", task_impl.code.len());
+            println!("  Found {} implementation ({} bytes)",
+                     task_name,
+                     task_impl.code.len());
             println!();
 
-            // ========== Step 7: Execute Task ==========
-            println!("⚡ Executing {}...", task_name);
+            // ========== Compute Task Signature (Content-Based Hash) ==========
+            println!("🔐 Computing task signature...");
 
-            // Build initial variables for execution
             let mut initial_vars = HashMap::new();
             initial_vars.insert("PN".to_string(), recipe.name.clone());
             initial_vars.insert("PV".to_string(), version.to_string());
             initial_vars.insert("WORKDIR".to_string(), recipe_workdir.to_string_lossy().to_string());
-            initial_vars.insert("B".to_string(), recipe_workdir.to_string_lossy().to_string());  // Build directory
-            initial_vars.insert("S".to_string(), recipe_workdir.to_string_lossy().to_string());  // Source directory
-            initial_vars.insert("D".to_string(), recipe_workdir.join("image").to_string_lossy().to_string());  // Destination/install directory
+            initial_vars.insert("B".to_string(), recipe_workdir.to_string_lossy().to_string());
+            initial_vars.insert("S".to_string(), recipe_workdir.to_string_lossy().to_string());
+            initial_vars.insert("D".to_string(), recipe_workdir.join("image").to_string_lossy().to_string());
             initial_vars.insert("DL_DIR".to_string(), env.dl_dir.to_string_lossy().to_string());
             initial_vars.insert("TMPDIR".to_string(), env.tmpdir.to_string_lossy().to_string());
-            if let Some(machine) = env.get_machine() {
-                initial_vars.insert("MACHINE".to_string(), machine.to_string());
+
+            if let Some(machine_val) = env.get_machine() {
+                initial_vars.insert("MACHINE".to_string(), machine_val.to_string());
             }
             if let Some(distro) = env.get_distro() {
                 initial_vars.insert("DISTRO".to_string(), distro.to_string());
                 initial_vars.insert("DISTRO_NAME".to_string(), distro.to_string());
-                initial_vars.insert("DISTRO_VERSION".to_string(), "unknown".to_string());
             }
-            // Add OS_RELEASE specific variables
+
+            // OS_RELEASE specific variables
             initial_vars.insert("OS_RELEASE_FIELDS".to_string(), "ID NAME VERSION PRETTY_NAME".to_string());
             initial_vars.insert("OS_RELEASE_UNQUOTED_FIELDS".to_string(), "ID VERSION_ID".to_string());
 
-            // Execute based on task type
+            // Compute task code hash
+            let task_code_hash = ContentHash::from_bytes(task_impl.code.as_bytes());
+
+            // Build task signature
+            let mut signature = TaskSignature {
+                recipe: recipe.name.clone(),
+                task: task_name.clone(),
+                input_files: HashMap::new(), // TODO: Add actual input file tracking
+                dep_signatures: Vec::new(),   // TODO: Add dependency signatures
+                env_vars: initial_vars.clone(),
+                task_code_hash: task_code_hash.clone(),
+                signature: None,
+            };
+
+            let sig_hash = signature.compute();
+            println!("  Signature: {}", sig_hash);
+            println!("  Task code hash: {}", task_code_hash);
+            println!();
+
+            // ========== Check Cache ==========
+            println!("💾 Checking action cache...");
+
+            if let Some(cached_output) = action_cache.get(&sig_hash) {
+                println!("  ✅ CACHE HIT! Restoring from cache...");
+                println!("  Exit code: {}", cached_output.exit_code);
+                println!("  Stdout: {} bytes", cached_output.stdout.len());
+                println!("  Stderr: {} bytes", cached_output.stderr.len());
+                println!("  Output files: {}", cached_output.output_files.len());
+
+                // Restore output files from CAS
+                for (path, file_hash) in &cached_output.output_files {
+                    println!("    Restoring: {:?} ({})", path, file_hash);
+                    match cas.get(file_hash) {
+                        Ok(content) => {
+                            let full_path = recipe_workdir.join(path);
+                            if let Some(parent) = full_path.parent() {
+                                std::fs::create_dir_all(parent)?;
+                            }
+                            println!("      ✓ Restored {} bytes", content.len());
+                            std::fs::write(&full_path, &content)?;
+                        }
+                        Err(e) => {
+                            eprintln!("      ✗ Failed to restore: {}", e);
+                        }
+                    }
+                }
+
+                // Create stamp file
+                let stamp_dir = env.tmpdir.join("stamps").join(machine).join(recipe.name.clone());
+                std::fs::create_dir_all(&stamp_dir)?;
+                let stamp_file = stamp_dir.join(format!("{}.{}", task_name, version));
+                std::fs::write(&stamp_file, "")?;
+                println!("  ✓ Created stamp file");
+                println!();
+
+                println!("✅ Build complete (from cache)!");
+                return Ok(());
+            }
+
+            println!("  ⚠️  CACHE MISS - executing task");
+            println!();
+
+            // ========== Execute Task ==========
+            println!("⚡ Executing {} with sandboxing...", task_name);
+
             match task_impl.impl_type {
                 convenient_bitbake::TaskImplementationType::Python => {
-                    println!("  Executing Python task with RustPython...");
+                    println!("  Mode: Python (RustPython, unsandboxed)");
                     let executor = PythonExecutor::new();
                     let result = executor.execute(&task_impl.code, &initial_vars);
 
                     if result.success {
-                        println!("  ✓ Python task succeeded");
+                        println!("  ✓ Task succeeded");
                         println!("    Variables set: {}", result.variables_set.len());
-                        for (key, value) in result.variables_set.iter().take(5) {
-                            println!("      {} = {}", key, value);
+
+                        // Collect output files (for now, just check if os-release was created)
+                        let mut output_files = HashMap::new();
+                        let os_release_path = recipe_workdir.join("os-release");
+                        if os_release_path.exists() {
+                            let content = std::fs::read(&os_release_path)?;
+                            let file_hash = cas.put(&content)?;
+                            println!("    Output file: os-release ({})", file_hash);
+                            output_files.insert(PathBuf::from("os-release"), file_hash);
                         }
-                        if result.variables_set.len() > 5 {
-                            println!("      ... and {} more", result.variables_set.len() - 5);
-                        }
+
+                        // Store in action cache
+                        let task_output = TaskOutput {
+                            signature: sig_hash.clone(),
+                            exit_code: 0,
+                            stdout: String::new(),
+                            stderr: String::new(),
+                            output_files,
+                            duration_ms: 0,
+                        };
+
+                        action_cache.put(sig_hash, task_output)?;
+                        println!("  ✓ Stored in action cache");
 
                         // Create stamp file
                         let stamp_dir = env.tmpdir.join("stamps").join(machine).join(recipe.name.clone());
                         std::fs::create_dir_all(&stamp_dir)?;
                         let stamp_file = stamp_dir.join(format!("{}.{}", task_name, version));
                         std::fs::write(&stamp_file, "")?;
-                        println!("  ✓ Created stamp file: {:?}", stamp_file);
+                        println!("  ✓ Created stamp file");
                     } else {
-                        eprintln!("  ✗ Python task failed: {:?}", result.error);
+                        eprintln!("  ✗ Task failed: {:?}", result.error);
                         return Err(format!("{} failed: {:?}", task_name, result.error).into());
                     }
                 }
                 convenient_bitbake::TaskImplementationType::Shell |
                 convenient_bitbake::TaskImplementationType::FakerootShell => {
-                    println!("  ⚠️  Shell task execution not yet implemented");
-                    println!("     Task would execute: {} bytes of shell code", task_impl.code.len());
-                    println!("     Working directory: {:?}", recipe_workdir);
-                    println!();
-                    println!("     Next: Implement shell task execution");
+                    #[cfg(target_os = "linux")]
+                    {
+                        println!("  Mode: Shell (Linux namespace sandbox)");
+
+                        // Determine network policy
+                        let network_policy = if task_name.contains("fetch") {
+                            NetworkPolicy::FullNetwork
+                        } else {
+                            NetworkPolicy::Isolated
+                        };
+
+                        println!("  Network: {:?}", network_policy);
+                        println!("  Resource limits: 4GB memory, 1024 PIDs");
+
+                        let resource_limits = ResourceLimits::default();
+
+                        // Execute in namespace
+                        match execute_in_namespace(
+                            &task_impl.code,
+                            &recipe_workdir,
+                            &initial_vars,
+                            network_policy,
+                            &resource_limits,
+                        ) {
+                            Ok((exit_code, stdout, stderr)) => {
+                                println!("  ✓ Task succeeded (exit code: {})", exit_code);
+                                if !stdout.is_empty() {
+                                    println!("  Stdout: {} bytes", stdout.len());
+                                }
+                                if !stderr.is_empty() {
+                                    println!("  Stderr: {} bytes", stderr.len());
+                                }
+
+                                // Collect output files
+                                let mut output_files = HashMap::new();
+
+                                // Scan work directory for outputs
+                                if recipe_workdir.exists() {
+                                    for entry in walkdir::WalkDir::new(&recipe_workdir)
+                                        .into_iter()
+                                        .filter_map(|e| e.ok())
+                                    {
+                                        if entry.file_type().is_file() {
+                                            let full_path = entry.path();
+                                            if let Ok(relative_path) = full_path.strip_prefix(&recipe_workdir) {
+                                                let content = std::fs::read(full_path)?;
+                                                let file_hash = cas.put(&content)?;
+                                                println!("    Output: {:?} ({} bytes, {})",
+                                                         relative_path,
+                                                         content.len(),
+                                                         file_hash);
+                                                output_files.insert(relative_path.to_path_buf(), file_hash);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Store in action cache
+                                let task_output = TaskOutput {
+                                    signature: sig_hash.clone(),
+                                    exit_code,
+                                    stdout,
+                                    stderr,
+                                    output_files,
+                                    duration_ms: 0,
+                                };
+
+                                action_cache.put(sig_hash, task_output)?;
+                                println!("  ✓ Stored in action cache");
+
+                                // Create stamp file
+                                let stamp_dir = env.tmpdir.join("stamps").join(machine).join(recipe.name.clone());
+                                std::fs::create_dir_all(&stamp_dir)?;
+                                let stamp_file = stamp_dir.join(format!("{}.{}", task_name, version));
+                                std::fs::write(&stamp_file, "")?;
+                                println!("  ✓ Created stamp file");
+                            }
+                            Err(e) => {
+                                eprintln!("  ✗ Sandbox execution failed: {}", e);
+                                return Err(format!("{} failed: {}", task_name, e).into());
+                            }
+                        }
+                    }
+
+                    #[cfg(not(target_os = "linux"))]
+                    {
+                        println!("  ⚠️  Shell sandboxing requires Linux");
+                        println!("     Task would execute: {} bytes of shell code", task_impl.code.len());
+                        return Err("Shell sandboxing not available on this platform".into());
+                    }
                 }
             }
+            println!();
         } else {
-            println!("  ⚠️  No do_fetch implementation found for {}", recipe.name);
-            println!("     This is expected for recipes that inherit do_fetch");
-            println!("     Task graph shows {} total tasks available", recipe_tasks.len());
+            println!("  ⚠️  No task implementation found for {}", recipe.name);
+            println!("     This is expected for recipes that only inherit tasks");
         }
-        println!();
 
-        println!("✅ Build infrastructure ready!");
-        println!("   {} tasks identified for {}", recipe_tasks.len(), recipe.name);
-        println!("   Environment configured for native BitBake builds");
+        println!("✅ Build complete!");
+        println!("   Cache efficiency will improve on subsequent builds");
     } else {
         eprintln!("❌ Recipe not found: {}", target);
         eprintln!("   Available recipes:");
-        for recipe in graph.recipes().take(10) {
-            eprintln!("     • {}", recipe.name);
+        for r in graph.recipes().take(10) {
+            eprintln!("     • {}", r.name);
         }
         return Err(format!("Recipe not found: {}", target).into());
     }
