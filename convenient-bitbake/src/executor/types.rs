@@ -6,14 +6,59 @@ use std::path::PathBuf;
 use std::time::Duration;
 use sha2::{Sha256, Digest};
 
+/// Execution mode for task - determines sandboxing requirements
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExecutionMode {
+    /// Direct Rust execution - no sandbox, no shell, no host contamination
+    /// Only for simple operations: file ops, env vars, logging
+    /// Provides maximum performance and hermetic execution
+    DirectRust,
+
+    /// Shell script execution - requires full sandboxing
+    /// Used when script contains complex bash operations
+    Shell,
+
+    /// Python script execution - requires full sandboxing
+    /// Used for Python tasks with RustPython VM
+    Python,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        ExecutionMode::Shell  // Conservative default
+    }
+}
+
+impl ExecutionMode {
+    /// Whether this mode requires sandboxing
+    pub fn requires_sandbox(&self) -> bool {
+        match self {
+            ExecutionMode::DirectRust => false,
+            ExecutionMode::Shell | ExecutionMode::Python => true,
+        }
+    }
+
+    /// Whether this mode can contaminate the host
+    pub fn can_contaminate_host(&self) -> bool {
+        self.requires_sandbox()
+    }
+}
+
 /// Network isolation policy for sandbox
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetworkPolicy {
     /// No network access (default, most hermetic)
+    /// Creates new network namespace with no interfaces
     Isolated,
 
     /// Loopback only (127.0.0.1 accessible)
+    /// Creates new network namespace with loopback interface
     LoopbackOnly,
+
+    /// Full network access (inherits host network)
+    /// Does NOT create network namespace - required for real fetching
+    /// Use for do_fetch tasks that need to download sources
+    FullNetwork,
 
     /// Controlled external access with allow-list (not yet implemented)
     Controlled,
@@ -197,7 +242,7 @@ impl TaskSignature {
 }
 
 /// Specification for task execution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskSpec {
     /// Task name
     pub name: String,
@@ -217,13 +262,21 @@ pub struct TaskSpec {
     /// Declared outputs (relative to workdir)
     pub outputs: Vec<PathBuf>,
 
-    /// Timeout
+    /// Timeout (in seconds, for serialization compatibility)
+    #[serde(
+        serialize_with = "serialize_duration",
+        deserialize_with = "deserialize_duration"
+    )]
     pub timeout: Option<Duration>,
 
-    /// Network policy for this task
+    /// Execution mode (determines if sandboxing is needed)
+    #[serde(default)]
+    pub execution_mode: ExecutionMode,
+
+    /// Network policy for this task (only used if execution_mode requires sandbox)
     pub network_policy: NetworkPolicy,
 
-    /// Resource limits for this task
+    /// Resource limits for this task (only used if execution_mode requires sandbox)
     pub resource_limits: ResourceLimits,
 }
 
@@ -334,4 +387,23 @@ pub enum ExecutionError {
         expected: ContentHash,
         actual: ContentHash,
     },
+}
+
+// Helper functions for Duration serialization
+fn serialize_duration<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match duration {
+        Some(d) => serializer.serialize_some(&d.as_secs()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn deserialize_duration<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let secs: Option<u64> = Option::deserialize(deserializer)?;
+    Ok(secs.map(Duration::from_secs))
 }

@@ -23,8 +23,9 @@ futures = "0.3"
 chrono = "0.4"
 hostname = "0.4"
 filetime = "0.2"
-clap = { version = "4.5", features = ["derive"] }
-tracing-subscriber = "0.3"
+clap = { version = "4.5.38", features = ["derive"] }
+tracing-subscriber = "0.3.19"
+async-trait = "0.1"
 
 # Linux namespaces for native sandboxing (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -39,18 +40,18 @@ convenient-kas = { path = "../convenient-kas" }
 rowan = "0.15.15"
 logos = "0.14.0"
 
-# RustPython for executing Python code (optional feature)
-rustpython = { version = "0.3", optional = true }
-rustpython-vm = { version = "0.3", optional = true }
+# RustPython for executing Python code (ENABLED BY DEFAULT for real BitBake execution)
+rustpython = { version = "0.3" }
+rustpython-vm = { version = "0.3" }
 
 [features]
 default = ["async-executor"]
 async-executor = []
-python-execution = ["rustpython", "rustpython-vm"]
+# Note: RustPython is now always enabled (no longer a feature flag)
 
 [dev-dependencies]
 tracing-test = "0.2.5"
-tracing-subscriber = "0.3"
+tracing-subscriber = "0.3.19"
 tempfile = "3.8.0"
 walkdir = "2"
 tokio = { version = "1.48", features = ["rt", "macros"] }

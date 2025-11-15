@@ -2,7 +2,7 @@
 // Combines parsing, variable resolution, and graph construction
 
 use crate::recipe_graph::{RecipeGraph, RecipeId, TaskId};
-use crate::task_parser::{parse_addtask_statement, parse_task_flag};
+use crate::task_parser::{parse_addtask_statement, parse_deltask_statement, parse_task_flag};
 use crate::simple_python_eval::SimplePythonEvaluator;
 use crate::python_ir_parser::PythonIRParser;
 use crate::python_ir_executor::IRExecutor;
@@ -1344,6 +1344,7 @@ impl RecipeExtractor {
         let mut task_names = Vec::new();
         let mut task_constraints = Vec::new();
         let mut task_flags = Vec::new();
+        let mut disabled_tasks = std::collections::HashSet::new();
 
         // Add base tasks that all BitBake recipes inherit from base.bbclass
         // These are standard tasks defined in meta/classes-global/base.bbclass
@@ -1366,6 +1367,11 @@ impl RecipeExtractor {
 
         for line in content.lines() {
             let line = line.trim();
+
+            // Parse deltask statements (must be before addtask to handle re-add cases)
+            if let Some(task_name) = parse_deltask_statement(line) {
+                disabled_tasks.insert(task_name);
+            }
 
             // Parse addtask statements
             if let Some(task) = parse_addtask_statement(line) {
@@ -1406,6 +1412,13 @@ impl RecipeExtractor {
                     task_node.flags.insert(flag_name, value);
                 }
         }
+
+        // Filter out disabled tasks (those removed by deltask)
+        // Need to handle both "do_taskname" and "taskname" formats
+        task_names.retain(|name| {
+            let task_with_do = format!("do_{}", name);
+            !disabled_tasks.contains(name) && !disabled_tasks.contains(&task_with_do)
+        });
 
         task_names
     }

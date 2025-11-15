@@ -329,10 +329,13 @@ impl BuildOrchestrator {
 
             // Determine network policy based on task type
             let network_policy = if task.task_name == "do_fetch" || task.task_name.contains("fetch") {
-                NetworkPolicy::LoopbackOnly  // Fetch tasks need network access
+                NetworkPolicy::FullNetwork  // Fetch tasks need real internet access
             } else {
                 NetworkPolicy::Isolated  // Build tasks should be hermetic
             };
+
+            // Auto-detect execution mode from script
+            let execution_mode = crate::executor::determine_execution_mode(&script);
 
             let spec = TaskSpec {
                 name: task.task_name.clone(),
@@ -342,6 +345,7 @@ impl BuildOrchestrator {
                 env: HashMap::new(),
                 outputs: vec![PathBuf::from(&output_file)],
                 timeout: Some(Duration::from_secs(300)),
+                execution_mode,
                 network_policy,
                 resource_limits: ResourceLimits::default(),
             };

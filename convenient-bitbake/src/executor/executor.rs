@@ -1,15 +1,17 @@
 //! Main task executor - brings together caching, sandboxing, and execution
 
 use super::cache::{ActionCache, ContentAddressableStore};
+use super::direct_executor;
 use super::sandbox::SandboxManager;
+use super::script_analyzer;
 use super::types::{
-    ContentHash, ExecutionError, ExecutionResult, NetworkPolicy, ResourceLimits, SandboxSpec,
-    TaskOutput, TaskSignature, TaskSpec,
+    ContentHash, ExecutionError, ExecutionMode, ExecutionResult, NetworkPolicy, ResourceLimits,
+    SandboxSpec, TaskOutput, TaskSignature, TaskSpec,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
 /// Main task executor with caching and sandboxing
 pub struct TaskExecutor {
@@ -46,7 +48,10 @@ impl TaskExecutor {
 
     /// Execute a task with caching
     pub fn execute_task(&mut self, spec: TaskSpec) -> ExecutionResult<TaskOutput> {
-        info!("Executing task: {}:{}", spec.recipe, spec.name);
+        info!(
+            "Executing task: {}:{} (mode: {:?})",
+            spec.recipe, spec.name, spec.execution_mode
+        );
 
         // 1. Compute signature
         let mut signature = self.compute_signature(&spec)?;
@@ -64,17 +69,152 @@ impl TaskExecutor {
         info!("Cache MISS for {}:{}", spec.recipe, spec.name);
         self.stats.cache_misses += 1;
 
-        // 3. Execute in sandbox
+        // 3. Execute based on execution mode
+        let (result_stdout, result_stderr, result_exit_code, output_files, duration) =
+            match spec.execution_mode {
+                ExecutionMode::DirectRust => {
+                    // Direct Rust execution - no sandbox, no host contamination
+                    info!("Using DirectRust execution (sandbox-free, hermetic)");
+                    self.execute_direct_rust(&spec)?
+                }
+                ExecutionMode::Shell | ExecutionMode::Python => {
+                    // Shell/Python execution - requires full sandboxing
+                    info!("Using sandboxed execution");
+                    self.execute_sandboxed(&spec)?
+                }
+            };
+
+        let task_output = TaskOutput {
+            signature: sig_hash.clone(),
+            output_files,
+            stdout: result_stdout,
+            stderr: result_stderr,
+            exit_code: result_exit_code,
+            duration_ms: duration,
+        };
+
+        // 4. Store in cache
+        self.action_cache.put(sig_hash, task_output.clone())?;
+
+        info!("Task completed in {}ms", task_output.duration_ms);
+        self.stats.tasks_executed += 1;
+
+        Ok(task_output)
+    }
+
+    /// Execute task using direct Rust calls (no sandbox)
+    fn execute_direct_rust(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
         let start = Instant::now();
-        let mut sandbox_spec = self.prepare_sandbox(&spec)?;
+
+        // Analyze script to determine if it can be executed directly
+        let analysis = script_analyzer::analyze_script(&spec.script);
+
+        if !analysis.is_simple {
+            return Err(ExecutionError::SandboxError(format!(
+                "Script is too complex for DirectRust execution: {}",
+                analysis.complexity_reason.unwrap_or_default()
+            )));
+        }
+
+        // Create work directory structure
+        let work_dir = spec.workdir.join("direct-rust");
+        std::fs::create_dir_all(&work_dir)?;
+
+        let outputs_dir = work_dir.join("outputs");
+        std::fs::create_dir_all(&outputs_dir)?;
+
+        // Prepare environment with BitBake-style paths
+        let mut env = spec.env.clone();
+        env.insert("WORKDIR".to_string(), work_dir.to_string_lossy().to_string());
+        env.insert(
+            "S".to_string(),
+            work_dir.join("src").to_string_lossy().to_string(),
+        );
+        env.insert(
+            "B".to_string(),
+            work_dir.join("build").to_string_lossy().to_string(),
+        );
+        env.insert(
+            "D".to_string(),
+            outputs_dir.to_string_lossy().to_string(),
+        );
+
+        // Execute directly without sandbox
+        let result = direct_executor::execute_direct(&analysis, &work_dir, &env)?;
+
+        if result.exit_code != 0 {
+            warn!("Direct execution failed with exit code: {}", result.exit_code);
+            warn!("Stderr: {}", result.stderr);
+            return Err(ExecutionError::TaskFailed(result.exit_code));
+        }
+
+        // Collect and hash outputs
+        let mut output_files = HashMap::new();
+        if outputs_dir.exists() {
+            for entry in walkdir::WalkDir::new(&outputs_dir)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if entry.file_type().is_file() {
+                    let path = entry.path();
+                    let content = std::fs::read(path)?;
+                    let hash = self.cas.put(&content)?;
+                    let rel_path = path
+                        .strip_prefix(&outputs_dir)
+                        .unwrap_or(path)
+                        .to_path_buf();
+                    output_files.insert(rel_path, hash);
+                }
+            }
+        }
+
+        let duration = start.elapsed().as_millis() as u64;
+
+        info!("DirectRust execution completed successfully (no sandbox used)");
+
+        Ok((
+            result.stdout,
+            result.stderr,
+            result.exit_code,
+            output_files,
+            duration,
+        ))
+    }
+
+    /// Execute task in sandbox (for Shell/Python modes)
+    fn execute_sandboxed(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
+        let start = Instant::now();
+        let mut sandbox_spec = self.prepare_sandbox(spec)?;
         let mut sandbox = self.sandbox_manager.create_sandbox(sandbox_spec.clone())?;
 
         // Update environment variables with actual sandbox paths
         let sandbox_root = sandbox.root().to_path_buf();
-        sandbox_spec.env.insert("WORKDIR".to_string(), sandbox_root.join("work").to_string_lossy().to_string());
-        sandbox_spec.env.insert("S".to_string(), sandbox_root.join("work/src").to_string_lossy().to_string());
-        sandbox_spec.env.insert("B".to_string(), sandbox_root.join("work/build").to_string_lossy().to_string());
-        sandbox_spec.env.insert("D".to_string(), sandbox_root.join("work/outputs").to_string_lossy().to_string());
+        sandbox_spec.env.insert(
+            "WORKDIR".to_string(),
+            sandbox_root.join("work").to_string_lossy().to_string(),
+        );
+        sandbox_spec.env.insert(
+            "S".to_string(),
+            sandbox_root.join("work/src").to_string_lossy().to_string(),
+        );
+        sandbox_spec.env.insert(
+            "B".to_string(),
+            sandbox_root.join("work/build").to_string_lossy().to_string(),
+        );
+        sandbox_spec.env.insert(
+            "D".to_string(),
+            sandbox_root
+                .join("work/outputs")
+                .to_string_lossy()
+                .to_string(),
+        );
         sandbox.update_env(sandbox_spec.env);
 
         info!("Executing in sandbox: {}", sandbox_root.display());
@@ -87,7 +227,7 @@ impl TaskExecutor {
             return Err(ExecutionError::TaskFailed(result.exit_code));
         }
 
-        // 4. Collect and hash outputs
+        // Collect and hash outputs
         let output_map = sandbox.collect_outputs()?;
         let mut output_files = HashMap::new();
 
@@ -96,27 +236,18 @@ impl TaskExecutor {
             output_files.insert(path, hash);
         }
 
-        let duration = start.elapsed();
-
-        let task_output = TaskOutput {
-            signature: sig_hash.clone(),
-            output_files,
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exit_code: result.exit_code,
-            duration_ms: duration.as_millis() as u64,
-        };
-
-        // 5. Store in cache
-        self.action_cache.put(sig_hash, task_output.clone())?;
-
-        // 6. Cleanup sandbox
+        // Cleanup sandbox
         sandbox.cleanup()?;
 
-        info!("Task completed in {}ms", task_output.duration_ms);
-        self.stats.tasks_executed += 1;
+        let duration = start.elapsed().as_millis() as u64;
 
-        Ok(task_output)
+        Ok((
+            result.stdout,
+            result.stderr,
+            result.exit_code,
+            output_files,
+            duration,
+        ))
     }
 
     /// Compute task signature from spec
@@ -273,6 +404,7 @@ mod tests {
             env: HashMap::new(),
             outputs: vec![PathBuf::from("result.txt")],
             timeout: None,
+            execution_mode: ExecutionMode::Shell,
             network_policy: NetworkPolicy::Isolated,
             resource_limits: ResourceLimits::default(),
         };
@@ -302,6 +434,7 @@ mod tests {
             env: HashMap::new(),
             outputs: vec![PathBuf::from("out.txt")],
             timeout: None,
+            execution_mode: ExecutionMode::Shell,
             network_policy: NetworkPolicy::Isolated,
             resource_limits: ResourceLimits::default(),
         };
@@ -333,6 +466,7 @@ mod tests {
             env: HashMap::new(),
             outputs: vec![],
             timeout: None,
+            execution_mode: ExecutionMode::Shell,
             network_policy: NetworkPolicy::Isolated,
             resource_limits: ResourceLimits::default(),
         };
@@ -344,5 +478,82 @@ mod tests {
             Err(ExecutionError::TaskFailed(code)) => assert_eq!(code, 1),
             _ => panic!("Expected TaskFailed error"),
         }
+    }
+
+    #[test]
+    fn test_direct_rust_execution_no_sandbox() {
+        let tmp = TempDir::new().unwrap();
+        let mut executor = TaskExecutor::new(tmp.path()).unwrap();
+
+        // Simple script that can be executed directly in Rust
+        let script = r#"#!/bin/bash
+. /bitzel/prelude.sh
+export PN="test-recipe"
+bb_note "Starting DirectRust execution"
+mkdir -p "$D/usr/bin"
+touch "$D/usr/bin/myapp"
+echo "Hello from Rust!" > "$D/output.txt"
+"#;
+
+        let spec = TaskSpec {
+            name: "do_install".to_string(),
+            recipe: "direct-test".to_string(),
+            script: script.to_string(),
+            workdir: tmp.path().join("workdir"),
+            env: HashMap::new(),
+            outputs: vec![PathBuf::from("usr/bin/myapp"), PathBuf::from("output.txt")],
+            timeout: None,
+            execution_mode: ExecutionMode::DirectRust,
+            network_policy: NetworkPolicy::Isolated,
+            resource_limits: ResourceLimits::default(),
+        };
+
+        std::fs::create_dir_all(&spec.workdir).unwrap();
+
+        let output = executor.execute_task(spec).unwrap();
+
+        // Verify execution succeeded
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("NOTE: Starting DirectRust execution"));
+
+        // Verify outputs were collected
+        assert!(output.output_files.len() >= 1, "Expected at least 1 output file");
+
+        // Verify cache hit on second execution
+        assert_eq!(executor.stats().cache_misses, 1);
+    }
+
+    #[test]
+    fn test_auto_detect_execution_mode() {
+        // Simple script should be DirectRust
+        let simple_script = r#"#!/bin/bash
+. /bitzel/prelude.sh
+bb_note "Hello"
+touch "$D/file.txt"
+"#;
+        assert_eq!(
+            script_analyzer::determine_execution_mode(simple_script),
+            ExecutionMode::DirectRust
+        );
+
+        // Complex script should be Shell
+        let complex_script = r#"#!/bin/bash
+for file in *.txt; do
+    echo "Processing $file"
+done
+"#;
+        assert_eq!(
+            script_analyzer::determine_execution_mode(complex_script),
+            ExecutionMode::Shell
+        );
+
+        // Python script should be Python
+        let python_script = r#"#!/usr/bin/env python3
+print("Hello")
+"#;
+        assert_eq!(
+            script_analyzer::determine_execution_mode(python_script),
+            ExecutionMode::Python
+        );
     }
 }

@@ -238,6 +238,25 @@ pub fn parse_addtask_statement(line: &str) -> Option<Task> {
     Some(task)
 }
 
+/// Parse deltask statement
+/// Format: deltask TASK
+/// Returns the task name to be removed
+pub fn parse_deltask_statement(line: &str) -> Option<String> {
+    let line = line.trim();
+
+    // Must start with "deltask"
+    if !line.starts_with("deltask") {
+        return None;
+    }
+
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    Some(parts[1].to_string())
+}
+
 /// Parse task flag assignment
 /// Format: do_task[flag] = "value"
 pub fn parse_task_flag(line: &str) -> Option<(String, String, String)> {
@@ -306,6 +325,27 @@ mod tests {
         assert_eq!(task.name, "compile");
         assert_eq!(task.after, vec!["configure", "patch"]);
         assert_eq!(task.before, vec!["install", "package"]);
+    }
+
+    #[test]
+    fn test_parse_deltask() {
+        let line = "deltask do_install_ptest";
+        let task_name = parse_deltask_statement(line).unwrap();
+        assert_eq!(task_name, "do_install_ptest");
+    }
+
+    #[test]
+    fn test_parse_deltask_with_extra_whitespace() {
+        let line = "  deltask   do_configure  ";
+        let task_name = parse_deltask_statement(line).unwrap();
+        assert_eq!(task_name, "do_configure");
+    }
+
+    #[test]
+    fn test_parse_deltask_invalid() {
+        let line = "addtask do_fetch";
+        let result = parse_deltask_statement(line);
+        assert!(result.is_none());
     }
 
     #[test]

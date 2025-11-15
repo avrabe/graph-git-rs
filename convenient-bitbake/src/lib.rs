@@ -24,6 +24,8 @@ pub mod resolver;
 pub mod include_resolver;
 pub mod layer_context;
 pub mod override_resolver;
+pub mod bitbake_config;
+pub mod build_env;
 pub mod python_analysis;
 pub mod python_ir;
 pub mod python_ir_executor;
@@ -41,8 +43,9 @@ pub mod signature_cache;
 pub mod build_orchestrator;
 pub mod query;
 
-#[cfg(feature = "python-execution")]
+// RustPython execution is now always available
 pub mod python_executor;
+pub mod python_bridge;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::{Path, PathBuf}};
@@ -56,8 +59,10 @@ pub use resolver::SimpleResolver;
 pub use include_resolver::IncludeResolver;
 pub use layer_context::{BuildContext, LayerConfig};
 pub use override_resolver::{OverrideResolver, OverrideOp, OverrideAssignment};
+pub use bitbake_config::{BbLayersConfig, LocalConfig, VariableExpander};
+pub use build_env::BuildEnvironment;
 pub use python_analysis::{PythonAnalyzer, PythonBlock, PythonBlockType, PythonVariableOp, PythonOpType, PythonAnalysisSummary};
-pub use task_parser::{Task, TaskDependency, TaskCollection, parse_addtask_statement, parse_task_flag};
+pub use task_parser::{Task, TaskDependency, TaskCollection, parse_addtask_statement, parse_deltask_statement, parse_task_flag};
 pub use task_extractor::{TaskExtractor, TaskImplementation, TaskImplementationType};
 pub use recipe_graph::{RecipeId, TaskId, Recipe, TaskNode, RecipeGraph, GraphStatistics};
 pub use task_graph::{TaskGraph, TaskGraphBuilder, ExecutableTask, TaskGraphStats};
@@ -75,7 +80,7 @@ pub use pipeline::{Pipeline, PipelineConfig, StageHash, RecipeFile, ParsedRecipe
 pub use signature_cache::{SignatureCache, EnhancedTaskSignature, SignatureStats};
 pub use build_orchestrator::{BuildOrchestrator, OrchestratorConfig, BuildPlan, IncrementalStats};
 
-#[cfg(feature = "python-execution")]
+// Always export Python executor types
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};
 
 // === Data Models ===
