@@ -5,7 +5,7 @@
 
 use convenient_bitbake::{
     BuildEnvironment, ExtractionConfig, RecipeExtractor,
-    Pipeline, PipelineConfig,
+    Pipeline, PipelineConfig, TaskImplementation, PythonExecutor,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -82,6 +82,19 @@ pub async fn execute(
     println!("  Parsed {} recipes", parsed_recipes.len());
     println!();
 
+    // Extract task implementations from parsed recipes
+    let mut recipe_task_impls: HashMap<String, HashMap<String, TaskImplementation>> = HashMap::new();
+    for parsed in &parsed_recipes {
+        if !parsed.task_impls.is_empty() {
+            recipe_task_impls.insert(parsed.file.name.clone(), parsed.task_impls.clone());
+        }
+    }
+
+    println!("  Extracted {} task implementations from {} recipes",
+             recipe_task_impls.values().map(|m| m.len()).sum::<usize>(),
+             recipe_task_impls.len());
+    println!();
+
     // ========== Step 2: Build Recipe Graph ==========
     println!("🔗 Building recipe dependency graph...");
 
@@ -107,8 +120,18 @@ pub async fn execute(
     println!("🎯 Looking for target recipe: {}", target);
 
     // Find the recipe in the graph
+    // Prefer exact match, then prefix match
     let recipe = graph.recipes()
-        .find(|r| r.name == target || r.name.starts_with(target));
+        .find(|r| r.name == target)
+        .or_else(|| {
+            // Strip version suffix from target (e.g., "busybox_1.37.0" -> "busybox")
+            let target_base = target.split('_').next().unwrap_or(target);
+            graph.recipes().find(|r| r.name == target_base)
+        })
+        .or_else(|| {
+            // Fall back to starts_with match
+            graph.recipes().find(|r| r.name.starts_with(target))
+        });
 
     if let Some(recipe) = recipe {
         let version = recipe.version.as_deref().unwrap_or("unknown");
@@ -134,8 +157,8 @@ pub async fn execute(
         }
         println!();
 
-        // ========== Step 5: Show Build Plan ==========
-        println!("🚀 Build Plan:");
+        // ========== Step 5: Create Work Directories ==========
+        println!("🚀 Setting up build environment:");
         println!("   Target: {} {}", recipe.name, version);
         println!("   DL_DIR: {:?}", env.dl_dir);
         println!("   TMPDIR: {:?}", env.tmpdir);
@@ -148,20 +171,95 @@ pub async fn execute(
         std::fs::create_dir_all(env.tmpdir.join("deploy"))?;
         std::fs::create_dir_all(env.tmpdir.join("stamps"))?;
 
+        // Get machine architecture
+        let machine = env.get_machine().unwrap_or("unknown");
+
+        // Create per-recipe work directory: tmp/work/MACHINE/RECIPE/VERSION/
+        let recipe_workdir = env.tmpdir.join(format!("work/{}/{}/{}", machine, recipe.name, version));
+        std::fs::create_dir_all(&recipe_workdir)?;
+        std::fs::create_dir_all(recipe_workdir.join("temp"))?;  // For logs
+
         println!("  Created build directories:");
         println!("    ✓ {:?}", env.dl_dir);
         println!("    ✓ {:?}", env.tmpdir.join("work"));
+        println!("    ✓ {:?}", recipe_workdir);
         println!("    ✓ {:?}", env.tmpdir.join("deploy"));
         println!("    ✓ {:?}", env.tmpdir.join("stamps"));
         println!();
 
-        println!("⚠️  Note: Task execution not yet implemented");
-        println!("   Next steps to complete:");
-        println!("     • Extract task scripts from parsed recipes");
-        println!("     • Execute Python functions via RustPython");
-        println!("     • Set up per-recipe work directories");
-        println!("     • Manage stamp files for incremental builds");
-        println!("     • Handle task dependencies and execution order");
+        // ========== Step 6: Get Task Implementation for do_fetch ==========
+        println!("🔍 Looking for task implementation...");
+
+        // Find the task implementation for this recipe
+        let task_impl = recipe_task_impls.get(&recipe.name)
+            .and_then(|impls| impls.get("do_fetch"));
+
+        if let Some(task_impl) = task_impl {
+            println!("  Found {} implementation for do_fetch",
+                     match task_impl.impl_type {
+                         convenient_bitbake::TaskImplementationType::Shell => "shell",
+                         convenient_bitbake::TaskImplementationType::Python => "Python",
+                         convenient_bitbake::TaskImplementationType::FakerootShell => "fakeroot shell",
+                     });
+            println!("  Code length: {} bytes", task_impl.code.len());
+            println!();
+
+            // ========== Step 7: Execute do_fetch Task ==========
+            println!("⚡ Executing do_fetch...");
+
+            // Build initial variables for execution
+            let mut initial_vars = HashMap::new();
+            initial_vars.insert("PN".to_string(), recipe.name.clone());
+            initial_vars.insert("PV".to_string(), version.to_string());
+            initial_vars.insert("WORKDIR".to_string(), recipe_workdir.to_string_lossy().to_string());
+            initial_vars.insert("DL_DIR".to_string(), env.dl_dir.to_string_lossy().to_string());
+            initial_vars.insert("TMPDIR".to_string(), env.tmpdir.to_string_lossy().to_string());
+            if let Some(machine) = env.get_machine() {
+                initial_vars.insert("MACHINE".to_string(), machine.to_string());
+            }
+
+            // Execute based on task type
+            match task_impl.impl_type {
+                convenient_bitbake::TaskImplementationType::Python => {
+                    println!("  Executing Python task with RustPython...");
+                    let executor = PythonExecutor::new();
+                    let result = executor.execute(&task_impl.code, &initial_vars);
+
+                    if result.success {
+                        println!("  ✓ Python task succeeded");
+                        println!("    Variables set: {}", result.variables_set.len());
+                        for (key, value) in result.variables_set.iter().take(5) {
+                            println!("      {} = {}", key, value);
+                        }
+                        if result.variables_set.len() > 5 {
+                            println!("      ... and {} more", result.variables_set.len() - 5);
+                        }
+
+                        // Create stamp file
+                        let stamp_dir = env.tmpdir.join("stamps").join(machine).join(recipe.name.clone());
+                        std::fs::create_dir_all(&stamp_dir)?;
+                        let stamp_file = stamp_dir.join(format!("do_fetch.{}", version));
+                        std::fs::write(&stamp_file, "")?;
+                        println!("  ✓ Created stamp file: {:?}", stamp_file);
+                    } else {
+                        eprintln!("  ✗ Python task failed: {:?}", result.error);
+                        return Err(format!("do_fetch failed: {:?}", result.error).into());
+                    }
+                }
+                convenient_bitbake::TaskImplementationType::Shell |
+                convenient_bitbake::TaskImplementationType::FakerootShell => {
+                    println!("  ⚠️  Shell task execution not yet implemented");
+                    println!("     Task would execute: {} bytes of shell code", task_impl.code.len());
+                    println!("     Working directory: {:?}", recipe_workdir);
+                    println!();
+                    println!("     Next: Implement shell task execution");
+                }
+            }
+        } else {
+            println!("  ⚠️  No do_fetch implementation found for {}", recipe.name);
+            println!("     This is expected for recipes that inherit do_fetch");
+            println!("     Task graph shows {} total tasks available", recipe_tasks.len());
+        }
         println!();
 
         println!("✅ Build infrastructure ready!");
