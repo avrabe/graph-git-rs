@@ -466,9 +466,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         // Determine network policy based on task type
         let network_policy = if task.task_name == "do_fetch" || task.task_name.contains("fetch") {
-            NetworkPolicy::LoopbackOnly
+            NetworkPolicy::FullNetwork  // Real internet access for downloading sources
         } else {
-            NetworkPolicy::Isolated
+            NetworkPolicy::Isolated  // Hermetic builds for everything else
         };
 
         let spec = TaskSpec {

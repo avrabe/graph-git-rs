@@ -10,10 +10,17 @@ use sha2::{Sha256, Digest};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetworkPolicy {
     /// No network access (default, most hermetic)
+    /// Creates new network namespace with no interfaces
     Isolated,
 
     /// Loopback only (127.0.0.1 accessible)
+    /// Creates new network namespace with loopback interface
     LoopbackOnly,
+
+    /// Full network access (inherits host network)
+    /// Does NOT create network namespace - required for real fetching
+    /// Use for do_fetch tasks that need to download sources
+    FullNetwork,
 
     /// Controlled external access with allow-list (not yet implemented)
     Controlled,

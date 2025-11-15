@@ -329,7 +329,7 @@ impl BuildOrchestrator {
 
             // Determine network policy based on task type
             let network_policy = if task.task_name == "do_fetch" || task.task_name.contains("fetch") {
-                NetworkPolicy::LoopbackOnly  // Fetch tasks need network access
+                NetworkPolicy::FullNetwork  // Fetch tasks need real internet access
             } else {
                 NetworkPolicy::Isolated  // Build tasks should be hermetic
             };

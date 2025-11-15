@@ -332,15 +332,24 @@ fn execute_child_with_userns(
     // read_fd will be automatically closed when it goes out of scope
     drop(read_fd);
 
-    debug!("Child: UID/GID mapping confirmed, creating mount, PID, and network namespaces");
+    // Step 3: Create mount, PID, and optionally network namespaces based on policy
+    let clone_flags = match network_policy {
+        NetworkPolicy::FullNetwork => {
+            debug!("Child: UID/GID mapping confirmed, creating mount+PID namespaces (NO network namespace)");
+            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID
+        }
+        _ => {
+            debug!("Child: UID/GID mapping confirmed, creating mount+PID+network namespaces");
+            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET
+        }
+    };
 
-    // Step 3: Create mount, PID, and network namespaces
-    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET)
-        .map_err(|e| ExecutionError::SandboxError(format!("unshare(NEWNS|NEWPID|NEWNET) failed: {}", e)))?;
+    unshare(clone_flags)
+        .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {}", e)))?;
 
-    debug!("Child: mount, PID, and network namespaces created");
+    debug!("Child: namespaces created successfully");
 
-    // Setup network according to policy
+    // Setup network according to policy (only for isolated namespaces)
     match network_policy {
         NetworkPolicy::Isolated => {
             debug!("Network: Full isolation (no network access)");
@@ -349,6 +358,10 @@ fn execute_child_with_userns(
         NetworkPolicy::LoopbackOnly => {
             setup_loopback()?;
             debug!("Network: Loopback only (127.0.0.1 accessible)");
+        }
+        NetworkPolicy::FullNetwork => {
+            debug!("Network: Full access (inherited from host)");
+            // Network namespace not created - inherits host network
         }
         NetworkPolicy::Controlled => {
             return Err(ExecutionError::SandboxError(
@@ -540,20 +553,32 @@ fn execute_child_without_userns(
 ) -> Result<i32, ExecutionError> {
     use std::fs::File;
 
-    debug!("Child: creating mount, PID, and network namespaces (no user namespace)");
-
     // Move to cgroup BEFORE creating namespaces (so child inherits cgroup)
     if let Some(path) = cgroup_path {
         move_to_cgroup(path)?;
     }
 
-    // Create mount, PID, and network namespaces directly (no user namespace)
-    unshare(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET)
-        .map_err(|e| ExecutionError::SandboxError(format!("unshare(NEWNS|NEWPID|NEWNET) failed: {}", e)))?;
+    // Determine which namespaces to create based on network policy
+    let clone_flags = match network_policy {
+        NetworkPolicy::FullNetwork => {
+            debug!("Child: creating mount+PID namespaces (NO network namespace for FullNetwork)");
+            // Skip CLONE_NEWNET to inherit host network - needed for real fetching
+            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID
+        }
+        _ => {
+            debug!("Child: creating mount+PID+network namespaces");
+            // Create isolated network namespace for hermetic builds
+            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNET
+        }
+    };
 
-    debug!("Child: mount, PID, and network namespaces created");
+    // Create namespaces
+    unshare(clone_flags)
+        .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {}", e)))?;
 
-    // Setup network according to policy
+    debug!("Child: namespaces created successfully");
+
+    // Setup network according to policy (only for isolated namespaces)
     match network_policy {
         NetworkPolicy::Isolated => {
             debug!("Network: Full isolation (no network access)");
@@ -562,6 +587,10 @@ fn execute_child_without_userns(
         NetworkPolicy::LoopbackOnly => {
             setup_loopback()?;
             debug!("Network: Loopback only (127.0.0.1 accessible)");
+        }
+        NetworkPolicy::FullNetwork => {
+            debug!("Network: Full access (inherited from host)");
+            // Network namespace not created - inherits host network
         }
         NetworkPolicy::Controlled => {
             return Err(ExecutionError::SandboxError(
