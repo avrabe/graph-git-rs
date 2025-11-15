@@ -36,9 +36,11 @@ impl BbLayersConfig {
             .ok_or("BBLAYERS variable not found in bblayers.conf")?;
 
         // Parse BBLAYERS - it's a space-separated list of paths
-        let bblayers: Vec<PathBuf> = bblayers_str
+        // Remove line continuation backslashes and split by whitespace
+        let cleaned = bblayers_str.replace('\\', " ");
+        let bblayers: Vec<PathBuf> = cleaned
             .split_whitespace()
-            .filter(|s| !s.is_empty() && *s != "\\")
+            .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .collect();
 
