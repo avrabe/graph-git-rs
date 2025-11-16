@@ -9,6 +9,7 @@
 use convenient_bitbake::{
     BuildEnvironment, ExtractionConfig, RecipeExtractor,
     Pipeline, PipelineConfig, TaskImplementation, PythonExecutor,
+    SimplePythonEvaluator,
 };
 use convenient_bitbake::layer_context::BuildContext as LayerBuildContext;
 use convenient_bitbake::executor::{
@@ -20,25 +21,36 @@ use std::path::Path;
 use std::time::Duration;
 
 /// Expand BitBake variables in a script
-/// Expands ${VAR} patterns using the provided environment
+/// Expands ${VAR} and ${@...} patterns using the provided environment
 fn expand_variables(script: &str, env: &HashMap<String, String>) -> String {
     let mut result = script.to_string();
+    let python_eval = SimplePythonEvaluator::new(env.clone());
 
-    // Expand ${VAR} patterns
+    // Expand ${VAR} and ${@...} patterns
     loop {
         if let Some(start) = result.find("${") {
             if let Some(end) = result[start..].find('}') {
                 let var_name = &result[start + 2..start + end];
 
-                // Skip inline Python expressions ${@...}
+                // Handle inline Python expressions ${@...}
                 if var_name.starts_with('@') {
-                    // TODO: Evaluate inline Python expressions
-                    // For now, leave them as-is (will cause bash errors)
-                    break;
-                }
+                    let python_expr = &var_name[1..]; // Remove '@' prefix
 
-                let replacement = env.get(var_name).cloned().unwrap_or_default();
-                result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
+                    // Try to evaluate with SimplePythonEvaluator
+                    let replacement = if let Some(evaluated) = python_eval.evaluate(python_expr) {
+                        evaluated
+                    } else {
+                        // Can't evaluate - leave as-is with warning
+                        eprintln!("⚠️  Warning: Cannot evaluate Python expression: ${{{}}}", var_name);
+                        format!("${{{}}}", var_name)
+                    };
+
+                    result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
+                } else {
+                    // Regular variable expansion
+                    let replacement = env.get(var_name).cloned().unwrap_or_default();
+                    result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
+                }
             } else {
                 break;
             }
