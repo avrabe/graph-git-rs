@@ -42,6 +42,7 @@ pub mod pipeline;
 pub mod signature_cache;
 pub mod build_orchestrator;
 pub mod query;
+pub mod sysroot;
 
 // RustPython execution is now always available
 pub mod python_executor;
@@ -79,6 +80,7 @@ pub use executor::{SandboxBackend, ExecutionLog, ExecutionOutcome, ExecutionErro
 pub use pipeline::{Pipeline, PipelineConfig, StageHash, RecipeFile, ParsedRecipe};
 pub use signature_cache::{SignatureCache, EnhancedTaskSignature, SignatureStats};
 pub use build_orchestrator::{BuildOrchestrator, OrchestratorConfig, BuildPlan, IncrementalStats};
+pub use sysroot::{SysrootAssembler, SysrootManifest, HardlinkTreeBuilder, TaskDependency as SysrootTaskDep, SysrootError, SysrootResult, generate_sysroot_manifest};
 
 // Always export Python executor types
 pub use python_executor::{PythonExecutor, PythonExecutionResult, DataStoreInner};

@@ -441,7 +441,7 @@ mod tests {
             .script("echo test".to_string())
             .env("TEST".to_string(), "value".to_string());
 
-        // Should build config
-        assert!(builder.build().is_ok() || builder.build().is_err()); // May fail if no overlay
+        // Should build config (consumes builder)
+        let _result = builder.build(); // May fail if no overlay support
     }
 }

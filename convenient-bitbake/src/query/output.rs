@@ -156,15 +156,18 @@ pub fn format_graph_with_deps(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recipe_graph::RecipeId;
 
     #[test]
     fn test_format_text() {
         let targets = vec![
             RecipeTarget {
+                recipe_id: RecipeId(0),
                 layer: "meta-core".to_string(),
                 recipe: "busybox".to_string(),
             },
             RecipeTarget {
+                recipe_id: RecipeId(1),
                 layer: "meta-core".to_string(),
                 recipe: "glibc".to_string(),
             },
@@ -178,6 +181,7 @@ mod tests {
     #[test]
     fn test_format_json() {
         let targets = vec![RecipeTarget {
+            recipe_id: RecipeId(0),
             layer: "meta-core".to_string(),
             recipe: "busybox".to_string(),
         }];
@@ -190,6 +194,7 @@ mod tests {
     #[test]
     fn test_format_graph() {
         let targets = vec![RecipeTarget {
+            recipe_id: RecipeId(0),
             layer: "meta-core".to_string(),
             recipe: "busybox".to_string(),
         }];
