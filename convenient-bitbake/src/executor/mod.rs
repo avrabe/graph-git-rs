@@ -20,6 +20,7 @@ pub mod remote_cache;
 pub mod script_analyzer;
 pub mod direct_executor;
 pub mod fetch_handler;
+pub mod retry;
 
 // External executor abstraction
 pub mod external;
@@ -44,6 +45,7 @@ pub use remote_cache::{RemoteCacheClient, RemoteCacheConfig, ActionResult, Outpu
 pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script, determine_execution_mode};
 pub use direct_executor::{execute_direct, DirectExecutionResult};
 pub use fetch_handler::{fetch_source, FetchError, FetchResult};
+pub use retry::{RetryPolicy, execute_with_retry, execute_with_retry_sync};
 
 // External executor types
 pub use external::{
