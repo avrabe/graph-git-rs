@@ -359,10 +359,38 @@ impl<'a> RecipeQueryEngine<'a> {
         found_path
     }
 
-    fn matches_kind(&self, _target: &RecipeTarget, _pattern: &str) -> bool {
-        // TODO: Implement kind matching (requires recipe metadata)
-        // For now, always return true
-        true
+    fn matches_kind(&self, target: &RecipeTarget, pattern: &str) -> bool {
+        // Get recipe from graph
+        let recipe = match self.graph.get_recipe(target.recipe_id) {
+            Some(r) => r,
+            None => return false,
+        };
+
+        // Detect recipe kind from name patterns and metadata
+        let recipe_name = &recipe.name;
+        let detected_kind = if recipe_name.ends_with("-native") {
+            "native"
+        } else if recipe_name.ends_with("-cross") || recipe_name.ends_with("-crosssdk") {
+            "cross"
+        } else if recipe_name.ends_with("-nativesdk") {
+            "nativesdk"
+        } else if recipe_name.starts_with("packagegroup-") {
+            "packagegroup"
+        } else if recipe_name.ends_with("-image") || recipe.metadata.get("IMAGE_INSTALL").is_some() {
+            "image"
+        } else if let Some(inherit) = recipe.metadata.get("INHERIT") {
+            // Check for image class
+            if inherit.contains("image") {
+                "image"
+            } else {
+                "recipe"
+            }
+        } else {
+            "recipe"
+        };
+
+        // Check if pattern matches detected kind
+        wildcard_match(pattern, detected_kind)
     }
 
     fn matches_filter(&self, target: &RecipeTarget, pattern: &str) -> bool {
@@ -371,10 +399,17 @@ impl<'a> RecipeQueryEngine<'a> {
         wildcard_match(pattern, &target_str)
     }
 
-    fn matches_attr(&self, _target: &RecipeTarget, _name: &str, _value: &str) -> bool {
-        // TODO: Implement attribute matching (requires recipe metadata)
-        // For now, always return false
-        false
+    fn matches_attr(&self, target: &RecipeTarget, name: &str, value: &str) -> bool {
+        // Get recipe from graph
+        let recipe = match self.graph.get_recipe(target.recipe_id) {
+            Some(r) => r,
+            None => return false,
+        };
+
+        // Check if recipe has the attribute and it matches the value pattern
+        recipe.metadata.get(name)
+            .map(|attr_value| wildcard_match(value, attr_value))
+            .unwrap_or(false)
     }
 }
 
@@ -436,6 +471,7 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recipe_graph::RecipeGraph;
 
     #[test]
     fn test_wildcard_match() {
@@ -443,5 +479,102 @@ mod tests {
         assert!(wildcard_match("*core", "meta-core"));
         assert!(wildcard_match("meta-*-yocto", "meta-poky-yocto"));
         assert!(!wildcard_match("meta-*", "poky"));
+    }
+
+    #[test]
+    fn test_kind_matching_native() {
+        let mut graph = RecipeGraph::new();
+        let recipe_id = graph.add_recipe("cmake-native");
+        let recipe = graph.get_recipe_mut(recipe_id).unwrap();
+        recipe.layer = Some("meta-core".to_string());
+
+        let engine = RecipeQueryEngine::new(&graph);
+        let target = RecipeTarget {
+            recipe_id,
+            layer: "meta-core".to_string(),
+            recipe: "cmake-native".to_string(),
+        };
+
+        assert!(engine.matches_kind(&target, "native"));
+        assert!(!engine.matches_kind(&target, "cross"));
+        assert!(!engine.matches_kind(&target, "image"));
+    }
+
+    #[test]
+    fn test_kind_matching_image() {
+        let mut graph = RecipeGraph::new();
+        let recipe_id = graph.add_recipe("core-image-minimal");
+        let recipe = graph.get_recipe_mut(recipe_id).unwrap();
+        recipe.layer = Some("meta-core".to_string());
+        recipe.metadata.insert("IMAGE_INSTALL".to_string(), "busybox".to_string());
+
+        let engine = RecipeQueryEngine::new(&graph);
+        let target = RecipeTarget {
+            recipe_id,
+            layer: "meta-core".to_string(),
+            recipe: "core-image-minimal".to_string(),
+        };
+
+        assert!(engine.matches_kind(&target, "image"));
+        assert!(!engine.matches_kind(&target, "native"));
+    }
+
+    #[test]
+    fn test_kind_matching_cross() {
+        let mut graph = RecipeGraph::new();
+        let recipe_id = graph.add_recipe("gcc-cross");
+        let recipe = graph.get_recipe_mut(recipe_id).unwrap();
+        recipe.layer = Some("meta-core".to_string());
+
+        let engine = RecipeQueryEngine::new(&graph);
+        let target = RecipeTarget {
+            recipe_id,
+            layer: "meta-core".to_string(),
+            recipe: "gcc-cross".to_string(),
+        };
+
+        assert!(engine.matches_kind(&target, "cross"));
+        assert!(!engine.matches_kind(&target, "native"));
+    }
+
+    #[test]
+    fn test_attr_matching() {
+        let mut graph = RecipeGraph::new();
+        let recipe_id = graph.add_recipe("busybox");
+        let recipe = graph.get_recipe_mut(recipe_id).unwrap();
+        recipe.layer = Some("meta-core".to_string());
+        recipe.metadata.insert("LICENSE".to_string(), "GPLv2".to_string());
+        recipe.metadata.insert("SECTION".to_string(), "base".to_string());
+
+        let engine = RecipeQueryEngine::new(&graph);
+        let target = RecipeTarget {
+            recipe_id,
+            layer: "meta-core".to_string(),
+            recipe: "busybox".to_string(),
+        };
+
+        assert!(engine.matches_attr(&target, "LICENSE", "GPLv2"));
+        assert!(engine.matches_attr(&target, "SECTION", "base"));
+        assert!(!engine.matches_attr(&target, "LICENSE", "MIT"));
+        assert!(!engine.matches_attr(&target, "NONEXISTENT", "value"));
+    }
+
+    #[test]
+    fn test_attr_matching_wildcard() {
+        let mut graph = RecipeGraph::new();
+        let recipe_id = graph.add_recipe("linux-yocto");
+        let recipe = graph.get_recipe_mut(recipe_id).unwrap();
+        recipe.layer = Some("meta-yocto".to_string());
+        recipe.metadata.insert("LICENSE".to_string(), "GPLv2".to_string());
+
+        let engine = RecipeQueryEngine::new(&graph);
+        let target = RecipeTarget {
+            recipe_id,
+            layer: "meta-yocto".to_string(),
+            recipe: "linux-yocto".to_string(),
+        };
+
+        assert!(engine.matches_attr(&target, "LICENSE", "GPL*"));
+        assert!(!engine.matches_attr(&target, "LICENSE", "MIT*"));
     }
 }
