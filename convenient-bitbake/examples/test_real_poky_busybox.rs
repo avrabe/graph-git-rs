@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("Failed to build plan: {}", e))?;
     let build_time = start_build.elapsed();
 
-    println!("  ✓ Recipes parsed: {}", build_plan.recipe_graph.recipes().len());
+    println!("  ✓ Recipes parsed: {}", build_plan.recipe_graph.recipes().count());
     println!("  ✓ Total tasks: {}", build_plan.task_graph.tasks.len());
     println!("  ✓ Build plan time: {:.2}s", build_time.as_secs_f32());
     println!();
@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Recipe:               busybox");
     println!("  Machine:              qemux86-64");
     println!("  Distro:               poky");
-    println!("  Total recipes:        {}", build_plan.recipe_graph.recipes().len());
+    println!("  Total recipes:        {}", build_plan.recipe_graph.recipes().count());
     println!("  Total tasks:          {}", build_plan.task_graph.tasks.len());
     println!("  Build plan time:      {:.2}s", build_time.as_secs_f32());
     println!("\n=== Features Validated ===");
