@@ -294,6 +294,7 @@ dependencies = [
  "convenient-kas",
  "nix 0.29.0",
  "num_cpus",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "tempfile",
