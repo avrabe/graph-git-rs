@@ -1,55 +1,50 @@
-//! Native BitBake build command with Bazel-like sandboxing and caching
+//! Ferrari Build - Full-featured BitBake build using all available infrastructure
 //!
-//! This command builds BitBake recipes using:
-//! - Content-addressable caching (like Bazel Remote Cache)
-//! - Native Linux namespace sandboxing (like Bazel sandbox)
-//! - Hash-based task signatures for hermetic builds
-//! - TaskExecutor for orchestration
+//! This command uses:
+//! - BuildOrchestrator for complete build planning
+//! - TaskGraph for dependency resolution
+//! - SimplePythonEvaluator for ${@...} expressions
+//! - AsyncTaskExecutor for parallel execution (if available)
+//! - Enhanced caching with incremental build analysis
 
 use convenient_bitbake::{
-    BuildEnvironment, ExtractionConfig, RecipeExtractor,
-    Pipeline, PipelineConfig, TaskImplementation, PythonExecutor,
-    SimplePythonEvaluator,
+    BuildEnvironment, BuildOrchestrator, OrchestratorConfig,
+    SimplePythonEvaluator, TaskGraphBuilder,
 };
-use convenient_bitbake::layer_context::BuildContext as LayerBuildContext;
 use convenient_bitbake::executor::{
-    TaskExecutor, TaskSpec, NetworkPolicy, ResourceLimits,
+    TaskExecutor, CacheManager,
 };
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Duration;
+use std::time::Instant;
 
-/// Expand BitBake variables in a script
-/// Expands ${VAR} and ${@...} patterns using the provided environment
-fn expand_variables(script: &str, env: &HashMap<String, String>) -> String {
+/// Expand BitBake script with full Python support
+fn expand_script(
+    script: &str,
+    env: &HashMap<String, String>,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let evaluator = SimplePythonEvaluator::new(env.clone());
+
+    // Try to evaluate each ${@...} expression
     let mut result = script.to_string();
-    let python_eval = SimplePythonEvaluator::new(env.clone());
+    let mut changed = true;
 
-    // Expand ${VAR} and ${@...} patterns
-    loop {
-        if let Some(start) = result.find("${") {
+    while changed {
+        changed = false;
+        if let Some(start) = result.find("${@") {
             if let Some(end) = result[start..].find('}') {
-                let var_name = &result[start + 2..start + end];
+                let expr = &result[start..start + end + 1];
 
-                // Handle inline Python expressions ${@...}
-                if var_name.starts_with('@') {
-                    let python_expr = &var_name[1..]; // Remove '@' prefix
-
-                    // Try to evaluate with SimplePythonEvaluator
-                    let replacement = if let Some(evaluated) = python_eval.evaluate(python_expr) {
-                        evaluated
-                    } else {
-                        // Can't evaluate - leave as-is with warning
-                        eprintln!("⚠️  Warning: Cannot evaluate Python expression: ${{{}}}", var_name);
-                        format!("${{{}}}", var_name)
-                    };
-
-                    result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
-                } else {
-                    // Regular variable expansion
-                    let replacement = env.get(var_name).cloned().unwrap_or_default();
-                    result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
+                match evaluator.evaluate(expr) {
+                    Some(value) => {
+                        result = format!("{}{}{}", &result[..start], value, &result[start + end + 1..]);
+                        changed = true;
+                    }
+                    None => {
+                        // Try simple expansion for other ${VAR}
+                        break;
+                    }
                 }
             } else {
                 break;
@@ -59,243 +54,241 @@ fn expand_variables(script: &str, env: &HashMap<String, String>) -> String {
         }
     }
 
+    // Fallback simple ${VAR} expansion
+    result = simple_expand(&result, env);
+
+    Ok(result)
+}
+
+/// Fallback simple expansion
+fn simple_expand(script: &str, env: &HashMap<String, String>) -> String {
+    let mut result = script.to_string();
+    loop {
+        if let Some(start) = result.find("${") {
+            if let Some(end) = result[start..].find('}') {
+                let var_name = &result[start + 2..start + end];
+                if var_name.starts_with('@') {
+                    // Skip Python expressions in fallback
+                    break;
+                }
+                let replacement = env.get(var_name).cloned().unwrap_or_default();
+                result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
     result
 }
 
-/// Execute build using native BitBake configuration with TaskExecutor
+/// Execute build with full BuildOrchestrator pipeline
 pub async fn execute(
     build_dir: &Path,
     target: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let start_time = Instant::now();
+
     println!("╔════════════════════════════════════════════════════════╗");
-    println!("║         BITZEL BUILD WITH TASK EXECUTOR               ║");
-    println!("║  Bazel-inspired hermetic builds for BitBake/Yocto     ║");
+    println!("║           🏎️  BITZEL FERRARI BUILD  🏎️                ║");
+    println!("║  Full-Featured Bazel-Inspired BitBake Build System    ║");
     println!("╚════════════════════════════════════════════════════════╝");
     println!();
-    println!("Mode: Executor-based (sandboxed + cached)");
-    println!("Build directory: {:?}", build_dir);
     println!("Target: {}", target);
-    println!();
-
-    // ========== Initialize Task Executor ==========
-    println!("⚡ Initializing task executor...");
-    let cache_dir = build_dir.join("bitzel-cache");
-    let mut executor = TaskExecutor::new(&cache_dir)?;
-    println!("  ✓ Task executor ready");
+    println!("Build directory: {:?}", build_dir);
     println!();
 
     // ========== Load Build Environment ==========
-    println!("🏗️  Loading BitBake build environment...");
+    println!("🏗️  Loading build environment...");
     let env = BuildEnvironment::from_build_dir(build_dir)?;
-
-    println!("📋 Configuration:");
-    println!("  TOPDIR:      {:?}", env.topdir);
-    println!("  MACHINE:     {}", env.get_machine().unwrap_or("unknown"));
-    println!("  DISTRO:      {}", env.get_distro().unwrap_or("unknown"));
-    println!("  DL_DIR:      {:?}", env.dl_dir);
-    println!("  TMPDIR:      {:?}", env.tmpdir);
-    println!("  Layers:      {}", env.layers.len());
-    for (i, layer) in env.layers.iter().enumerate() {
-        println!("    {}. {:?}", i + 1, layer);
-    }
+    println!("  ✓ MACHINE: {}", env.get_machine().unwrap_or("unknown"));
+    println!("  ✓ DISTRO:  {}", env.get_distro().unwrap_or("unknown"));
+    println!("  ✓ Layers:  {}", env.layers.len());
     println!();
 
-    // ========== Create Build Context ==========
-    println!("🔧 Creating build context...");
-    let layer_build_context = env.create_build_context()?;
-    println!("  Loaded {} layers with priorities", layer_build_context.layers.len());
-    for layer in &layer_build_context.layers {
-        println!("    • {} (priority: {})", layer.collection, layer.priority);
-    }
-    println!();
+    // ========== Build Orchestration ==========
+    println!("🎼 Building execution plan with BuildOrchestrator...");
 
-    // ========== Parse Recipes with Parallel Pipeline ==========
-    println!("🔍 Discovering and parsing BitBake recipes...");
-    let pipeline_config = PipelineConfig {
+    let config = OrchestratorConfig {
+        build_dir: build_dir.to_path_buf(),
+        machine: env.get_machine().map(|s| s.to_string()),
+        distro: env.get_distro().map(|s| s.to_string()),
         max_io_parallelism: 32,
         max_cpu_parallelism: num_cpus::get(),
-        enable_cache: true,
-        cache_dir: build_dir.join("bitzel-cache/pipeline"),
     };
 
-    let pipeline = Pipeline::new(pipeline_config, layer_build_context);
+    let orchestrator = BuildOrchestrator::new(config);
 
-    // Create ExtractionConfig with default BuildContext (different type!)
-    let extraction_config = ExtractionConfig {
-        use_python_executor: false,
-        use_simple_python_eval: true,
-        use_python_ir: false,
-        default_variables: HashMap::new(),
-        extract_tasks: true,
-        resolve_providers: true,
-        resolve_includes: true,
-        resolve_inherit: true,
-        extract_class_deps: true,
-        class_search_paths: vec![],
-        build_context: Default::default(),  // recipe_extractor::BuildContext
-    };
+    // Create layer paths map
     let mut layer_paths: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
     for (i, layer) in env.layers.iter().enumerate() {
         let layer_name = format!("layer_{}", i);
         layer_paths.insert(layer_name, vec![layer.clone()]);
     }
 
-    // Use Pipeline's 3-stage process: discover -> parse -> build_graph
-    let (recipe_files, _discover_hash) = pipeline.discover_recipes(&layer_paths).await?;
-    let (parsed_recipes, _parse_hash) = pipeline.parse_recipes(recipe_files).await?;
+    let build_plan = orchestrator.build_plan(layer_paths).await?;
 
-    let extractor = RecipeExtractor::new(extraction_config);
-    let (graph, _graph_hash) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
-    let stats = graph.statistics();
-    println!("  Recipes:       {}", graph.recipe_count());
-    println!("  Tasks:         {}", graph.task_count());
-    println!("  Dependencies:  {}", stats.total_dependencies);
+    println!("  ✓ Recipes parsed: {}", build_plan.recipe_graph.recipe_count());
+    println!("  ✓ Tasks available: {}", build_plan.task_graph.tasks.len());
     println!();
 
-    // ========== Find Target Recipe ==========
-    println!("🎯 Looking for target recipe: {}", target);
-    let recipe_id = graph.find_recipe(target)
-        .ok_or_else(|| format!("Recipe '{}' not found", target))?;
-    let recipe = graph.get_recipe(recipe_id)
-        .ok_or_else(|| format!("Recipe '{}' not found in graph", target))?;
-
-    // Find parsed recipe with task implementations
-    let parsed_recipe = parsed_recipes.iter()
-        .find(|p| p.file.name == recipe.name)
-        .ok_or_else(|| format!("Parsed recipe '{}' not found", target))?;
-
-    println!("  Found recipe: {} {}", recipe.name, recipe.version.as_deref().unwrap_or("unknown"));
+    // ========== Incremental Build Analysis ==========
+    println!("📊 Incremental Build Analysis:");
+    let inc_stats = &build_plan.incremental_stats;
+    println!("  Total tasks:      {}", inc_stats.total_tasks);
+    println!("  Unchanged:        {} ({:.1}%)",
+        inc_stats.unchanged,
+        inc_stats.unchanged_percent()
+    );
+    println!("  Need rebuild:     {} ({:.1}%)",
+        inc_stats.need_rebuild,
+        inc_stats.rebuild_percent()
+    );
+    println!("  New tasks:        {} ({:.1}%)",
+        inc_stats.new_tasks,
+        inc_stats.new_percent()
+    );
     println!();
 
-    // ========== Setup Build Environment ==========
-    let machine = env.get_machine().unwrap_or("unknown");
-    let recipe_workdir = env.tmpdir.join("work").join(machine).join(&recipe.name)
-        .join(recipe.version.as_deref().unwrap_or("unknown"));
-
-    println!("🚀 Setting up build environment:");
-    println!("   Target: {} {}", recipe.name, recipe.version.as_deref().unwrap_or("unknown"));
-    std::fs::create_dir_all(&recipe_workdir)?;
-    println!("  ✓ Work directory: {:?}", recipe_workdir);
-    println!();
-
-    // ========== Setup BitBake Variables ==========
-    let mut initial_vars = HashMap::new();
-    initial_vars.insert("PN".to_string(), recipe.name.clone());
-    initial_vars.insert("PV".to_string(), recipe.version.clone().unwrap_or_default());
-    initial_vars.insert("MACHINE".to_string(), machine.to_string());
-    initial_vars.insert("WORKDIR".to_string(), recipe_workdir.to_string_lossy().to_string());
-    initial_vars.insert("S".to_string(), recipe_workdir.join("src").to_string_lossy().to_string());
-    initial_vars.insert("B".to_string(), recipe_workdir.join("build").to_string_lossy().to_string());
-    initial_vars.insert("D".to_string(), recipe_workdir.join("image").to_string_lossy().to_string());
-    initial_vars.insert("sysconfdir".to_string(), "/etc".to_string());
-    initial_vars.insert("bindir".to_string(), "/usr/bin".to_string());
-    initial_vars.insert("libdir".to_string(), "/usr/lib".to_string());
-    initial_vars.insert("nonarch_libdir".to_string(), "/usr/lib".to_string());
-    initial_vars.insert("localstatedir".to_string(), "/var".to_string());
-
-    // ========== Execute Task ==========
-    println!("🔍 Looking for task to execute...");
-
-    // Find a task to execute from parsed recipe (preferring do_compile or do_install)
-    let task_impl = parsed_recipe.task_impls.get("do_install")
-        .or_else(|| parsed_recipe.task_impls.get("do_compile"))
-        .or_else(|| parsed_recipe.task_impls.values().next())
-        .ok_or_else(|| format!("No task implementations found in recipe '{}'", target))?;
-
-    println!("  Found {} implementation ({} bytes)", task_impl.name, task_impl.code.len());
-    println!();
-
-    // ========== Execute with TaskExecutor ==========
-    println!("⚡ Executing {} with TaskExecutor...", task_impl.name);
-
-    // Expand variables in the script
-    let expanded_script = expand_variables(&task_impl.code, &initial_vars);
-
-    // Determine network policy based on task name
-    let network_policy = if task_impl.name == "do_fetch" {
-        NetworkPolicy::FullNetwork
-    } else {
-        NetworkPolicy::Isolated
-    };
-
-    // Auto-detect execution mode from script
-    let execution_mode = convenient_bitbake::executor::determine_execution_mode(&expanded_script);
-
-    // Create TaskSpec
-    let task_spec = TaskSpec {
-        name: task_impl.name.clone(),
-        recipe: recipe.name.clone(),
-        script: expanded_script,
-        workdir: recipe_workdir.clone(),
-        env: initial_vars.clone(),
-        outputs: vec![],  // Auto-detect outputs
-        timeout: Some(Duration::from_secs(600)),  // 10 minute timeout
-        execution_mode,
-        network_policy,
-        resource_limits: ResourceLimits::default(),
-    };
-
-    println!("  Mode: {:?}", task_spec.execution_mode);
-    if task_spec.execution_mode.requires_sandbox() {
-        println!("  Sandbox: Yes (Linux namespace)");
-        println!("  Network: {:?}", task_spec.network_policy);
-        println!("  Resource limits: 4GB memory, 1024 PIDs");
-    } else {
-        println!("  Sandbox: No (direct Rust execution)");
-        println!("  Host contamination: None (hermetic)");
-    }
-    println!();
-
-    // Execute!
-    match executor.execute_task(task_spec) {
-        Ok(output) => {
-            if output.exit_code == 0 {
-                println!("  ✓ Task succeeded (exit code: {})", output.exit_code);
-            } else {
-                println!("  ✗ Task FAILED (exit code: {})", output.exit_code);
-            }
-
-            if !output.stdout.is_empty() {
-                println!("  Stdout: {} bytes", output.stdout.len());
-            }
-
-            if !output.stderr.is_empty() {
-                println!("  Stderr ({} bytes):", output.stderr.len());
-                let preview = if output.stderr.len() > 500 {
-                    format!("{}...\n[{} more bytes]", &output.stderr[..500], output.stderr.len() - 500)
-                } else {
-                    output.stderr.clone()
-                };
-                for line in preview.lines() {
-                    println!("    {}", line);
-                }
-            }
-
-            println!("  Output files: {}", output.output_files.len());
-            for (path, hash) in &output.output_files {
-                println!("    {:?} ({})", path, hash);
-            }
-
-            // Create stamp file
-            let stamp_dir = env.tmpdir.join("stamps").join(machine).join(&recipe.name);
-            std::fs::create_dir_all(&stamp_dir)?;
-            let stamp_file = stamp_dir.join(format!("{}.{}", task_impl.name, output.signature));
-            std::fs::write(&stamp_file, "")?;
-            println!("  ✓ Created stamp file");
+    // ========== Cache Statistics ==========
+    let cache_dir = build_dir.join("bitzel-cache");
+    if cache_dir.exists() {
+        let cache_mgr = CacheManager::new(&cache_dir);
+        if let Ok(cache_query) = cache_mgr.query() {
+            println!("💾 Cache Status:");
+            println!("  CAS objects:      {} ({:.1} MB)",
+                cache_query.cas_objects,
+                cache_query.cas_bytes as f64 / 1_000_000.0
+            );
+            println!("  Cached tasks:     {}", cache_query.action_cache_entries);
+            println!("  Active sandboxes: {}", cache_query.active_sandboxes);
             println!();
-
-            if output.exit_code != 0 {
-                return Err(format!("Task failed with exit code {}", output.exit_code).into());
-            }
-
-            println!("✅ Build complete!");
-            println!("   Cache efficiency will improve on subsequent builds");
-        }
-        Err(e) => {
-            eprintln!("❌ Task execution failed: {}", e);
-            return Err(Box::new(e));
+        } else {
+            println!("💾 Cache: Not initialized yet");
+            println!();
         }
     }
 
-    Ok(())
+    // ========== Find Target and Build Task Graph ==========
+    println!("🎯 Finding target recipe: {}", target);
+    let recipe_id = build_plan.recipe_graph.find_recipe(target)
+        .ok_or_else(|| format!("Recipe '{}' not found", target))?;
+    let recipe = build_plan.recipe_graph.get_recipe(recipe_id)
+        .ok_or_else(|| format!("Recipe not found in graph"))?;
+
+    println!("  ✓ Found: {} {}", recipe.name, recipe.version.as_deref().unwrap_or("unknown"));
+
+    // Find the target task
+    let target_task_name = "do_install";
+    let target_task = build_plan.task_graph.tasks.values()
+        .find(|t| t.recipe_id == recipe_id && t.task_name == target_task_name)
+        .ok_or_else(|| format!("Task {} not found for recipe", target_task_name))?;
+
+    println!("  ✓ Target task: {}", target_task.task_name);
+    println!();
+
+    // ========== Build Execution Graph for Target ==========
+    println!("🔗 Building execution graph for {}:{}...", recipe.name, target_task_name);
+
+    let builder = TaskGraphBuilder::new(build_plan.recipe_graph.clone());
+    let exec_graph = builder.build_for_task(target_task.task_id)?;
+
+    println!("  ✓ Tasks in graph: {}", exec_graph.tasks.len());
+    println!("  ✓ Root tasks: {}", exec_graph.root_tasks.len());
+    println!("  ✓ Execution order computed (topologically sorted)");
+    println!();
+
+    // ========== Execute Tasks (Sequential for now) ==========
+    println!("🚀 Executing task graph...");
+    println!();
+
+    let cache_dir = build_dir.join("bitzel-cache");
+    let mut executor = TaskExecutor::new(&cache_dir)?;
+
+    let mut completed = 0;
+    let mut from_cache = 0;
+    let mut failed = 0;
+
+    for &task_id in &exec_graph.execution_order {
+        if let Some(exec_task) = exec_graph.tasks.get(&task_id) {
+            let task_key = format!("{}:{}", exec_task.recipe_name, exec_task.task_name);
+
+            if let Some(spec) = build_plan.task_specs.get(&task_key) {
+                println!("  Executing: {}", task_key);
+
+                match executor.execute_task(spec.clone()) {
+                    Ok(output) => {
+                        if output.exit_code == 0 {
+                            completed += 1;
+                            // Check cache hit via executor stats
+                            let current_stats = executor.stats();
+                            if current_stats.cache_hits > from_cache {
+                                from_cache = current_stats.cache_hits;
+                                println!("    ✓ Completed (from cache)");
+                            } else {
+                                println!("    ✓ Completed ({:.2}s)", output.duration_ms as f64 / 1000.0);
+                            }
+                        } else {
+                            failed += 1;
+                            println!("    ✗ Failed (exit code: {})", output.exit_code);
+
+                            if !output.stderr.is_empty() {
+                                let preview = if output.stderr.len() > 500 {
+                                    format!("{}...", &output.stderr[..500])
+                                } else {
+                                    output.stderr.clone()
+                                };
+                                for line in preview.lines().take(10) {
+                                    println!("      {}", line);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        println!("    ✗ Error: {}", e);
+                        break;
+                    }
+                }
+            } else {
+                println!("  ⚠ No TaskSpec for {}, skipping", task_key);
+            }
+        }
+    }
+
+    println!();
+
+    // ========== Display Build Statistics ==========
+    let exec_stats = executor.stats();
+
+    println!("📊 Build Statistics:");
+    println!("  Tasks completed:  {}", completed);
+    println!("  From cache:       {}", from_cache);
+    println!("  Failed:           {}", failed);
+    if exec_stats.tasks_executed > 0 {
+        println!("  Cache hit rate:   {:.1}%", exec_stats.cache_hit_rate() * 100.0);
+    }
+    println!();
+
+    // ========== Final Summary ==========
+    let total_duration = start_time.elapsed();
+
+    if failed == 0 {
+        println!("╔════════════════════════════════════════════════════════╗");
+        println!("║                  BUILD SUCCESSFUL! ✅                  ║");
+        println!("╚════════════════════════════════════════════════════════╝");
+        println!();
+        println!("Total build time: {:.2}s", total_duration.as_secs_f64());
+        println!("Target: {}:{}", recipe.name, target_task_name);
+        println!();
+        Ok(())
+    } else {
+        println!("╔════════════════════════════════════════════════════════╗");
+        println!("║                   BUILD FAILED! ❌                     ║");
+        println!("╚════════════════════════════════════════════════════════╝");
+        println!();
+        Err("Build failed".into())
+    }
 }

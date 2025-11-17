@@ -31,8 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match cli.command {
         Commands::Kas { config, builddir, target } => {
             println!("\n╔════════════════════════════════════════════════════════╗");
-            println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
-            println!("║  Layer-aware BitBake with override resolution         ║");
+            println!("║              BITZEL ENVIRONMENT SETUP                  ║");
+            println!("║  KAS-based BitBake environment initialization         ║");
             println!("╚════════════════════════════════════════════════════════╝\n");
             println!("Mode: KAS Configuration");
             println!("Config: {:?}", config);
@@ -42,16 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Commands::Build { builddir, target } => {
             println!("\n╔════════════════════════════════════════════════════════╗");
             println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
-            println!("║  Layer-aware BitBake with override resolution         ║");
+            println!("║  Task Graph Execution with Dependency Resolution      ║");
             println!("╚════════════════════════════════════════════════════════╝\n");
-            println!("Mode: Native BitBake (Basic)");
             println!("Build directory: {:?}", builddir);
             println!("Target: {}", target);
             println!();
             commands::build::execute(&builddir, &target).await?;
-        }
-        Commands::Ferrari { builddir, target } => {
-            commands::build_ferrari::execute(&builddir, &target).await?;
         }
         Commands::Clean { builddir, all } => {
             if all {

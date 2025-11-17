@@ -1,9 +1,8 @@
 //! Bitzel command-line interface
 //!
 //! Bitzel supports multiple modes of operation:
-//! - `kas`: Build using KAS configuration files
-//! - `build`: Build using native BitBake configuration (basic)
-//! - `ferrari`: Full-featured build with all optimizations
+//! - `kas`: Setup BitBake environment using KAS configuration files
+//! - `build`: Build recipes with full task graph execution
 //! - `clean`: Cache management
 //! - `query`: Dependency exploration
 
@@ -12,7 +11,6 @@ use std::path::PathBuf;
 
 pub mod kas;
 pub mod build;
-pub mod build_ferrari;
 pub mod clean;
 pub mod query;
 
@@ -28,7 +26,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Build using KAS configuration file
+    /// Setup BitBake environment using KAS configuration file
     Kas {
         /// Path to KAS configuration file
         #[arg(short, long, default_value = "kas.yml")]
@@ -38,22 +36,12 @@ pub enum Commands {
         #[arg(short, long, default_value = "build")]
         builddir: PathBuf,
 
-        /// Target recipe to build (optional)
+        /// Target recipe (optional, for validation only)
         target: Option<String>,
     },
 
-    /// Build using native BitBake configuration (basic mode)
+    /// Build recipes with task graph execution
     Build {
-        /// Build directory (must contain conf/bblayers.conf and conf/local.conf)
-        #[arg(short, long, default_value = "build")]
-        builddir: PathBuf,
-
-        /// Target recipe to build
-        target: String,
-    },
-
-    /// 🏎️  Ferrari build - full-featured build with all optimizations
-    Ferrari {
         /// Build directory (must contain conf/bblayers.conf and conf/local.conf)
         #[arg(short, long, default_value = "build")]
         builddir: PathBuf,
