@@ -77,6 +77,131 @@ do_compile_prepend() {
     :
 }
 
+copy_locale_files() {
+    # Placeholder for locale file copying
+    bbnote "copy_locale_files called (stub implementation)"
+}
+
+install_append() {
+    # Install with directory creation
+    mkdir -p "$(dirname "$2")" 2>/dev/null || true
+    install "$@"
+}
+
+oe_libinstall() {
+    # Install library files
+    # Usage: oe_libinstall [-C dir] [-s] libname dest
+    local dir=""
+    local sudo=""
+    local libname=""
+    local dest=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -C) dir="$2"; shift 2 ;;
+            -s) sudo="sudo"; shift ;;
+            *) if [ -z "$libname" ]; then
+                   libname="$1"
+               else
+                   dest="$1"
+               fi
+               shift ;;
+        esac
+    done
+
+    [ -n "$dir" ] && cd "$dir"
+
+    # Find and install library
+    for lib in lib${libname}.so* lib${libname}.a; do
+        if [ -f "$lib" ]; then
+            $sudo install -m 0755 "$lib" "$dest/"
+        fi
+    done
+}
+
+create_wrapper() {
+    # Create a wrapper script
+    # Usage: create_wrapper script_path
+    local wrapper=$1
+    shift
+    cat > "$wrapper" <<EOF
+#!/bin/sh
+exec "$@"
+EOF
+    chmod +x "$wrapper"
+}
+
+oe_runconf() {
+    # Run configure script with common options
+    local confscript="${S}/configure"
+    if [ -f "$confscript" ]; then
+        bbnote "Running configure"
+        $confscript \
+            --build=${BUILD_SYS:-x86_64-linux} \
+            --host=${HOST_SYS:-x86_64-linux} \
+            --target=${TARGET_SYS:-x86_64-linux} \
+            --prefix=${prefix:-/usr} \
+            --exec_prefix=${exec_prefix:-/usr} \
+            --bindir=${bindir:-/usr/bin} \
+            --sbindir=${sbindir:-/usr/sbin} \
+            --libdir=${libdir:-/usr/lib} \
+            --datadir=${datadir:-/usr/share} \
+            --includedir=${includedir:-/usr/include} \
+            --sysconfdir=${sysconfdir:-/etc} \
+            --localstatedir=${localstatedir:-/var} \
+            --disable-static \
+            "$@"
+    else
+        bbwarn "Configure script not found at $confscript"
+    fi
+}
+
+autotools_do_configure() {
+    # Standard autotools configure step
+    cd "${B}" || cd "${S}" || return 1
+
+    if [ -f "${S}/configure" ]; then
+        oe_runconf "$@"
+    elif [ -f "${S}/configure.ac" ] || [ -f "${S}/configure.in" ]; then
+        bbnote "Running autoreconf"
+        cd "${S}"
+        autoreconf -fi || bbwarn "autoreconf failed"
+        cd "${B}" || cd "${S}"
+        oe_runconf "$@"
+    else
+        bbnote "No configure script found, skipping configure"
+    fi
+}
+
+autotools_do_compile() {
+    # Standard autotools compile step
+    cd "${B}" || cd "${S}" || return 1
+    oe_runmake "$@"
+}
+
+autotools_do_install() {
+    # Standard autotools install step
+    cd "${B}" || cd "${S}" || return 1
+    oe_runmake install DESTDIR="${D}" "$@"
+}
+
+base_do_configure() {
+    # Base configure - usually a no-op
+    bbnote "base_do_configure called"
+}
+
+base_do_compile() {
+    # Base compile
+    if [ -f Makefile ] || [ -f makefile ] || [ -f GNUmakefile ]; then
+        oe_runmake
+    fi
+}
+
+base_do_install() {
+    # Base install
+    bbnote "base_do_install called"
+}
+
 "#
 }
 
