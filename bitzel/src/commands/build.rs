@@ -210,6 +210,10 @@ pub async fn execute(
     let mut from_cache = 0;
     let mut failed = 0;
 
+    // Get machine and tmpdir for variable setup
+    let machine = env.get_machine().unwrap_or("unknown");
+    let tmpdir = build_dir.join("tmp");
+
     for &task_id in &exec_graph.execution_order {
         if let Some(exec_task) = exec_graph.tasks.get(&task_id) {
             let task_key = format!("{}:{}", exec_task.recipe_name, exec_task.task_name);
@@ -217,7 +221,57 @@ pub async fn execute(
             if let Some(spec) = build_plan.task_specs.get(&task_key) {
                 println!("  Executing: {}", task_key);
 
-                match executor.execute_task(spec.clone()) {
+                // Enrich task spec with BitBake variables
+                let mut enriched_spec = spec.clone();
+
+                // Get recipe version
+                let recipe_version = build_plan.recipe_graph.get_recipe(exec_task.recipe_id)
+                    .and_then(|r| r.version.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                // Setup BitBake variables
+                let mut bb_vars = HashMap::new();
+                bb_vars.insert("PN".to_string(), exec_task.recipe_name.clone());
+                bb_vars.insert("PV".to_string(), recipe_version.clone());
+                bb_vars.insert("MACHINE".to_string(), machine.to_string());
+                bb_vars.insert("DISTRO".to_string(), env.get_distro().unwrap_or("unknown").to_string());
+
+                // Work directories
+                let work_base = tmpdir.join("work").join(machine).join(&exec_task.recipe_name).join(&recipe_version);
+                let s_dir = work_base.join(format!("{}-{}", exec_task.recipe_name, recipe_version));
+                let b_dir = work_base.join("build");
+                let d_dir = work_base.join("image");
+
+                std::fs::create_dir_all(&work_base).ok();
+                std::fs::create_dir_all(&s_dir).ok();
+                std::fs::create_dir_all(&b_dir).ok();
+                std::fs::create_dir_all(&d_dir).ok();
+
+                bb_vars.insert("WORKDIR".to_string(), work_base.to_string_lossy().to_string());
+                bb_vars.insert("S".to_string(), s_dir.to_string_lossy().to_string());
+                bb_vars.insert("B".to_string(), b_dir.to_string_lossy().to_string());
+                bb_vars.insert("D".to_string(), d_dir.to_string_lossy().to_string());
+
+                // System directories
+                bb_vars.insert("sysconfdir".to_string(), "/etc".to_string());
+                bb_vars.insert("bindir".to_string(), "/usr/bin".to_string());
+                bb_vars.insert("sbindir".to_string(), "/usr/sbin".to_string());
+                bb_vars.insert("libdir".to_string(), "/usr/lib".to_string());
+                bb_vars.insert("includedir".to_string(), "/usr/include".to_string());
+                bb_vars.insert("datadir".to_string(), "/usr/share".to_string());
+                bb_vars.insert("mandir".to_string(), "/usr/share/man".to_string());
+                bb_vars.insert("docdir".to_string(), "/usr/share/doc".to_string());
+                bb_vars.insert("infodir".to_string(), "/usr/share/info".to_string());
+                bb_vars.insert("localstatedir".to_string(), "/var".to_string());
+                bb_vars.insert("base_bindir".to_string(), "/bin".to_string());
+                bb_vars.insert("base_sbindir".to_string(), "/sbin".to_string());
+                bb_vars.insert("base_libdir".to_string(), "/lib".to_string());
+                bb_vars.insert("bindir_crossscripts".to_string(), "/usr/bin/crossscripts".to_string());
+
+                enriched_spec.env = bb_vars;
+                enriched_spec.workdir = work_base;
+
+                match executor.execute_task(enriched_spec) {
                     Ok(output) => {
                         if output.exit_code == 0 {
                             completed += 1;
