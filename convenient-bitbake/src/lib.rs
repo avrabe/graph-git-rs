@@ -50,6 +50,7 @@ pub mod resource_monitor;
 pub mod lru_cache;
 pub mod flamegraph;
 pub mod incremental;
+pub mod reports;
 
 // RustPython execution is now always available
 pub mod python_executor;
