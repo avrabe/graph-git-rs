@@ -352,8 +352,9 @@ impl SandboxBackend {
         let start = std::time::Instant::now();
         info!("Using native Linux namespace sandbox");
 
-        // Prepare work directory
-        let work_dir = sandbox_root.join("work");
+        // Prepare work directory (use absolute path)
+        let sandbox_root_abs = sandbox_root.canonicalize().unwrap_or_else(|_| sandbox_root.to_path_buf());
+        let work_dir = sandbox_root_abs.join("work");
         fs::create_dir_all(&work_dir)?;
 
         // Build script from command
