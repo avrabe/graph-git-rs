@@ -263,79 +263,233 @@ pub async fn execute(
     println!("  Leaf tasks: {}", task_stats.leaf_tasks);
     println!();
 
-    // ========== Step 9: Execute Tasks ==========
-    println!("🚀 Executing tasks for {}...", target_recipe);
+    // ========== Step 9: Select Random Recipes to Build ==========
+    use rand::seq::SliceRandom;
+    use rand::thread_rng;
+
+    // Filter recipes that have task implementations
+    let buildable_recipes: Vec<String> = recipe_task_impls.keys()
+        .filter(|name| {
+            let tasks = recipe_task_impls.get(*name).unwrap();
+            tasks.contains_key("do_compile") || tasks.contains_key("do_install")
+        })
+        .cloned()
+        .collect();
+
+    println!("📊 Found {} buildable recipes with task implementations", buildable_recipes.len());
+
+    // Randomly select 5 recipes
+    let mut rng = thread_rng();
+    let selected_count = 5.min(buildable_recipes.len());
+    let mut selected_recipes: Vec<String> = buildable_recipes.clone();
+    selected_recipes.shuffle(&mut rng);
+    selected_recipes.truncate(selected_count);
+
+    println!("🎲 Randomly selected {} recipes to build:", selected_count);
+    for (i, recipe_name) in selected_recipes.iter().enumerate() {
+        println!("  {}. {}", i + 1, recipe_name);
+    }
+    println!();
+
+    // ========== Step 10: Execute Tasks for Selected Recipes ==========
     use convenient_bitbake::executor::{TaskExecutor, TaskSpec, NetworkPolicy, ResourceLimits};
     use std::time::Duration;
 
     let cache_dir = build_dir.join("bitzel-cache");
     let mut executor = TaskExecutor::new(&cache_dir)?;
 
-    // Create simple task specs for testing
-    // In a full implementation, this would build specs from task_implementations
-    let mut task_count = 0;
-    let mut success_count = 0;
-    let mut cache_hits = 0;
+    let machine = kas_config.machine.as_deref().unwrap_or("qemux86-64");
+    let tmpdir = build_dir.join("tmp");
+    let dl_dir = tmpdir.join("downloads");
+    std::fs::create_dir_all(&dl_dir)?;
 
-    // For now, just execute one simple task to demonstrate execution works
-    let machine = kas_config.machine.as_deref().unwrap_or("unknown");
-    let recipe_workdir = build_dir.join("tmp/work")
-        .join(machine)
-        .join(&recipe.name)
-        .join(recipe.version.as_deref().unwrap_or("unknown"));
+    let task_order = vec!["do_fetch", "do_unpack", "do_patch", "do_configure", "do_compile", "do_install"];
 
-    std::fs::create_dir_all(&recipe_workdir)?;
+    let mut total_recipes = 0;
+    let mut total_tasks_executed = 0;
+    let mut total_tasks_succeeded = 0;
+    let mut total_tasks_failed = 0;
+    let mut successful_builds: Vec<String> = Vec::new();
+    let mut failed_builds: Vec<String> = Vec::new();
 
-    // Create a minimal test task
-    let mut test_vars = std::collections::HashMap::new();
-    test_vars.insert("PN".to_string(), recipe.name.clone());
-    test_vars.insert("PV".to_string(), recipe.version.clone().unwrap_or_default());
-    test_vars.insert("WORKDIR".to_string(), recipe_workdir.to_string_lossy().to_string());
+    for recipe_name in &selected_recipes {
+        total_recipes += 1;
+        println!("\n╔════════════════════════════════════════════════════════╗");
+        println!("║  Building Recipe {}/{}:  {}", total_recipes, selected_count, recipe_name);
+        println!("╚════════════════════════════════════════════════════════╝\n");
 
-    let test_task = TaskSpec {
-        name: "do_test_setup".to_string(),
-        recipe: recipe.name.clone(),
-        script: "#!/bin/bash\necho 'Setting up workspace for build'\nmkdir -p $WORKDIR\necho 'Workspace ready'".to_string(),
-        workdir: recipe_workdir.clone(),
-        env: test_vars,
-        outputs: vec![],
-        timeout: Some(Duration::from_secs(30)),
-        execution_mode: convenient_bitbake::executor::types::ExecutionMode::Shell,
-        network_policy: NetworkPolicy::Isolated,
-        resource_limits: ResourceLimits::default(),
-    };
+        // Get recipe from graph
+        let recipe_id_opt = graph.find_recipe(recipe_name);
+        if recipe_id_opt.is_none() {
+            println!("⚠️  Recipe {} not found in graph, skipping", recipe_name);
+            failed_builds.push(recipe_name.clone());
+            continue;
+        }
 
-    println!("  Executing setup task...");
-    match executor.execute_task(test_task) {
-        Ok(output) => {
-            if output.exit_code == 0 {
-                success_count += 1;
-                println!("  ✓ Setup succeeded");
-            } else {
-                println!("  ✗ Setup failed (exit code: {})", output.exit_code);
-                if !output.stderr.is_empty() {
-                    println!("  Error: {}", output.stderr);
+        let recipe_id = recipe_id_opt.unwrap();
+        let recipe_opt = graph.get_recipe(recipe_id);
+        if recipe_opt.is_none() {
+            println!("⚠️  Recipe {} data not found, skipping", recipe_name);
+            failed_builds.push(recipe_name.clone());
+            continue;
+        }
+
+        let recipe = recipe_opt.unwrap();
+        let pv = recipe.version.as_deref().unwrap_or("unknown");
+
+        // Get task implementations
+        let tasks_opt = recipe_task_impls.get(recipe_name);
+        if tasks_opt.is_none() {
+            println!("⚠️  No task implementations for {}, skipping", recipe_name);
+            failed_builds.push(recipe_name.clone());
+            continue;
+        }
+
+        let tasks = tasks_opt.unwrap();
+
+        // Setup work directories
+        let work_base = tmpdir.join("work").join(machine).join(recipe_name).join(pv);
+        let s_dir = work_base.join(format!("{}-{}", recipe_name, pv));
+        let b_dir = work_base.join("build");
+        let d_dir = work_base.join("image");
+
+        std::fs::create_dir_all(&work_base)?;
+        std::fs::create_dir_all(&s_dir)?;
+        std::fs::create_dir_all(&b_dir)?;
+        std::fs::create_dir_all(&d_dir)?;
+
+        // Setup BitBake variables
+        let mut bb_vars = std::collections::HashMap::new();
+        bb_vars.insert("PN".to_string(), recipe_name.clone());
+        bb_vars.insert("PV".to_string(), pv.to_string());
+        bb_vars.insert("WORKDIR".to_string(), work_base.to_string_lossy().to_string());
+        bb_vars.insert("S".to_string(), s_dir.to_string_lossy().to_string());
+        bb_vars.insert("B".to_string(), b_dir.to_string_lossy().to_string());
+        bb_vars.insert("D".to_string(), d_dir.to_string_lossy().to_string());
+        bb_vars.insert("DL_DIR".to_string(), dl_dir.to_string_lossy().to_string());
+        bb_vars.insert("MACHINE".to_string(), machine.to_string());
+        bb_vars.insert("base_bindir".to_string(), "/bin".to_string());
+        bb_vars.insert("base_sbindir".to_string(), "/sbin".to_string());
+        bb_vars.insert("bindir".to_string(), "/usr/bin".to_string());
+        bb_vars.insert("sbindir".to_string(), "/usr/sbin".to_string());
+        bb_vars.insert("libdir".to_string(), "/usr/lib".to_string());
+        bb_vars.insert("sysconfdir".to_string(), "/etc".to_string());
+
+        let mut recipe_succeeded = 0;
+        let mut recipe_failed = 0;
+        let mut build_failed = false;
+
+        for task_name in &task_order {
+            if let Some(task_impl) = tasks.get(*task_name) {
+                println!("  📦 {}...", task_name);
+
+                let network_policy = if *task_name == "do_fetch" {
+                    NetworkPolicy::FullNetwork
+                } else {
+                    NetworkPolicy::Isolated
+                };
+
+                // Use the ACTUAL task code from the recipe
+                let script = &task_impl.code;
+
+                let task_spec = TaskSpec {
+                    name: task_name.to_string(),
+                    recipe: recipe_name.clone(),
+                    script: script.clone(),
+                    workdir: work_base.clone(),
+                    env: bb_vars.clone(),
+                    outputs: vec![],
+                    timeout: Some(Duration::from_secs(600)),
+                    execution_mode: convenient_bitbake::executor::types::ExecutionMode::Shell,
+                    network_policy,
+                    resource_limits: ResourceLimits::default(),
+                };
+
+                total_tasks_executed += 1;
+                match executor.execute_task(task_spec) {
+                    Ok(output) => {
+                        if output.exit_code == 0 {
+                            recipe_succeeded += 1;
+                            total_tasks_succeeded += 1;
+                            println!("     ✓ Success ({}ms)", output.duration_ms);
+                        } else {
+                            recipe_failed += 1;
+                            total_tasks_failed += 1;
+                            build_failed = true;
+                            println!("     ✗ Failed (exit {})", output.exit_code);
+                            if !output.stderr.is_empty() {
+                                println!("     Error (first 5 lines):");
+                                for line in output.stderr.lines().take(5) {
+                                    println!("       {}", line);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        recipe_failed += 1;
+                        total_tasks_failed += 1;
+                        build_failed = true;
+                        println!("     ✗ Execution error: {}", e);
+                        break;
+                    }
                 }
             }
         }
-        Err(e) => {
-            println!("  ✗ Setup failed: {}", e);
+
+        if !build_failed {
+            successful_builds.push(recipe_name.clone());
+            println!("\n  ✅ {} built successfully ({} tasks)", recipe_name, recipe_succeeded);
+
+            // Check for output files
+            if let Ok(entries) = std::fs::read_dir(&d_dir) {
+                let files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                if !files.is_empty() {
+                    println!("     Output files in {}:", d_dir.display());
+                    for entry in files.iter().take(5) {
+                        println!("       - {:?}", entry.file_name());
+                    }
+                }
+            }
+        } else {
+            failed_builds.push(recipe_name.clone());
+            println!("\n  ❌ {} build failed ({} succeeded, {} failed)",
+                     recipe_name, recipe_succeeded, recipe_failed);
         }
     }
-    task_count += 1;
 
+    println!("\n\n╔════════════════════════════════════════════════════════╗");
+    println!("║           FINAL BUILD RESULTS                          ║");
+    println!("╚════════════════════════════════════════════════════════╝");
+    println!("Recipes attempted:      {}", total_recipes);
+    println!("Successful builds:      {}", successful_builds.len());
+    println!("Failed builds:          {}", failed_builds.len());
+    println!("Total tasks executed:   {}", total_tasks_executed);
+    println!("Total tasks succeeded:  {}", total_tasks_succeeded);
+    println!("Total tasks failed:     {}", total_tasks_failed);
     println!();
-    println!("✅ Execution phase completed!");
-    println!("  Tasks attempted: {}", task_count);
-    println!("  Succeeded: {}", success_count);
-    println!("  Failed: {}", task_count - success_count);
-    println!();
-    println!("⚠️  Full task execution not yet implemented");
-    println!("   Next steps:");
-    println!("   - Implement do_fetch task execution");
-    println!("   - Implement do_unpack task execution");
-    println!("   - Implement do_compile task execution");
-    println!("   - Execute full dependency chain");
+
+    if !successful_builds.is_empty() {
+        println!("✅ Successfully built:");
+        for recipe in &successful_builds {
+            println!("   • {}", recipe);
+        }
+        println!();
+    }
+
+    if !failed_builds.is_empty() {
+        println!("❌ Failed to build:");
+        for recipe in &failed_builds {
+            println!("   • {}", recipe);
+        }
+        println!();
+    }
+
+    if successful_builds.len() == selected_count {
+        println!("🎉 ALL {} RANDOMLY SELECTED RECIPES BUILT SUCCESSFULLY!", selected_count);
+    } else {
+        println!("⚠️  {}/{} recipes built successfully", successful_builds.len(), selected_count);
+    }
 
     Ok(())
 }
