@@ -686,12 +686,16 @@ fn execute_child_without_userns(
                 use std::io::Write;
                 let mut stdout_f = fs::OpenOptions::new()
                     .write(true)
+                    .create(true)
+                    .truncate(true)
                     .open(&stdout_path)
                     .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stdout: {}", e)))?;
                 stdout_f.write_all(result.stdout.as_bytes())?;
 
                 let mut stderr_f = fs::OpenOptions::new()
                     .write(true)
+                    .create(true)
+                    .truncate(true)
                     .open(&stderr_path)
                     .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stderr: {}", e)))?;
                 stderr_f.write_all(result.stderr.as_bytes())?;
