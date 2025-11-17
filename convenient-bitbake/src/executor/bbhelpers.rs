@@ -320,6 +320,107 @@ cmake_do_install() {
     DESTDIR="${D}" cmake --install . || make install DESTDIR="${D}"
 }
 
+# Meson build system helpers
+meson_do_configure() {
+    bbnote "Running meson configure"
+    cd "${B}" || mkdir -p "${B}" && cd "${B}" || return 1
+    if [ -f "${S}/meson.build" ]; then
+        meson "${S}" \
+            --prefix=/usr \
+            --buildtype=release \
+            "$@" || bbwarn "meson configure failed"
+    else
+        bbwarn "No meson.build found"
+    fi
+}
+
+meson_do_compile() {
+    cd "${B}" || return 1
+    ninja || meson compile
+}
+
+meson_do_install() {
+    cd "${B}" || return 1
+    DESTDIR="${D}" ninja install || DESTDIR="${D}" meson install
+}
+
+# SCons build helpers
+scons_do_compile() {
+    cd "${S}" || return 1
+    scons || bbwarn "scons failed"
+}
+
+scons_do_install() {
+    cd "${S}" || return 1
+    scons install PREFIX="${D}/usr" || bbwarn "scons install failed"
+}
+
+# Waf build helpers
+waf_do_configure() {
+    cd "${S}" || return 1
+    ./waf configure --prefix=/usr "$@" || bbwarn "waf configure failed"
+}
+
+waf_do_compile() {
+    cd "${S}" || return 1
+    ./waf build
+}
+
+waf_do_install() {
+    cd "${S}" || return 1
+    ./waf install --destdir="${D}"
+}
+
+# Perl/CPAN helpers
+cpan_do_configure() {
+    cd "${S}" || return 1
+    if [ -f "Makefile.PL" ]; then
+        perl Makefile.PL PREFIX=/usr INSTALLDIRS=vendor || bbwarn "perl Makefile.PL failed"
+    elif [ -f "Build.PL" ]; then
+        perl Build.PL --prefix=/usr --installdirs=vendor || bbwarn "perl Build.PL failed"
+    fi
+}
+
+cpan_do_compile() {
+    cd "${S}" || return 1
+    if [ -f "Makefile" ]; then
+        make
+    elif [ -f "Build" ]; then
+        ./Build
+    fi
+}
+
+cpan_do_install() {
+    cd "${S}" || return 1
+    if [ -f "Makefile" ]; then
+        make install DESTDIR="${D}"
+    elif [ -f "Build" ]; then
+        ./Build install --destdir="${D}"
+    fi
+}
+
+# Python setuptools helpers
+setuptools_do_compile() {
+    cd "${S}" || return 1
+    python3 setup.py build || bbwarn "python setup.py build failed"
+}
+
+setuptools_do_install() {
+    cd "${S}" || return 1
+    python3 setup.py install --root="${D}" --prefix=/usr || bbwarn "python setup.py install failed"
+}
+
+# Cargo/Rust helpers
+cargo_do_compile() {
+    cd "${S}" || return 1
+    cargo build --release || bbwarn "cargo build failed"
+}
+
+cargo_do_install() {
+    cd "${S}" || return 1
+    cargo install --root="${D}/usr" --path=. || bbwarn "cargo install failed"
+}
+
 "#
 }
 
