@@ -56,12 +56,12 @@ oe_soinstall() {
     install -m 0755 "$lib" "$dest/"
 
     # Create symlinks for versioned libraries
-    if [[ "$lib" =~ \.so\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if echo "$lib" | grep -q '\.so\.[0-9]*\.[0-9]*\.[0-9]*$'; then
         local base=$(basename "$lib" | sed 's/\.[0-9]*\.[0-9]*\.[0-9]*$//')
         local major=$(basename "$lib" | sed 's/.*\.so\.\([0-9]*\)\..*/\1/')
         ln -sf "$(basename $lib)" "$dest/${base}.so.$major"
         ln -sf "$(basename $lib)" "$dest/${base}.so"
-    elif [[ "$lib" =~ \.so\.[0-9]+$ ]]; then
+    elif echo "$lib" | grep -q '\.so\.[0-9]*$'; then
         local base=$(basename "$lib" | sed 's/\.[0-9]*$//')
         ln -sf "$(basename $lib)" "$dest/${base}.so"
     fi
@@ -76,9 +76,6 @@ do_compile_prepend() {
     # Hook for prepending to do_compile
     :
 }
-
-# Export functions so they're available in subshells
-export -f oe_runmake bbdebug bbnote bbwarn bbfatal bbfatal_log oe_soinstall
 
 "#
 }
