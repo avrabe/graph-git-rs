@@ -45,6 +45,11 @@ pub mod query;
 pub mod sysroot;
 pub mod scheduler;
 pub mod compression;
+pub mod build_metrics;
+pub mod resource_monitor;
+pub mod lru_cache;
+pub mod flamegraph;
+pub mod incremental;
 
 // RustPython execution is now always available
 pub mod python_executor;
