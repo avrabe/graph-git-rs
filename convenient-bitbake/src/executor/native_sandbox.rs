@@ -542,8 +542,8 @@ fn execute_with_bash(
     stdout_file: std::fs::File,
     stderr_file: std::fs::File,
 ) -> Result<i32, ExecutionError> {
-    // Use /bin/sh for better compatibility (often statically linked or has fewer deps)
-    let mut cmd = Command::new("/bin/sh");
+    // Use /bin/bash for BitBake compatibility (supports bash-specific syntax)
+    let mut cmd = Command::new("/bin/bash");
     cmd.arg("-c")
        .arg(script)
        .current_dir(work_dir)
@@ -559,21 +559,21 @@ fn execute_with_bash(
     // Add essential environment
     cmd.env("HOME", "/tmp");
     cmd.env("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-    cmd.env("SHELL", "/bin/sh");
+    cmd.env("SHELL", "/bin/bash");
 
     // Verify work_dir exists
     if !work_dir.exists() {
         return Err(ExecutionError::SandboxError(format!("Work directory does not exist: {:?}", work_dir)));
     }
 
-    // Verify /bin/sh exists
-    if !std::path::Path::new("/bin/sh").exists() {
-        return Err(ExecutionError::SandboxError("/bin/sh does not exist!".to_string()));
+    // Verify /bin/bash exists
+    if !std::path::Path::new("/bin/bash").exists() {
+        return Err(ExecutionError::SandboxError("/bin/bash does not exist!".to_string()));
     }
 
-    debug!("Executing with /bin/sh in work_dir {:?}: {:?}", work_dir, &script[..script.len().min(100)]);
-    debug!("Current PID: {}, work_dir exists: {}, /bin/sh exists: {}",
-           std::process::id(), work_dir.exists(), std::path::Path::new("/bin/sh").exists());
+    debug!("Executing with /bin/bash in work_dir {:?}: {:?}", work_dir, &script[..script.len().min(100)]);
+    debug!("Current PID: {}, work_dir exists: {}, /bin/bash exists: {}",
+           std::process::id(), work_dir.exists(), std::path::Path::new("/bin/bash").exists());
 
     // Execute and get status
     let status = cmd.status()
