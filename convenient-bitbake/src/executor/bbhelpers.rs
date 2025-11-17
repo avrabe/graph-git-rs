@@ -202,6 +202,124 @@ base_do_install() {
     bbnote "base_do_install called"
 }
 
+# Stub implementations for fetch/unpack to allow task progression
+base_do_fetch() {
+    bbnote "Stub: base_do_fetch - would fetch from SRC_URI"
+    # In real BitBake, this would download sources
+    # For now, just create work directory
+    mkdir -p "${WORKDIR}" "${DL_DIR}" || true
+}
+
+base_do_unpack() {
+    bbnote "Stub: base_do_unpack - would extract sources to ${S}"
+    # In real BitBake, this would extract archives
+    # For now, just create source directory
+    mkdir -p "${S}" || true
+}
+
+base_do_patch() {
+    bbnote "Stub: base_do_patch - would apply patches"
+    # In real BitBake, this would apply patches from SRC_URI
+}
+
+# Python-style function stubs (sometimes called from shell)
+oe_machinstall() {
+    # Machine-specific installation
+    local target_dir="$1"
+    shift
+    mkdir -p "$target_dir" || true
+    install -m 0644 "$@" "$target_dir/" 2>/dev/null || bbnote "oe_machinstall: some files not found"
+}
+
+chrpath() {
+    # Stub for chrpath tool (modifies rpath)
+    bbnote "Stub: chrpath $@"
+}
+
+do_populate_lic() {
+    # License population stub
+    bbnote "Stub: do_populate_lic"
+}
+
+fakeroot() {
+    # Run command as fake root
+    "$@"
+}
+
+# Additional commonly needed functions
+oe_multilib_header() {
+    # Multilib header handling
+    local header="$1"
+    bbnote "Stub: oe_multilib_header $header"
+}
+
+oe_runmake_call() {
+    # Alternative runmake
+    oe_runmake "$@"
+}
+
+# Installation helpers
+install_append() {
+    # Install with automatic directory creation
+    local file=$1
+    local dest=$2
+    mkdir -p "$(dirname "$dest")" || true
+    install -m 0644 "$file" "$dest" 2>/dev/null || true
+}
+
+do_install_append() {
+    # Append to install task (often overridden)
+    bbnote "do_install_append called"
+}
+
+do_deploy() {
+    # Deploy task for images/bootloaders
+    bbnote "Stub: do_deploy"
+    mkdir -p "${DEPLOYDIR}" || true
+}
+
+# Kernel/module helpers
+kernel_do_install() {
+    bbnote "Stub: kernel_do_install"
+}
+
+module_do_install() {
+    bbnote "Stub: module_do_install"
+}
+
+# Package splitting helpers
+populate_packages() {
+    bbnote "Stub: populate_packages"
+}
+
+PACKAGES_prepend() {
+    bbnote "Stub: PACKAGES_prepend"
+}
+
+# Additional build system helpers
+cmake_do_configure() {
+    bbnote "Running cmake configure"
+    cd "${B}" || cd "${S}" || return 1
+    if [ -f "${S}/CMakeLists.txt" ]; then
+        cmake "${S}" \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_BUILD_TYPE=Release \
+            "$@" || bbwarn "cmake configure failed"
+    else
+        bbwarn "No CMakeLists.txt found"
+    fi
+}
+
+cmake_do_compile() {
+    cd "${B}" || cd "${S}" || return 1
+    cmake --build . || make
+}
+
+cmake_do_install() {
+    cd "${B}" || cd "${S}" || return 1
+    DESTDIR="${D}" cmake --install . || make install DESTDIR="${D}"
+}
+
 "#
 }
 
