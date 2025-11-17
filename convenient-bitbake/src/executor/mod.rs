@@ -21,6 +21,7 @@ pub mod script_analyzer;
 pub mod direct_executor;
 pub mod fetch_handler;
 pub mod retry;
+pub mod bbhelpers;
 
 // External executor abstraction
 pub mod external;

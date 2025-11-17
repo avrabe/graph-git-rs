@@ -389,8 +389,9 @@ pub async fn execute(
                     NetworkPolicy::Isolated
                 };
 
-                // Use the ACTUAL task code from the recipe
-                let script = &task_impl.code;
+                // Use the ACTUAL task code from the recipe, prepending BitBake helpers
+                use convenient_bitbake::executor::bbhelpers;
+                let script = bbhelpers::add_bb_helpers_to_script(&task_impl.code);
 
                 let task_spec = TaskSpec {
                     name: task_name.to_string(),
