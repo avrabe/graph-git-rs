@@ -37,6 +37,8 @@
 #![deny(unsafe_code)]
 #![warn(unused_results)]
 
+pub mod grpc_client;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
