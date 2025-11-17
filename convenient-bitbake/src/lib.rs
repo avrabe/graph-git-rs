@@ -43,6 +43,7 @@ pub mod signature_cache;
 pub mod build_orchestrator;
 pub mod query;
 pub mod sysroot;
+pub mod scheduler;
 
 // RustPython execution is now always available
 pub mod python_executor;
