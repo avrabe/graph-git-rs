@@ -421,6 +421,77 @@ cargo_do_install() {
     cargo install --root="${D}/usr" --path=. || bbwarn "cargo install failed"
 }
 
+# System utilities
+update_alternatives() {
+    # Stub for update-alternatives
+    bbnote "Stub: update-alternatives $@"
+}
+
+update_rc_d() {
+    # Stub for update-rc.d (init script management)
+    bbnote "Stub: update-rc.d $@"
+}
+
+systemctl() {
+    # Stub for systemctl
+    bbnote "Stub: systemctl $@"
+}
+
+useradd() {
+    # Stub for useradd
+    bbnote "Stub: useradd $@"
+}
+
+groupadd() {
+    # Stub for groupadd
+    bbnote "Stub: groupadd $@"
+}
+
+# File utilities
+lnr() {
+    # Relative symlink helper
+    ln -sr "$@" 2>/dev/null || ln -s "$@" 2>/dev/null || true
+}
+
+rm_work() {
+    # Remove work directory (space saving)
+    bbnote "Stub: rm_work"
+}
+
+# Package management
+oe_package_stage() {
+    bbnote "Stub: oe_package_stage"
+}
+
+python() {
+    # Ensure python3 is called
+    if command -v python3 >/dev/null 2>&1; then
+        python3 "$@"
+    else
+        command python "$@"
+    fi
+}
+
+# Bitbake utility functions
+bb_contains() {
+    # Simple contains check
+    local haystack="$1"
+    local needle="$2"
+    local iftrue="$3"
+    local iffalse="$4"
+
+    if echo "$haystack" | grep -q "$needle"; then
+        echo "$iftrue"
+    else
+        echo "$iffalse"
+    fi
+}
+
+oe_filter() {
+    # Filter helper
+    grep "$@" || true
+}
+
 "#
 }
 
