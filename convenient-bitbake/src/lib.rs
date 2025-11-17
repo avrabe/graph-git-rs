@@ -51,6 +51,11 @@ pub mod lru_cache;
 pub mod flamegraph;
 pub mod incremental;
 pub mod reports;
+pub mod poky_integration;
+pub mod sdk_generation;
+pub mod package_management;
+pub mod security;
+pub mod benchmarks;
 
 // RustPython execution is now always available
 pub mod python_executor;
