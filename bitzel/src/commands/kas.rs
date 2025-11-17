@@ -50,7 +50,20 @@ pub async fn execute(
     let mut layer_paths: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
     for (repo_name, repo) in &kas_config.repos {
-        if let Some(url) = &repo.url {
+        // Determine repo directory - either from path or from clone
+        let repo_dir = if let Some(path_str) = &repo.path {
+            // Local path - use it directly
+            let path = Path::new(path_str);
+            let abs_path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                // Relative path - resolve from current directory or KAS file location
+                std::env::current_dir()?.join(path)
+            };
+            tracing::info!("Using local repository {} from {:?}", repo_name, abs_path);
+            abs_path
+        } else if let Some(url) = &repo.url {
+            // Remote URL - clone it
             let repo_dir = repos_dir.join(repo_name);
 
             if repo_dir.exists() {
@@ -80,15 +93,24 @@ pub async fn execute(
                     continue;
                 }
             }
+            repo_dir
+        } else {
+            tracing::warn!("Repository {} has neither path nor url, skipping", repo_name);
+            continue;
+        };
 
-            // Collect layer paths for this repo
-            let mut repo_layers = Vec::new();
-            for (layer_name, _) in &repo.layers {
-                let layer_path = repo_dir.join(layer_name);
-                if layer_path.exists() {
-                    repo_layers.push(layer_path);
-                }
+        // Collect layer paths for this repo
+        let mut repo_layers = Vec::new();
+        for (layer_name, _) in &repo.layers {
+            let layer_path = repo_dir.join(layer_name);
+            if layer_path.exists() {
+                tracing::debug!("  Found layer: {:?}", layer_path);
+                repo_layers.push(layer_path);
+            } else {
+                tracing::warn!("  Layer not found: {:?}", layer_path);
             }
+        }
+        if !repo_layers.is_empty() {
             layer_paths.insert(repo_name.clone(), repo_layers);
         }
     }
@@ -215,9 +237,105 @@ pub async fn execute(
     println!("  Providers:     {}", stats.provider_count);
     println!();
 
-    // ========== Execution would continue here ==========
-    println!("✅ KAS build configured successfully!");
-    println!("   (Execution phase not yet implemented)");
+    // ========== Step 7: Find Target Recipe ==========
+    let target_recipe = kas_config.target
+        .as_ref()
+        .and_then(|targets| targets.first())
+        .ok_or("No target specified in KAS config")?;
+
+    println!("🎯 Finding target recipe: {}", target_recipe);
+    let recipe_id = graph.find_recipe(target_recipe)
+        .ok_or_else(|| format!("Recipe '{}' not found", target_recipe))?;
+    let recipe = graph.get_recipe(recipe_id)
+        .ok_or_else(|| format!("Recipe '{}' not found in graph", target_recipe))?;
+
+    println!("  Found: {} {}", recipe.name, recipe.version.as_deref().unwrap_or("unknown"));
+    println!();
+
+    // ========== Step 8: Build Task Graph ==========
+    println!("🔗 Building task execution graph for {}...", target_recipe);
+    use convenient_bitbake::task_graph::TaskGraphBuilder;
+    let task_builder = TaskGraphBuilder::new(graph.clone());
+    let task_graph = task_builder.build_full_graph()?;
+    let task_stats = task_graph.stats();
+    println!("  Total tasks: {}", task_stats.total_tasks);
+    println!("  Root tasks: {}", task_stats.root_tasks);
+    println!("  Leaf tasks: {}", task_stats.leaf_tasks);
+    println!();
+
+    // ========== Step 9: Execute Tasks ==========
+    println!("🚀 Executing tasks for {}...", target_recipe);
+    use convenient_bitbake::executor::{TaskExecutor, TaskSpec, NetworkPolicy, ResourceLimits};
+    use std::time::Duration;
+
+    let cache_dir = build_dir.join("bitzel-cache");
+    let mut executor = TaskExecutor::new(&cache_dir)?;
+
+    // Create simple task specs for testing
+    // In a full implementation, this would build specs from task_implementations
+    let mut task_count = 0;
+    let mut success_count = 0;
+    let mut cache_hits = 0;
+
+    // For now, just execute one simple task to demonstrate execution works
+    let machine = kas_config.machine.as_deref().unwrap_or("unknown");
+    let recipe_workdir = build_dir.join("tmp/work")
+        .join(machine)
+        .join(&recipe.name)
+        .join(recipe.version.as_deref().unwrap_or("unknown"));
+
+    std::fs::create_dir_all(&recipe_workdir)?;
+
+    // Create a minimal test task
+    let mut test_vars = std::collections::HashMap::new();
+    test_vars.insert("PN".to_string(), recipe.name.clone());
+    test_vars.insert("PV".to_string(), recipe.version.clone().unwrap_or_default());
+    test_vars.insert("WORKDIR".to_string(), recipe_workdir.to_string_lossy().to_string());
+
+    let test_task = TaskSpec {
+        name: "do_test_setup".to_string(),
+        recipe: recipe.name.clone(),
+        script: "#!/bin/bash\necho 'Setting up workspace for build'\nmkdir -p $WORKDIR\necho 'Workspace ready'".to_string(),
+        workdir: recipe_workdir.clone(),
+        env: test_vars,
+        outputs: vec![],
+        timeout: Some(Duration::from_secs(30)),
+        execution_mode: convenient_bitbake::executor::types::ExecutionMode::Shell,
+        network_policy: NetworkPolicy::Isolated,
+        resource_limits: ResourceLimits::default(),
+    };
+
+    println!("  Executing setup task...");
+    match executor.execute_task(test_task) {
+        Ok(output) => {
+            if output.exit_code == 0 {
+                success_count += 1;
+                println!("  ✓ Setup succeeded");
+            } else {
+                println!("  ✗ Setup failed (exit code: {})", output.exit_code);
+                if !output.stderr.is_empty() {
+                    println!("  Error: {}", output.stderr);
+                }
+            }
+        }
+        Err(e) => {
+            println!("  ✗ Setup failed: {}", e);
+        }
+    }
+    task_count += 1;
+
+    println!();
+    println!("✅ Execution phase completed!");
+    println!("  Tasks attempted: {}", task_count);
+    println!("  Succeeded: {}", success_count);
+    println!("  Failed: {}", task_count - success_count);
+    println!();
+    println!("⚠️  Full task execution not yet implemented");
+    println!("   Next steps:");
+    println!("   - Implement do_fetch task execution");
+    println!("   - Implement do_unpack task execution");
+    println!("   - Implement do_compile task execution");
+    println!("   - Execute full dependency chain");
 
     Ok(())
 }
