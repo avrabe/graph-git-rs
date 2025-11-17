@@ -1,0 +1,325 @@
+// Bazel Remote Execution API v2 - Simplified for Bitzel
+syntax = "proto3";
+
+package build.bazel.remote.execution.v2;
+
+// Content Addressable Storage service
+service ContentAddressableStorage {
+  // Find missing blobs in CAS
+  rpc FindMissingBlobs(FindMissingBlobsRequest) returns (FindMissingBlobsResponse);
+
+  // Upload blobs to CAS
+  rpc BatchUpdateBlobs(BatchUpdateBlobsRequest) returns (BatchUpdateBlobsResponse);
+
+  // Read blobs from CAS
+  rpc BatchReadBlobs(BatchReadBlobsRequest) returns (BatchReadBlobsResponse);
+}
+
+// Action Cache service
+service ActionCache {
+  // Get cached action result
+  rpc GetActionResult(GetActionResultRequest) returns (ActionResult);
+
+  // Store action result
+  rpc UpdateActionResult(UpdateActionResultRequest) returns (ActionResult);
+}
+
+// Capabilities service
+service Capabilities {
+  // Get server capabilities
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (ServerCapabilities);
+}
+
+// Digest of content (SHA-256)
+message Digest {
+  // Hash in lowercase hex
+  string hash = 1;
+
+  // Size in bytes
+  int64 size_bytes = 2;
+}
+
+// Action to execute
+message Action {
+  // Digest of Command
+  Digest command_digest = 1;
+
+  // Digest of input root directory
+  Digest input_root_digest = 2;
+
+  // Timeout
+  int64 timeout_seconds = 3;
+
+  // Don't cache
+  bool do_not_cache = 4;
+}
+
+// Command to execute
+message Command {
+  // Arguments (argv)
+  repeated string arguments = 1;
+
+  // Environment variables
+  repeated EnvironmentVariable environment_variables = 2;
+
+  // Output files to capture
+  repeated string output_files = 3;
+
+  // Output directories to capture
+  repeated string output_directories = 4;
+
+  // Working directory
+  string working_directory = 5;
+}
+
+// Environment variable
+message EnvironmentVariable {
+  string name = 1;
+  string value = 2;
+}
+
+// Result of executing an action
+message ActionResult {
+  // Output files
+  repeated OutputFile output_files = 1;
+
+  // Output directories
+  repeated OutputDirectory output_directories = 2;
+
+  // Exit code
+  int32 exit_code = 3;
+
+  // Stdout digest
+  Digest stdout_digest = 4;
+
+  // Stderr digest
+  Digest stderr_digest = 5;
+
+  // Execution metadata
+  ExecutedActionMetadata execution_metadata = 6;
+}
+
+// Output file
+message OutputFile {
+  // Path relative to output root
+  string path = 1;
+
+  // Digest
+  Digest digest = 2;
+
+  // Is executable
+  bool is_executable = 3;
+}
+
+// Output directory
+message OutputDirectory {
+  // Path
+  string path = 1;
+
+  // Tree digest
+  Digest tree_digest = 2;
+}
+
+// Execution metadata
+message ExecutedActionMetadata {
+  // Worker
+  string worker = 1;
+
+  // Queue time
+  int64 queued_timestamp_millis = 2;
+
+  // Execution start
+  int64 worker_start_timestamp_millis = 3;
+
+  // Execution complete
+  int64 worker_completed_timestamp_millis = 4;
+
+  // Input fetch time
+  int64 input_fetch_completed_timestamp_millis = 5;
+
+  // Output upload time
+  int64 output_upload_completed_timestamp_millis = 6;
+}
+
+// Directory tree
+message Tree {
+  // Root directory
+  Directory root = 1;
+
+  // Child directories
+  repeated Directory children = 2;
+}
+
+// Directory
+message Directory {
+  // Files
+  repeated FileNode files = 1;
+
+  // Subdirectories
+  repeated DirectoryNode directories = 2;
+
+  // Symlinks
+  repeated SymlinkNode symlinks = 3;
+}
+
+// File node
+message FileNode {
+  string name = 1;
+  Digest digest = 2;
+  bool is_executable = 3;
+}
+
+// Directory node
+message DirectoryNode {
+  string name = 1;
+  Digest digest = 2;
+}
+
+// Symlink node
+message SymlinkNode {
+  string name = 1;
+  string target = 2;
+}
+
+// Find missing blobs request
+message FindMissingBlobsRequest {
+  // Instance name (optional)
+  string instance_name = 1;
+
+  // Blob digests to check
+  repeated Digest blob_digests = 2;
+}
+
+// Find missing blobs response
+message FindMissingBlobsResponse {
+  // Missing blob digests
+  repeated Digest missing_blob_digests = 1;
+}
+
+// Batch update blobs request
+message BatchUpdateBlobsRequest {
+  // Instance name
+  string instance_name = 1;
+
+  // Requests
+  repeated Request requests = 2;
+
+  message Request {
+    Digest digest = 1;
+    bytes data = 2;
+  }
+}
+
+// Batch update blobs response
+message BatchUpdateBlobsResponse {
+  // Responses
+  repeated Response responses = 1;
+
+  message Response {
+    Digest digest = 1;
+    int32 status_code = 2;
+    string status_message = 3;
+  }
+}
+
+// Batch read blobs request
+message BatchReadBlobsRequest {
+  // Instance name
+  string instance_name = 1;
+
+  // Digests
+  repeated Digest digests = 2;
+}
+
+// Batch read blobs response
+message BatchReadBlobsResponse {
+  // Responses
+  repeated Response responses = 1;
+
+  message Response {
+    Digest digest = 1;
+    bytes data = 2;
+    int32 status_code = 3;
+    string status_message = 4;
+  }
+}
+
+// Get action result request
+message GetActionResultRequest {
+  // Instance name
+  string instance_name = 1;
+
+  // Action digest
+  Digest action_digest = 2;
+}
+
+// Update action result request
+message UpdateActionResultRequest {
+  // Instance name
+  string instance_name = 1;
+
+  // Action digest
+  Digest action_digest = 2;
+
+  // Action result
+  ActionResult action_result = 3;
+}
+
+// Get capabilities request
+message GetCapabilitiesRequest {
+  // Instance name
+  string instance_name = 1;
+}
+
+// Server capabilities
+message ServerCapabilities {
+  // Cache capabilities
+  CacheCapabilities cache_capabilities = 1;
+
+  // Execution capabilities
+  ExecutionCapabilities execution_capabilities = 2;
+}
+
+// Cache capabilities
+message CacheCapabilities {
+  // Digest functions supported
+  repeated DigestFunction digest_function = 1;
+
+  // Action cache update capabilities
+  ActionCacheUpdateCapabilities action_cache_update_capabilities = 2;
+
+  // Max batch total size
+  int64 max_batch_total_size_bytes = 3;
+
+  // Symlink absolute path strategy
+  SymlinkAbsolutePathStrategy symlink_absolute_path_strategy = 4;
+}
+
+// Digest function
+enum DigestFunction {
+  UNKNOWN = 0;
+  SHA256 = 1;
+  SHA1 = 2;
+  MD5 = 3;
+}
+
+// Action cache update capabilities
+message ActionCacheUpdateCapabilities {
+  bool update_enabled = 1;
+}
+
+// Symlink absolute path strategy
+enum SymlinkAbsolutePathStrategy {
+  UNKNOWN_STRATEGY = 0;
+  DISALLOWED = 1;
+  ALLOWED = 2;
+}
+
+// Execution capabilities
+message ExecutionCapabilities {
+  // Digest function
+  DigestFunction digest_function = 1;
+
+  // Exec enabled
+  bool exec_enabled = 2;
+}
