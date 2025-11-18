@@ -190,6 +190,13 @@ impl TaskCollection {
     }
 }
 
+/// Normalize task name by removing "do_" prefix if present
+/// BitBake canonical task names don't have the "do_" prefix
+/// (e.g., "install" not "do_install", "compile" not "do_compile")
+fn normalize_task_name(name: &str) -> String {
+    name.strip_prefix("do_").unwrap_or(name).to_string()
+}
+
 /// Parse addtask statement
 /// Format: addtask TASK [after TASK1 TASK2] [before TASK3 TASK4]
 pub fn parse_addtask_statement(line: &str) -> Option<Task> {
@@ -205,7 +212,8 @@ pub fn parse_addtask_statement(line: &str) -> Option<Task> {
         return None;
     }
 
-    let task_name = parts[1].to_string();
+    // Normalize task name (strip "do_" prefix if present)
+    let task_name = normalize_task_name(parts[1]);
     let mut task = Task::new(task_name);
 
     let mut i = 2;
@@ -215,7 +223,8 @@ pub fn parse_addtask_statement(line: &str) -> Option<Task> {
                 i += 1;
                 let mut after_tasks = Vec::new();
                 while i < parts.len() && parts[i] != "before" {
-                    after_tasks.push(parts[i].to_string());
+                    // Normalize task names in dependencies (strip "do_" prefix)
+                    after_tasks.push(normalize_task_name(parts[i]));
                     i += 1;
                 }
                 task.after = after_tasks;
@@ -224,7 +233,8 @@ pub fn parse_addtask_statement(line: &str) -> Option<Task> {
                 i += 1;
                 let mut before_tasks = Vec::new();
                 while i < parts.len() && parts[i] != "after" {
-                    before_tasks.push(parts[i].to_string());
+                    // Normalize task names in dependencies (strip "do_" prefix)
+                    before_tasks.push(normalize_task_name(parts[i]));
                     i += 1;
                 }
                 task.before = before_tasks;
@@ -240,7 +250,7 @@ pub fn parse_addtask_statement(line: &str) -> Option<Task> {
 
 /// Parse deltask statement
 /// Format: deltask TASK
-/// Returns the task name to be removed
+/// Returns the task name to be removed (normalized without "do_" prefix)
 pub fn parse_deltask_statement(line: &str) -> Option<String> {
     let line = line.trim();
 
@@ -254,7 +264,8 @@ pub fn parse_deltask_statement(line: &str) -> Option<String> {
         return None;
     }
 
-    Some(parts[1].to_string())
+    // Normalize task name (strip "do_" prefix if present)
+    Some(normalize_task_name(parts[1]))
 }
 
 /// Parse task flag assignment
@@ -269,7 +280,8 @@ pub fn parse_task_flag(line: &str) -> Option<(String, String, String)> {
 
         if let Some(bracket_start) = left.find('[')
             && let Some(bracket_end) = left.find(']') {
-                let task_name = left[..bracket_start].trim().to_string();
+                // Normalize task name (strip "do_" prefix if present)
+                let task_name = normalize_task_name(left[..bracket_start].trim());
                 let flag_name = left[bracket_start + 1..bracket_end].trim().to_string();
                 return Some((task_name, flag_name, right.to_string()));
             }

@@ -22,7 +22,7 @@ pub enum TaskImplementationType {
 /// A task implementation extracted from a recipe
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskImplementation {
-    /// Task name (e.g., "do_compile")
+    /// Task name (e.g., "compile" not "do_compile" - normalized without "do_" prefix)
     pub name: String,
     /// Type of implementation
     pub impl_type: TaskImplementationType,
@@ -32,6 +32,12 @@ pub struct TaskImplementation {
     pub line_number: usize,
     /// Override suffix (e.g., ":append", ":prepend", ":machine")
     pub override_suffix: Option<String>,
+}
+
+/// Normalize task name by removing "do_" prefix if present
+/// This ensures consistency with task_parser.rs normalization
+fn normalize_task_name(name: &str) -> String {
+    name.strip_prefix("do_").unwrap_or(name).to_string()
 }
 
 /// Extractor for task implementations
@@ -85,7 +91,8 @@ impl TaskExtractor {
 
             // Try to match shell function
             if let Some(caps) = self.shell_func_regex.captures(line) {
-                let task_name = caps.get(1).unwrap().as_str().to_string();
+                let raw_task_name = caps.get(1).unwrap().as_str();
+                let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
                 let (code, end_line) = self.extract_function_body(&lines, i);
@@ -110,7 +117,8 @@ impl TaskExtractor {
 
             // Try to match python function
             if let Some(caps) = self.python_func_regex.captures(line) {
-                let task_name = caps.get(1).unwrap().as_str().to_string();
+                let raw_task_name = caps.get(1).unwrap().as_str();
+                let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
                 let (code, end_line) = self.extract_function_body(&lines, i);
@@ -135,7 +143,8 @@ impl TaskExtractor {
 
             // Try to match fakeroot function
             if let Some(caps) = self.fakeroot_func_regex.captures(line) {
-                let task_name = caps.get(1).unwrap().as_str().to_string();
+                let raw_task_name = caps.get(1).unwrap().as_str();
+                let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
                 let (code, end_line) = self.extract_function_body(&lines, i);
