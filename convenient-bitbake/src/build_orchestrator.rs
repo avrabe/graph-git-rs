@@ -172,10 +172,20 @@ impl BuildOrchestrator {
 
         // Step 3: Build recipe graph
         info!("Building recipe dependency graph");
+
+        // Build class search paths from layer paths (HashMap<String, Vec<PathBuf>>)
+        let class_search_paths: Vec<std::path::PathBuf> = layer_paths
+            .values()
+            .flatten()  // Flatten Vec<PathBuf> from each layer
+            .map(|layer_path| layer_path.join("classes"))
+            .collect();
+
         let extractor = RecipeExtractor::new(ExtractionConfig {
             extract_tasks: true,
             resolve_providers: true,
-            resolve_includes: true,  // Enable .inc file processing for variables (CRITICAL for DEPENDS)
+            resolve_includes: true,   // Enable .inc file processing for variables (CRITICAL for DEPENDS)
+            resolve_inherit: true,    // Enable .bbclass processing for standard task ordering
+            class_search_paths,       // Provide paths to find base.bbclass and other classes
             ..Default::default()
         });
         let (recipe_graph, _) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
