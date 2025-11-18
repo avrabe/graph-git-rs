@@ -187,6 +187,11 @@ fn contains_complexity(line: &str) -> bool {
         return true;
     }
 
+    // Signal handlers and traps (bash-specific)
+    if line.starts_with("trap ") || line.contains(" trap ") {
+        return true;
+    }
+
     // Redirects (except simple > or >>)
     if line.contains(">&") || line.contains("<(") || line.contains("2>") {
         return true;
