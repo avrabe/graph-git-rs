@@ -424,8 +424,9 @@ impl Pipeline {
         let mut extractions = Vec::new();
 
         // Extract recipe metadata (still fast, but sequential)
+        // Use extract_from_file to properly process includes for DEPENDS
         for parsed in parsed_recipes {
-            match extractor.extract_from_content(&mut graph, &parsed.file.name, &parsed.content) {
+            match extractor.extract_from_file(&mut graph, &parsed.file.path) {
                 Ok(extraction) => {
                     extractions.push(extraction);
                 }
@@ -464,7 +465,15 @@ impl Pipeline {
 
         info!("  Added {} tasks from implementations", tasks_to_add.len());
 
+        // Debug: Log extraction depends
+        for extraction in &extractions {
+            if !extraction.depends.is_empty() {
+                info!("  Recipe '{}' DEPENDS: {:?}", extraction.name, extraction.depends);
+            }
+        }
+
         // Populate dependencies
+        info!("  Populating {} recipe dependencies...", extractions.len());
         extractor.populate_dependencies(&mut graph, &extractions)?;
 
         // Compute stage hash
