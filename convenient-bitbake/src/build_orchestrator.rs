@@ -387,18 +387,16 @@ impl BuildOrchestrator {
         // Set recipe-specific variables
         script.push_str(&format!("export PN=\"{}\"\n\n", recipe_name));
 
-        // Wrap task code to ensure .done file is always created
-        // Use a trap to ensure completion marker is created even if task fails
-        let output_file = format!("{}.done", task_name);
-        script.push_str(&format!(
-            "# Ensure completion marker is created even on failure\ntrap 'mkdir -p /work/outputs && touch \"/work/outputs/{}\"' EXIT\n\n",
-            output_file
-        ));
-
-        // Task code (may fail, but EXIT trap will still run)
+        // Task code
         script.push_str("# Task implementation\n");
         script.push_str(code);
-        script.push_str("\n");
+        script.push_str("\n\n");
+
+        // Explicitly create completion marker (don't rely solely on trap)
+        let output_file = format!("{}.done", task_name);
+        script.push_str("# Mark task as complete\n");
+        script.push_str("mkdir -p /work/outputs\n");
+        script.push_str(&format!("touch \"/work/outputs/{}\"\n", output_file));
 
         script
     }
@@ -407,8 +405,8 @@ impl BuildOrchestrator {
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
         let output_file = format!("{}.done", task_name);
         format!(
-            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\ntrap 'mkdir -p /work/outputs && touch \"/work/outputs/{}\"' EXIT\nbb_note '[PLACEHOLDER] {}'",
-            recipe_name, output_file, task_name
+            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\nmkdir -p /work/outputs\ntouch \"/work/outputs/{}\"",
+            recipe_name, task_name, output_file
         )
     }
 }
