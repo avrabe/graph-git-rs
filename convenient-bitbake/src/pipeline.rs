@@ -436,6 +436,21 @@ impl Pipeline {
             }
         }
 
+        // Debug: Check busybox and libxcrypt task counts after extraction
+        if let Some(busybox_id) = graph.find_recipe("busybox") {
+            let busybox_tasks = graph.get_recipe_tasks(busybox_id);
+            info!("  After extract_from_file: busybox has {} tasks", busybox_tasks.len());
+            if busybox_tasks.len() < 15 {
+                for task in &busybox_tasks {
+                    info!("    - {}", task.name);
+                }
+            }
+        }
+        if let Some(libxcrypt_id) = graph.find_recipe("libxcrypt") {
+            let libxcrypt_tasks = graph.get_recipe_tasks(libxcrypt_id);
+            info!("  After extract_from_file: libxcrypt has {} tasks", libxcrypt_tasks.len());
+        }
+
         // Add tasks from extracted task implementations
         info!("Adding tasks from extracted implementations");
 

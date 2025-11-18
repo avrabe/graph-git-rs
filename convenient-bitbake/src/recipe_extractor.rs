@@ -1397,6 +1397,18 @@ impl RecipeExtractor {
             }
         }
 
+        // Debug: Count busybox task constraints
+        let busybox_constraints = if let Some(recipe) = graph.get_recipe(recipe_id) {
+            if recipe.name == "busybox" {
+                debug!("Processing {} task constraints for busybox", task_constraints.len());
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         // Apply constraints (resolve names to IDs first, then apply)
         for (task_id, after_names, before_names) in task_constraints {
             // Resolve names to task IDs, trying both with and without "do_" prefix
@@ -1430,9 +1442,27 @@ impl RecipeExtractor {
                 .collect();
 
             // Now apply them
+            // Get recipe info before mutable borrow
+            let debug_info = if let Some(task) = graph.get_task(task_id) {
+                graph.get_recipe(task.recipe_id).map(|r| (r.name.clone(), task.name.clone()))
+            } else {
+                None
+            };
+
             if let Some(task_node) = graph.get_task_mut(task_id) {
-                task_node.after.extend(after_ids);
+                let after_count_before = task_node.after.len();
+
+                task_node.after.extend(after_ids.clone());
                 task_node.before.extend(before_ids);
+
+                // Debug: Log if busybox task is getting dependencies
+                if busybox_constraints {
+                    if let Some((recipe_name, task_name)) = debug_info {
+                        debug!("  {} after: {} -> {} (added {} from {:?})",
+                            task_name, after_count_before, task_node.after.len(),
+                            after_ids.len(), after_names);
+                    }
+                }
             }
         }
 
