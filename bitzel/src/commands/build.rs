@@ -179,6 +179,15 @@ pub async fn execute(
 
     println!("  ✓ Found: {} {}", recipe.name, recipe.version.as_deref().unwrap_or("unknown"));
 
+    // Debug: Check recipe dependencies
+    let deps = build_plan.recipe_graph.get_dependencies(recipe_id);
+    println!("  DEBUG: Recipe has {} build dependencies", deps.len());
+    for dep_id in &deps {
+        if let Some(dep_recipe) = build_plan.recipe_graph.get_recipe(*dep_id) {
+            println!("    - {}", dep_recipe.name);
+        }
+    }
+
     // Find the target task
     let target_task_name = "do_install";
     let target_task = build_plan.task_graph.tasks.values()

@@ -172,7 +172,12 @@ impl BuildOrchestrator {
 
         // Step 3: Build recipe graph
         info!("Building recipe dependency graph");
-        let extractor = RecipeExtractor::new(ExtractionConfig::default());
+        let extractor = RecipeExtractor::new(ExtractionConfig {
+            extract_tasks: true,
+            resolve_providers: true,
+            resolve_includes: true,  // Enable .inc file processing for variables (CRITICAL for DEPENDS)
+            ..Default::default()
+        });
         let (recipe_graph, _) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
 
         // Step 4: Build task execution graph
