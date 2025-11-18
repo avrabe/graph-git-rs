@@ -206,6 +206,29 @@ pub async fn execute(
     println!("  ✓ Tasks in graph: {}", exec_graph.tasks.len());
     println!("  ✓ Root tasks: {}", exec_graph.root_tasks.len());
     println!("  ✓ Execution order computed (topologically sorted)");
+
+    // Debug: Show task dependency structure
+    println!("\n  DEBUG: Task dependency structure:");
+    for task_id in &exec_graph.execution_order {
+        if let Some(task) = exec_graph.tasks.get(task_id) {
+            print!("    - {}:{} (depends_on: {}",
+                task.recipe_name,
+                task.task_name,
+                task.depends_on.len()
+            );
+            if !task.depends_on.is_empty() {
+                print!(" [");
+                for (i, dep_id) in task.depends_on.iter().enumerate() {
+                    if let Some(dep_task) = exec_graph.tasks.get(dep_id) {
+                        if i > 0 { print!(", "); }
+                        print!("{}:{}", dep_task.recipe_name, dep_task.task_name);
+                    }
+                }
+                print!("]");
+            }
+            println!(")");
+        }
+    }
     println!();
 
     // ========== Execute Tasks (Sequential for now) ==========
