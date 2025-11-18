@@ -11,6 +11,7 @@ use crate::class_dependencies;
 use std::collections::HashMap;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info};
 
 #[cfg(feature = "python-execution")]
 use crate::python_executor::PythonExecutor;
@@ -1375,8 +1376,18 @@ impl RecipeExtractor {
 
             // Parse addtask statements
             if let Some(task) = parse_addtask_statement(line) {
-                let task_id = graph.add_task(recipe_id, &task.name);
-                task_names.push(task.name.clone());
+                // Check if task already exists (from inherited classes)
+                let task_id = if let Some(existing_id) = graph.find_task(recipe_id, &task.name) {
+                    existing_id
+                } else {
+                    graph.add_task(recipe_id, &task.name)
+                };
+
+                // Only add to task_names if it's a new task
+                if !task_names.contains(&task.name) {
+                    task_names.push(task.name.clone());
+                }
+
                 task_constraints.push((task_id, task.after, task.before));
             }
 
@@ -1663,8 +1674,12 @@ impl RecipeExtractor {
 
         // Append class tasks to the resolved content
         if !class_content.is_empty() {
+            let task_count = class_content.lines().filter(|l| l.trim().starts_with("addtask")).count();
+            debug!("Appending {} addtask statements from inherited classes", task_count);
             resolved.push_str("\n# Tasks from inherited classes (base + explicit)\n");
             resolved.push_str(&class_content);
+        } else {
+            debug!("No tasks found from inherited classes");
         }
 
         Ok(resolved)
