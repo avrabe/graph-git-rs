@@ -1388,14 +1388,34 @@ impl RecipeExtractor {
 
         // Apply constraints (resolve names to IDs first, then apply)
         for (task_id, after_names, before_names) in task_constraints {
-            // Resolve names to task IDs
+            // Resolve names to task IDs, trying both with and without "do_" prefix
             let after_ids: Vec<TaskId> = after_names
                 .iter()
-                .filter_map(|name| graph.find_task(recipe_id, name))
+                .filter_map(|name| {
+                    graph.find_task(recipe_id, name).or_else(|| {
+                        // Try stripping "do_" prefix if present
+                        if let Some(stripped) = name.strip_prefix("do_") {
+                            graph.find_task(recipe_id, stripped)
+                        } else {
+                            // Try adding "do_" prefix
+                            graph.find_task(recipe_id, &format!("do_{}", name))
+                        }
+                    })
+                })
                 .collect();
             let before_ids: Vec<TaskId> = before_names
                 .iter()
-                .filter_map(|name| graph.find_task(recipe_id, name))
+                .filter_map(|name| {
+                    graph.find_task(recipe_id, name).or_else(|| {
+                        // Try stripping "do_" prefix if present
+                        if let Some(stripped) = name.strip_prefix("do_") {
+                            graph.find_task(recipe_id, stripped)
+                        } else {
+                            // Try adding "do_" prefix
+                            graph.find_task(recipe_id, &format!("do_{}", name))
+                        }
+                    })
+                })
                 .collect();
 
             // Now apply them
@@ -1624,43 +1644,69 @@ impl RecipeExtractor {
     ) -> Result<String, String> {
         let mut resolved = String::from(content);
         let mut class_content = String::new();
+        let mut processed_classes = std::collections::HashSet::new();
 
-        // Parse inherit statements
+        // Automatically include base.bbclass (BitBake inherits it for all recipes)
+        self.extract_tasks_from_class("base", recipe_path, &mut class_content, &mut processed_classes);
+
+        // Parse explicit inherit statements
         for line in content.lines() {
             let trimmed = line.trim();
 
             if let Some(classes) = self.parse_inherit_statement(trimmed) {
                 // Process each class
                 for class_name in classes {
-                    if let Some(class_path) = self.find_class_file(class_name, recipe_path) {
-                        match std::fs::read_to_string(&class_path) {
-                            Ok(content) => {
-                                // Extract just the addtask statements and task flags
-                                for line in content.lines() {
-                                    let line_trimmed = line.trim();
-                                    if line_trimmed.starts_with("addtask ") ||
-                                       (line_trimmed.starts_with("do_") && line_trimmed.contains('[')) {
-                                        class_content.push_str(line);
-                                        class_content.push('\n');
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                // Class file not readable, skip
-                            }
-                        }
-                    }
+                    self.extract_tasks_from_class(class_name, recipe_path, &mut class_content, &mut processed_classes);
                 }
             }
         }
 
         // Append class tasks to the resolved content
         if !class_content.is_empty() {
-            resolved.push_str("\n# Tasks from inherited classes\n");
+            resolved.push_str("\n# Tasks from inherited classes (base + explicit)\n");
             resolved.push_str(&class_content);
         }
 
         Ok(resolved)
+    }
+
+    /// Recursively extract tasks from a class and its inherited classes
+    fn extract_tasks_from_class(
+        &self,
+        class_name: &str,
+        recipe_path: &Path,
+        output: &mut String,
+        processed: &mut std::collections::HashSet<String>,
+    ) {
+        // Skip if already processed (avoid circular dependencies)
+        if processed.contains(class_name) {
+            return;
+        }
+        processed.insert(class_name.to_string());
+
+        if let Some(class_path) = self.find_class_file(class_name, recipe_path) {
+            if let Ok(class_content) = std::fs::read_to_string(&class_path) {
+                // First, recursively process inherited classes
+                for line in class_content.lines() {
+                    let trimmed = line.trim();
+                    if let Some(inherited_classes) = self.parse_inherit_statement(trimmed) {
+                        for inherited_class in inherited_classes {
+                            self.extract_tasks_from_class(inherited_class, recipe_path, output, processed);
+                        }
+                    }
+                }
+
+                // Then extract addtask statements from this class
+                for line in class_content.lines() {
+                    let line_trimmed = line.trim();
+                    if line_trimmed.starts_with("addtask ") ||
+                       (line_trimmed.starts_with("do_") && line_trimmed.contains('[')) {
+                        output.push_str(line);
+                        output.push('\n');
+                    }
+                }
+            }
+        }
     }
 
     /// Parse inherit statement
