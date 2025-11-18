@@ -1706,6 +1706,15 @@ impl RecipeExtractor {
         if !class_content.is_empty() {
             let task_count = class_content.lines().filter(|l| l.trim().starts_with("addtask")).count();
             debug!("Appending {} addtask statements from inherited classes", task_count);
+
+            // Debug: For busybox, show what we're appending
+            if recipe_path.file_name().and_then(|n| n.to_str()).map(|n| n.contains("busybox")).unwrap_or(false) {
+                debug!("busybox class content (first 5 addtask lines):");
+                for (i, line) in class_content.lines().filter(|l| l.trim().starts_with("addtask")).take(5).enumerate() {
+                    debug!("  [{}] {}", i, line.trim());
+                }
+            }
+
             resolved.push_str("\n# Tasks from inherited classes (base + explicit)\n");
             resolved.push_str(&class_content);
         } else {

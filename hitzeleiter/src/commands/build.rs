@@ -189,7 +189,8 @@ pub async fn execute(
     }
 
     // Find the target task
-    let target_task_name = "do_install";
+    // BitBake tasks are stored without the "do_" prefix in the graph
+    let target_task_name = "install";
     let target_task = build_plan.task_graph.tasks.values()
         .find(|t| t.recipe_id == recipe_id && t.task_name == target_task_name)
         .ok_or_else(|| format!("Task {} not found for recipe", target_task_name))?;
