@@ -180,6 +180,11 @@ impl BuildOrchestrator {
             .map(|layer_path| layer_path.join("classes"))
             .collect();
 
+        info!("Class search paths configured: {}", class_search_paths.len());
+        for (i, path) in class_search_paths.iter().enumerate().take(5) {
+            info!("  [{}] {:?}", i, path);
+        }
+
         let extractor = RecipeExtractor::new(ExtractionConfig {
             extract_tasks: true,
             resolve_providers: true,
