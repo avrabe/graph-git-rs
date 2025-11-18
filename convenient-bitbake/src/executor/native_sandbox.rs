@@ -36,7 +36,7 @@ use tracing::{debug, info, warn};
 
 /// Setup cgroup v2 for resource limits
 ///
-/// Creates a cgroup under /sys/fs/cgroup/bitzel/<cgroup_name> and applies resource limits.
+/// Creates a cgroup under /sys/fs/cgroup/hitzeleiter/<cgroup_name> and applies resource limits.
 /// Returns the cgroup path for cleanup.
 #[cfg(target_os = "linux")]
 fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, ExecutionError> {
@@ -153,7 +153,7 @@ fn cleanup_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-/// Install BitBake prelude script to /bitzel/prelude.sh
+/// Install BitBake prelude script to /hitzeleiter/prelude.sh
 ///
 /// This creates the /bitzel directory and writes the shared prelude script
 /// that is sourced by all task scripts. The prelude provides:
@@ -168,18 +168,18 @@ fn install_prelude_script() -> std::io::Result<()> {
     fs::create_dir_all("/bitzel")?;
 
     // Write prelude script
-    fs::write("/bitzel/prelude.sh", PRELUDE_CONTENT)?;
+    fs::write("/hitzeleiter/prelude.sh", PRELUDE_CONTENT)?;
 
     // Make executable
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata("/bitzel/prelude.sh")?.permissions();
+        let mut perms = fs::metadata("/hitzeleiter/prelude.sh")?.permissions();
         perms.set_mode(0o755);
-        fs::set_permissions("/bitzel/prelude.sh", perms)?;
+        fs::set_permissions("/hitzeleiter/prelude.sh", perms)?;
     }
 
-    debug!("Installed BitBake prelude to /bitzel/prelude.sh");
+    debug!("Installed BitBake prelude to /hitzeleiter/prelude.sh");
     Ok(())
 }
 

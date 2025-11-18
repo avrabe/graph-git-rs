@@ -390,7 +390,7 @@ mod tests {
         let work_dir = tmp.path().join("work");
 
         let script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 export PN="test-recipe"
 bb_note "Starting test"
 touch "$D/output.txt"
@@ -416,7 +416,7 @@ touch "$D/output.txt"
         let work_dir = tmp.path().join("work");
 
         let script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 export PN="test"
 bbdirs "$D/usr/bin"
 "#;

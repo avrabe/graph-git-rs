@@ -136,15 +136,15 @@ pub fn help() {
     println!();
     println!("Examples:");
     println!("  # Find all dependencies of busybox");
-    println!("  bitzel query 'deps(busybox, 10)'");
+    println!("  hitzeleiter query 'deps(busybox, 10)'");
     println!();
     println!("  # Find what depends on zlib");
-    println!("  bitzel query 'rdeps(*, zlib)'");
+    println!("  hitzeleiter query 'rdeps(*, zlib)'");
     println!();
     println!("  # Export dependency graph");
-    println!("  bitzel query 'deps(busybox, 3)' --format graph > busybox.dot");
+    println!("  hitzeleiter query 'deps(busybox, 3)' --format graph > busybox.dot");
     println!("  dot -Tpng busybox.dot -o busybox.png");
     println!();
     println!("  # Find native dependencies");
-    println!("  bitzel query 'kind(\"*-native\", deps(gcc, 2))'");
+    println!("  hitzeleiter query 'kind(\"*-native\", deps(gcc, 2))'");
 }

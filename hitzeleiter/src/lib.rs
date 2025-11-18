@@ -1,6 +1,6 @@
-//! Bitzel - Bazel-inspired build orchestrator for BitBake/Yocto projects
+//! Hitzeleiter - Hot conductor build orchestration layer for BitBake/Yocto
 //!
-//! Bitzel is a thin orchestration layer that combines:
+//! Hitzeleiter (German: "hot conductor") is a thin orchestration layer that combines:
 //! - **convenient-kas**: KAS YAML configuration parsing
 //! - **convenient-bitbake**: Recipe parsing, dependency graphs, task execution
 //! - **convenient-cache**: Bazel Remote Execution API v2 caching
@@ -8,7 +8,7 @@
 //!
 //! ## Architecture
 //!
-//! Bitzel does NOT reimplement BitBake functionality. Instead, it orchestrates
+//! Hitzeleiter does NOT reimplement BitBake functionality. Instead, it orchestrates
 //! existing components:
 //!
 //! 1. **Recipe Parsing**: Uses `RecipeExtractor` from convenient-bitbake
@@ -19,7 +19,7 @@
 //! ## Usage
 //!
 //! ```no_run
-//! use bitzel::*;
+//! use hitzeleiter::*;
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // 1. Load KAS configuration
 //! let kas = KasIncludeGraph::build("project.yml").await?;

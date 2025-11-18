@@ -1,4 +1,4 @@
-//! Bitzel - Bazel-inspired build orchestrator for BitBake/Yocto projects
+//! Hitzeleiter - Hot conductor build orchestration layer for BitBake/Yocto
 //!
 //! Supports multiple modes of operation:
 //! 1. KAS mode: Build using KAS configuration files
@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "bitzel=info,convenient_bitbake=info,convenient_kas=info".into()),
+                .unwrap_or_else(|_| "hitzeleiter=info,convenient_bitbake=info,convenient_kas=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

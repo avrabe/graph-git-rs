@@ -142,7 +142,7 @@ impl BuildOrchestrator {
             max_io_parallelism: self.config.max_io_parallelism,
             max_cpu_parallelism: self.config.max_cpu_parallelism,
             enable_cache: true,
-            cache_dir: self.config.build_dir.join("bitzel-cache/pipeline"),
+            cache_dir: self.config.build_dir.join("hitzeleiter-cache/pipeline"),
         };
 
         let pipeline = Pipeline::new(pipeline_config, build_context);
@@ -203,11 +203,11 @@ impl BuildOrchestrator {
         }
 
         let mut sig_cache = SignatureCache::new(
-            self.config.build_dir.join("bitzel-cache/signatures")
+            self.config.build_dir.join("hitzeleiter-cache/signatures")
         );
 
         // Load previous signatures
-        let cache_path = self.config.build_dir.join("bitzel-cache/signatures/signatures.json");
+        let cache_path = self.config.build_dir.join("hitzeleiter-cache/signatures/signatures.json");
         let previous_signatures = if cache_path.exists() {
             let json = tokio::fs::read_to_string(&cache_path).await?;
             serde_json::from_str(&json).unwrap_or_default()
@@ -377,7 +377,7 @@ impl BuildOrchestrator {
 
         // Source shared prelude for common environment and functions
         script.push_str("#!/bin/bash\n");
-        script.push_str(". /bitzel/prelude.sh\n\n");
+        script.push_str(". /hitzeleiter/prelude.sh\n\n");
 
         // Set recipe-specific variables
         script.push_str(&format!("export PN=\"{}\"\n\n", recipe_name));
@@ -400,7 +400,7 @@ impl BuildOrchestrator {
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
         let output_file = format!("{}.done", task_name);
         format!(
-            "#!/bin/bash\n. /bitzel/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\ntouch \"$D/{}\"",
+            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\ntouch \"$D/{}\"",
             recipe_name, task_name, output_file
         )
     }

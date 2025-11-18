@@ -283,29 +283,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
-name = "bitzel"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap 4.5.51",
- "convenient-bitbake",
- "convenient-cache",
- "convenient-graph",
- "convenient-kas",
- "nix 0.29.0",
- "num_cpus",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
 name = "blake2"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1346,6 +1323,29 @@ name = "hexf-parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
+
+[[package]]
+name = "hitzeleiter"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap 4.5.51",
+ "convenient-bitbake",
+ "convenient-cache",
+ "convenient-graph",
+ "convenient-kas",
+ "nix 0.29.0",
+ "num_cpus",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
 
 [[package]]
 name = "hmac"

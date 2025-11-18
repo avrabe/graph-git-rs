@@ -10,7 +10,7 @@ pub fn clean(
     println!("🧹 Cleaning build cache...");
     println!();
 
-    let cache_dir = build_dir.join("bitzel-cache");
+    let cache_dir = build_dir.join("hitzeleiter-cache");
     let manager = CacheManager::new(&cache_dir);
 
     let stats = manager.clean()?;
@@ -23,7 +23,7 @@ pub fn clean(
     println!("Kept:");
     println!("  CAS objects (for potential reuse)");
     println!();
-    println!("💡 Use 'bitzel clean --all' to remove everything");
+    println!("💡 Use 'hitzeleiter clean --all' to remove everything");
 
     Ok(())
 }
@@ -35,7 +35,7 @@ pub fn expunge(
     println!("🗑️  Expunging all build cache...");
     println!();
 
-    let cache_dir = build_dir.join("bitzel-cache");
+    let cache_dir = build_dir.join("hitzeleiter-cache");
     let manager = CacheManager::new(&cache_dir);
 
     let stats = manager.expunge()?;
@@ -63,7 +63,7 @@ pub fn info(
     println!("╔════════════════════════════════════════════════════════╗");
     println!();
 
-    let cache_dir = build_dir.join("bitzel-cache");
+    let cache_dir = build_dir.join("hitzeleiter-cache");
 
     if !cache_dir.exists() {
         println!("No cache found at: {:?}", cache_dir);
@@ -117,9 +117,9 @@ pub fn info(
     println!();
 
     println!("Available commands:");
-    println!("  bitzel clean       - Remove action cache (keeps CAS)");
-    println!("  bitzel clean --all - Remove everything (expunge)");
-    println!("  bitzel cache gc    - Garbage collect unused objects");
+    println!("  hitzeleiter clean       - Remove action cache (keeps CAS)");
+    println!("  hitzeleiter clean --all - Remove everything (expunge)");
+    println!("  hitzeleiter cache gc    - Garbage collect unused objects");
 
     Ok(())
 }
@@ -131,7 +131,7 @@ pub fn gc(
     println!("♻️  Running garbage collection...");
     println!();
 
-    let cache_dir = build_dir.join("bitzel-cache");
+    let cache_dir = build_dir.join("hitzeleiter-cache");
     let manager = CacheManager::new(&cache_dir);
 
     let stats = manager.gc()?;

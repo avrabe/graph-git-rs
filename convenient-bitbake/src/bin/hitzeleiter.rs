@@ -1,10 +1,10 @@
 //! Bitzel - BitBake build tool with Bazel-inspired features
 //!
 //! Usage:
-//!   bitzel build <kas-file>              Build from Kas YAML
-//!   bitzel build --recipe <recipe>       Build specific recipe
-//!   bitzel clean                         Clean build artifacts
-//!   bitzel gc                            Run garbage collection
+//!   hitzeleiter build <kas-file>              Build from Kas YAML
+//!   hitzeleiter build --recipe <recipe>       Build specific recipe
+//!   hitzeleiter clean                         Clean build artifacts
+//!   hitzeleiter gc                            Run garbage collection
 
 use convenient_bitbake::{
     BuildOrchestrator, OrchestratorConfig,
@@ -17,7 +17,7 @@ use std::process;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "bitzel")]
+#[command(name = "hitzeleiter")]
 #[command(about = "BitBake build tool with Bazel-inspired features", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -213,7 +213,7 @@ async fn build_command(
         };
 
         // Initialize task executor
-        let cache_dir = build_dir.join("bitzel-cache");
+        let cache_dir = build_dir.join("hitzeleiter-cache");
         let executor = TaskExecutor::new(&cache_dir)
             .map_err(|e| format!("Failed to create executor: {}", e))?;
         let async_executor = AsyncTaskExecutor::new(executor);
@@ -282,7 +282,7 @@ async fn gc_command(build_dir: &Path, target_gb: u64) -> Result<(), Box<dyn std:
     println!("Build dir: {}", build_dir.display());
     println!("Target size: {} GB", target_gb);
 
-    let cache_dir = build_dir.join("bitzel-cache");
+    let cache_dir = build_dir.join("hitzeleiter-cache");
     if !cache_dir.exists() {
         println!("  ! No cache found");
         return Ok(());
