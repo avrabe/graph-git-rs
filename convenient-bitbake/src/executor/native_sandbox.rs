@@ -164,8 +164,8 @@ fn cleanup_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
 fn install_prelude_script() -> std::io::Result<()> {
     const PRELUDE_CONTENT: &str = include_str!("prelude.sh");
 
-    // Create /bitzel directory
-    fs::create_dir_all("/bitzel")?;
+    // Create /hitzeleiter directory
+    fs::create_dir_all("/hitzeleiter")?;
 
     // Write prelude script
     fs::write("/hitzeleiter/prelude.sh", PRELUDE_CONTENT)?;
