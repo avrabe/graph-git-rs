@@ -297,10 +297,23 @@ impl TaskGraphBuilder {
             // Collect recipe-level dependencies
             if let Some(recipe) = self.recipe_graph.get_recipe(task_node.recipe_id) {
                 for &dep_recipe_id in &recipe.depends {
+                    // Try do_populate_sysroot first (preferred for build deps)
                     if let Some(sysroot_task) =
                         self.recipe_graph.find_task(dep_recipe_id, "do_populate_sysroot")
                     {
                         self.collect_dependencies(sysroot_task, collected);
+                    } else if let Some(install_task) =
+                        self.recipe_graph.find_task(dep_recipe_id, "do_install")
+                    {
+                        // Fallback to do_install if do_populate_sysroot doesn't exist
+                        self.collect_dependencies(install_task, collected);
+                    } else {
+                        // Fallback: collect ALL tasks from the dependency recipe
+                        if let Some(dep_recipe) = self.recipe_graph.get_recipe(dep_recipe_id) {
+                            for &dep_task_id in &dep_recipe.tasks {
+                                self.collect_dependencies(dep_task_id, collected);
+                            }
+                        }
                     }
                 }
             }
