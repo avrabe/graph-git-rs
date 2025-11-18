@@ -124,7 +124,7 @@ pub fn analyze_script(script: &str) -> ScriptAnalysis {
         }
 
         // Skip prelude source
-        if trimmed.starts_with(". /bitzel/prelude.sh") || trimmed.starts_with("source /bitzel/prelude.sh") {
+        if trimmed.starts_with(". /hitzeleiter/prelude.sh") || trimmed.starts_with("source /hitzeleiter/prelude.sh") {
             continue;
         }
 
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn test_analyze_simple_script() {
         let script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 export PN="test"
 bb_note "Starting task"
 touch "$D/output.txt"
@@ -604,7 +604,7 @@ touch "$D/output.txt"
     #[test]
     fn test_analyze_complex_script() {
         let script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 if [ -f test.txt ]; then
     echo "exists"
 fi
@@ -678,7 +678,7 @@ mod execution_mode_tests {
     #[test]
     fn test_determine_simple_script() {
         let script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 export PN="test"
 bb_note "Starting"
 touch "$D/output.txt"
@@ -689,7 +689,7 @@ touch "$D/output.txt"
     #[test]
     fn test_determine_complex_script() {
         let script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 for file in *.txt; do
     echo "Processing $file"
 done

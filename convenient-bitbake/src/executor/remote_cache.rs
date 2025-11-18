@@ -37,7 +37,7 @@ impl Default for RemoteCacheConfig {
         Self {
             url: None,
             instance_name: None,
-            local_cache: PathBuf::from(".bitzel-cache"),
+            local_cache: PathBuf::from(".hitzeleiter-cache"),
             compression: true,
             max_inline_size: 1024 * 1024, // 1MB
         }

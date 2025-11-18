@@ -1,6 +1,6 @@
-//! Bitzel command-line interface
+//! Hitzeleiter command-line interface
 //!
-//! Bitzel supports multiple modes of operation:
+//! Hitzeleiter supports multiple modes of operation:
 //! - `kas`: Setup BitBake environment using KAS configuration files
 //! - `build`: Build recipes with full task graph execution
 //! - `clean`: Cache management
@@ -14,10 +14,10 @@ pub mod build;
 pub mod clean;
 pub mod query;
 
-/// Bitzel - Bazel-inspired build orchestrator for BitBake/Yocto
+/// Hitzeleiter - Hot conductor build orchestration layer for BitBake/Yocto
 #[derive(Parser)]
-#[command(name = "bitzel")]
-#[command(about = "Bazel-inspired build orchestrator for BitBake/Yocto projects")]
+#[command(name = "hitzeleiter")]
+#[command(about = "Hot conductor build orchestration layer for BitBake/Yocto projects")]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]

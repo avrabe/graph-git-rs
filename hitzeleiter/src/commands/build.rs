@@ -152,7 +152,7 @@ pub async fn execute(
     println!();
 
     // ========== Cache Statistics ==========
-    let cache_dir = build_dir.join("bitzel-cache");
+    let cache_dir = build_dir.join("hitzeleiter-cache");
     if cache_dir.exists() {
         let cache_mgr = CacheManager::new(&cache_dir);
         if let Ok(cache_query) = cache_mgr.query() {
@@ -235,7 +235,7 @@ pub async fn execute(
     println!("🚀 Executing task graph...");
     println!();
 
-    let cache_dir = build_dir.join("bitzel-cache");
+    let cache_dir = build_dir.join("hitzeleiter-cache");
     let mut executor = TaskExecutor::new(&cache_dir)?;
 
     let mut completed = 0;

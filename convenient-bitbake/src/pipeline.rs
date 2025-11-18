@@ -100,7 +100,7 @@ impl Default for PipelineConfig {
             max_io_parallelism: 32,
             max_cpu_parallelism: num_cpus::get(),
             enable_cache: true,
-            cache_dir: PathBuf::from(".bitzel-cache/pipeline"),
+            cache_dir: PathBuf::from(".hitzeleiter-cache/pipeline"),
         }
     }
 }

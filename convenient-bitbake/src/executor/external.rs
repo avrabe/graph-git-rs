@@ -387,7 +387,7 @@ impl Default for ExecutorConfig {
     fn default() -> Self {
         Self {
             backend: ExecutorBackend::Local,
-            cache_dir: PathBuf::from("/tmp/bitzel-cache"),
+            cache_dir: PathBuf::from("/tmp/hitzeleiter-cache"),
             max_parallel: num_cpus::get(),
             channel_buffer_size: 100,
             verbose: false,

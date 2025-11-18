@@ -487,7 +487,7 @@ mod tests {
 
         // Simple script that can be executed directly in Rust
         let script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 export PN="test-recipe"
 bb_note "Starting DirectRust execution"
 mkdir -p "$D/usr/bin"
@@ -527,7 +527,7 @@ echo "Hello from Rust!" > "$D/output.txt"
     fn test_auto_detect_execution_mode() {
         // Simple script should be DirectRust
         let simple_script = r#"#!/bin/bash
-. /bitzel/prelude.sh
+. /hitzeleiter/prelude.sh
 bb_note "Hello"
 touch "$D/file.txt"
 "#;

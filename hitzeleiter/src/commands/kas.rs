@@ -186,7 +186,7 @@ pub async fn execute(
         max_io_parallelism: 32,
         max_cpu_parallelism: num_cpus::get(),
         enable_cache: true,
-        cache_dir: build_dir.join("bitzel-cache/pipeline"),
+        cache_dir: build_dir.join("hitzeleiter-cache/pipeline"),
     };
 
     println!("  Parallelism: {} I/O tasks, {} CPU cores",
@@ -275,7 +275,7 @@ pub async fn execute(
     println!("  • conf/bblayers.conf");
     println!();
     println!("Ready to build! Use:");
-    println!("  bitzel build --builddir {} <target>", build_dir.display());
+    println!("  hitzeleiter build --builddir {} <target>", build_dir.display());
     println!();
     println!("Available recipes: {}", stats.recipe_count);
     println!("Available tasks:   {}", task_stats.total_tasks);

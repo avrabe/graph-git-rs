@@ -1,12 +1,12 @@
 [package]
-name = "bitzel"
+name = "hitzeleiter"
 version = "0.1.0"
 edition = "2024"
-authors = ["Bitzel Contributors"]
-description = "Bazel-inspired build system for BitBake/Yocto projects"
+authors = ["Hitzeleiter Contributors"]
+description = "Hitzeleiter - Hot conductor build orchestration layer for BitBake/Yocto (Bazel-inspired)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/avrabe/graph-git-rs"
-keywords = ["bitbake", "yocto", "build", "bazel", "kas"]
+keywords = ["bitbake", "yocto", "build", "orchestration", "kas"]
 categories = ["development-tools::build-utils"]
 
 [dependencies]
@@ -36,5 +36,5 @@ convenient-bitbake = { path = "../convenient-bitbake" }
 tempfile = "3.8"
 
 [[bin]]
-name = "bitzel"
+name = "hitzeleiter"
 path = "src/main.rs"
