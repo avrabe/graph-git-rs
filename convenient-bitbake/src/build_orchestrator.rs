@@ -391,10 +391,10 @@ impl BuildOrchestrator {
         script.push_str(code);
         script.push_str("\n\n");
 
-        // Mark task complete
+        // Mark task complete - write to /work/outputs/ where sandbox expects it
         let output_file = format!("{}.done", task_name);
         script.push_str(&format!(
-            "# Mark task complete\ntouch \"$D/{}\"\n",
+            "# Mark task complete\nmkdir -p /work/outputs\ntouch \"/work/outputs/{}\"\n",
             output_file
         ));
 
@@ -405,7 +405,7 @@ impl BuildOrchestrator {
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
         let output_file = format!("{}.done", task_name);
         format!(
-            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\ntouch \"$D/{}\"",
+            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\nmkdir -p /work/outputs\ntouch \"/work/outputs/{}\"",
             recipe_name, task_name, output_file
         )
     }
