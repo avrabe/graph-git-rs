@@ -86,6 +86,15 @@ impl TaskScheduler {
         }
     }
 
+    /// Initialize the scheduler with the task graph
+    pub fn initialize(&mut self) {
+        // First analyze critical paths to compute priorities
+        self.analyze_critical_paths();
+
+        // Then populate the ready queue with initial tasks (no dependencies)
+        self.update_ready_queue();
+    }
+
     /// Analyze critical paths for all tasks
     pub fn analyze_critical_paths(&mut self) {
         // Build task dependency graph
@@ -139,11 +148,55 @@ impl TaskScheduler {
         }
     }
 
-    /// Build task dependency map
+    /// Build task dependency map from the recipe graph
     fn build_task_dependencies(&self) -> HashMap<TaskId, Vec<TaskId>> {
-        // For now, simple implementation
-        // TODO: Implement proper task dependency extraction from recipe graph
-        HashMap::new()
+        let mut deps_map = HashMap::new();
+
+        // Extract dependencies from all tasks in the graph
+        for recipe in self.graph.recipes() {
+            let tasks = self.graph.get_recipe_tasks(recipe.id);
+
+            for task in tasks {
+                // Collect all dependencies for this task
+                let mut task_deps = Vec::new();
+
+                // Add intra-recipe dependencies (after relationships)
+                task_deps.extend(task.after.iter().copied());
+
+                // Add inter-recipe task dependencies
+                for task_dep in &task.task_depends {
+                    if let Some(dep_id) = task_dep.task_id {
+                        task_deps.push(dep_id);
+                    } else {
+                        // Resolve by name
+                        if let Some(resolved_id) = self.graph.find_task(
+                            task_dep.recipe_id,
+                            &task_dep.task_name,
+                        ) {
+                            task_deps.push(resolved_id);
+                        }
+                    }
+                }
+
+                // Add recipe-level dependencies (e.g., DEPENDS)
+                for &dep_recipe_id in &recipe.depends {
+                    // Add dependency on do_populate_sysroot of dependent recipes
+                    if let Some(sysroot_task) = self.graph.find_task(dep_recipe_id, "do_populate_sysroot") {
+                        // Only add if this task needs it (compile/install tasks)
+                        if task.name.contains("compile")
+                            || task.name.contains("install")
+                            || task.name.contains("configure")
+                        {
+                            task_deps.push(sysroot_task);
+                        }
+                    }
+                }
+
+                deps_map.insert(task.id, task_deps);
+            }
+        }
+
+        deps_map
     }
 
     /// Topological sort of tasks
@@ -233,8 +286,44 @@ impl TaskScheduler {
 
     /// Update ready queue with newly available tasks
     fn update_ready_queue(&mut self) {
-        // TODO: Implement proper dependency checking
-        // For now, simple stub
+        // Build task dependency map if not cached
+        let task_deps = self.build_task_dependencies();
+
+        // Find all tasks that are ready (all dependencies completed)
+        for recipe in self.graph.recipes() {
+            let tasks = self.graph.get_recipe_tasks(recipe.id);
+
+            for task in tasks {
+                let task_id = task.id;
+
+                // Skip if already completed, running, or in queue
+                if self.completed.contains(&task_id) || self.running.contains(&task_id) {
+                    continue;
+                }
+
+                // Check if already in queue
+                let in_queue = self.ready_queue.iter().any(|st| st.task_id == task_id);
+                if in_queue {
+                    continue;
+                }
+
+                // Check if all dependencies are completed
+                let deps = task_deps.get(&task_id).cloned().unwrap_or_default();
+                let all_deps_complete = deps.iter().all(|dep| self.completed.contains(dep));
+
+                if all_deps_complete {
+                    // Get priority for this task
+                    if let Some(&priority) = self.priorities.get(&task_id) {
+                        let scheduled_task = ScheduledTask {
+                            task_id,
+                            recipe_id: task.recipe_id,
+                            priority,
+                        };
+                        self.ready_queue.push(scheduled_task);
+                    }
+                }
+            }
+        }
     }
 
     /// Get scheduling statistics

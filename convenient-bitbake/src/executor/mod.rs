@@ -39,7 +39,7 @@ pub use sandbox_backend::SandboxBackend;
 pub use executor::TaskExecutor;
 pub use execution_log::{ExecutionLog, ExecutionOutcome, ExecutionError, ErrorCategory, ExecutionMetrics};
 pub use cache_manager::{CacheManager, CacheQuery, CleanStats, ExpungeStats};
-pub use async_executor::AsyncTaskExecutor;
+pub use async_executor::{AsyncTaskExecutor, ExecutionProgress, ExecutionSummary};
 pub use monitor::{TaskMonitor, TaskInfo, TaskState, BuildStats};
 pub use interactive::{InteractiveExecutor, InteractiveOptions, ExecutionControlHandle};
 pub use remote_cache::{RemoteCacheClient, RemoteCacheConfig, ActionResult, OutputFile, ExecutionMetadata};
