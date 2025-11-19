@@ -21,6 +21,11 @@ pub enum ExecutionMode {
     /// Python script execution - requires full sandboxing
     /// Used for Python tasks with RustPython VM
     Python,
+
+    /// Rust-based shell execution - in-process bash interpreter
+    /// Uses brush-shell for bash compatibility without subprocess overhead
+    /// Provides variable tracking and custom built-ins like RustPython
+    RustShell,
 }
 
 impl Default for ExecutionMode {
@@ -33,7 +38,7 @@ impl ExecutionMode {
     /// Whether this mode requires sandboxing
     pub fn requires_sandbox(&self) -> bool {
         match self {
-            ExecutionMode::DirectRust => false,
+            ExecutionMode::DirectRust | ExecutionMode::RustShell => false,
             ExecutionMode::Shell | ExecutionMode::Python => true,
         }
     }

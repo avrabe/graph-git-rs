@@ -46,6 +46,10 @@ logos = "0.14.0"
 rustpython = { version = "0.3" }
 rustpython-vm = { version = "0.3" }
 
+# brush-shell for executing shell scripts in-process (Rust-based bash interpreter)
+brush-core = "0.4.0"
+brush-parser = "0.3.0"
+
 [features]
 default = ["async-executor"]
 async-executor = []
