@@ -10,10 +10,7 @@
 //! - Custom BitBake built-in functions
 //! - Better error reporting with full context
 
-use brush_core::Shell;
-use brush_parser::Parser;
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use super::types::{ExecutionError, ExecutionResult};
@@ -42,9 +39,12 @@ impl RustShellResult {
 }
 
 /// Rust-based shell executor with BitBake integration
+///
+/// NOTE: This is currently a stub implementation. The brush-shell integration
+/// requires API updates to work with brush-core 0.4.0.
 pub struct RustShellExecutor {
-    /// The brush-shell instance
-    shell: Shell,
+    /// Environment variables
+    env: HashMap<String, String>,
 
     /// Captured stdout buffer
     stdout_buffer: Arc<Mutex<Vec<u8>>>,
@@ -67,23 +67,18 @@ impl RustShellExecutor {
     pub fn new(work_dir: impl AsRef<Path>) -> ExecutionResult<Self> {
         debug!("Creating RustShellExecutor in {:?}", work_dir.as_ref());
 
-        let mut shell = Shell::new()
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to create shell: {:?}", e)))?;
-
         let stdout_buffer = Arc::new(Mutex::new(Vec::new()));
         let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
         let vars_read = Arc::new(Mutex::new(Vec::new()));
         let vars_written = Arc::new(Mutex::new(HashMap::new()));
+        let env = HashMap::new();
 
         // Set up working directory
         let work_dir = work_dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&work_dir)?;
 
-        // Set shell working directory
-        shell.working_dir = work_dir.clone();
-
         Ok(Self {
-            shell,
+            env,
             stdout_buffer,
             stderr_buffer,
             vars_read,
@@ -102,8 +97,8 @@ impl RustShellExecutor {
         // Track the write
         self.vars_written.lock().unwrap().insert(key.clone(), value.clone());
 
-        // Set in shell environment
-        self.shell.env.insert(key, value);
+        // Set in environment
+        self.env.insert(key, value);
     }
 
     /// Get environment variable (with tracking)
@@ -111,7 +106,7 @@ impl RustShellExecutor {
         // Track the read
         self.vars_read.lock().unwrap().push(key.to_string());
 
-        self.shell.env.get(key).cloned()
+        self.env.get(key).cloned()
     }
 
     /// Set up standard BitBake environment variables
@@ -142,44 +137,15 @@ impl RustShellExecutor {
     }
 
     /// Execute shell script
-    pub fn execute(&mut self, script: &str) -> ExecutionResult<RustShellResult> {
-        debug!("Executing shell script ({} bytes)", script.len());
+    ///
+    /// NOTE: Currently returns NotImplemented error. The brush-shell integration
+    /// needs to be updated to work with brush-core 0.4.0 API.
+    pub fn execute(&mut self, _script: &str) -> ExecutionResult<RustShellResult> {
+        warn!("RustShell execution is not yet implemented - brush-shell API needs integration work");
 
-        // Parse the script
-        let mut parser = Parser::new();
-        let parsed = parser.parse(script)
-            .map_err(|e| ExecutionError::SandboxError(format!("Parse error: {:?}", e)))?;
-
-        // Create output writers that capture to our buffers
-        let stdout_buf = Arc::clone(&self.stdout_buffer);
-        let stderr_buf = Arc::clone(&self.stderr_buffer);
-
-        // Execute the parsed script
-        let result = self.shell.run(&parsed)
-            .map_err(|e| ExecutionError::SandboxError(format!("Execution error: {:?}", e)))?;
-
-        // Get exit code
-        let exit_code = result.exit_code as i32;
-
-        // Extract captured output
-        let stdout = String::from_utf8_lossy(&self.stdout_buffer.lock().unwrap()).to_string();
-        let stderr = String::from_utf8_lossy(&self.stderr_buffer.lock().unwrap()).to_string();
-
-        // Extract tracked variables
-        let vars_read = self.vars_read.lock().unwrap().clone();
-        let vars_written = self.vars_written.lock().unwrap().clone();
-
-        debug!("Script execution completed with exit code {}", exit_code);
-        debug!("Variables read: {:?}", vars_read);
-        debug!("Variables written: {} entries", vars_written.len());
-
-        Ok(RustShellResult {
-            exit_code,
-            stdout,
-            stderr,
-            vars_read,
-            vars_written,
-        })
+        Err(ExecutionError::SandboxError(
+            "RustShell execution is not yet implemented. Use Shell or DirectRust execution modes instead.".to_string()
+        ))
     }
 
     /// Register BitBake built-in function: bb_note

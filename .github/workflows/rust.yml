@@ -26,6 +26,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
             set-safe-directory: true
+      - name: Install protobuf compiler
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y protobuf-compiler
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install protobuf
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            choco install protoc
+          fi
+        shell: bash
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - run: |
@@ -60,9 +70,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           set-safe-directory: true
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get install -y docker.io protobuf-compiler
       - name: Run tarpaulin
         run: |
-          apt-get update && apt-get install -y docker.io
           git config --global --add safe.directory /__w/graph-git-rs/graph-git-rs
           git remote update
           cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 600 --out xml
