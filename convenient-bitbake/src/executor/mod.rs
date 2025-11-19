@@ -22,6 +22,7 @@ pub mod direct_executor;
 pub mod fetch_handler;
 pub mod retry;
 pub mod bbhelpers;
+pub mod rust_shell_executor;
 
 // External executor abstraction
 pub mod external;
@@ -47,6 +48,7 @@ pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script, determin
 pub use direct_executor::{execute_direct, DirectExecutionResult};
 pub use fetch_handler::{fetch_source, FetchError, FetchResult};
 pub use retry::{RetryPolicy, execute_with_retry, execute_with_retry_sync};
+pub use rust_shell_executor::{RustShellExecutor, RustShellResult, execute_with_bitbake_env, create_bitbake_prelude};
 
 // External executor types
 pub use external::{

@@ -77,6 +77,11 @@ impl TaskExecutor {
                     info!("Using DirectRust execution (sandbox-free, hermetic)");
                     self.execute_direct_rust(&spec)?
                 }
+                ExecutionMode::RustShell => {
+                    // Rust-based shell execution - in-process bash interpreter
+                    info!("Using RustShell execution (in-process, variable tracking)");
+                    self.execute_rust_shell(&spec)?
+                }
                 ExecutionMode::Shell | ExecutionMode::Python => {
                     // Shell/Python execution - requires full sandboxing
                     info!("Using sandboxed execution");
@@ -175,6 +180,72 @@ impl TaskExecutor {
         let duration = start.elapsed().as_millis() as u64;
 
         info!("DirectRust execution completed successfully (no sandbox used)");
+
+        Ok((
+            result.stdout,
+            result.stderr,
+            result.exit_code,
+            output_files,
+            duration,
+        ))
+    }
+
+    /// Execute task using RustShell (brush-shell in-process interpreter)
+    fn execute_rust_shell(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
+        let start = Instant::now();
+
+        info!("Executing with RustShell (in-process bash interpreter)");
+
+        // Execute using RustShell with BitBake environment
+        let result = super::rust_shell_executor::execute_with_bitbake_env(
+            &spec.script,
+            &spec.recipe,
+            None, // TODO: Extract version from spec
+            &spec.workdir,
+            &spec.env,
+        )?;
+
+        if result.exit_code != 0 {
+            warn!("RustShell execution failed with exit code: {}", result.exit_code);
+            warn!("Stderr: {}", result.stderr);
+            return Err(ExecutionError::TaskFailed(result.exit_code));
+        }
+
+        // Collect and hash outputs
+        let outputs_dir = spec.workdir.join("image");
+        let mut output_files = HashMap::new();
+
+        if outputs_dir.exists() {
+            for entry in walkdir::WalkDir::new(&outputs_dir)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if entry.file_type().is_file() {
+                    let path = entry.path();
+                    let content = std::fs::read(path)?;
+                    let hash = self.cas.put(&content)?;
+                    let rel_path = path
+                        .strip_prefix(&outputs_dir)
+                        .unwrap_or(path)
+                        .to_path_buf();
+                    output_files.insert(rel_path, hash);
+                }
+            }
+        }
+
+        let duration = start.elapsed().as_millis() as u64;
+
+        info!(
+            "RustShell execution completed successfully ({} vars read, {} vars written)",
+            result.vars_read.len(),
+            result.vars_written.len()
+        );
+        debug!("Variables read: {:?}", result.vars_read);
+        debug!("Variables written: {:?}", result.vars_written.keys().collect::<Vec<_>>());
 
         Ok((
             result.stdout,
