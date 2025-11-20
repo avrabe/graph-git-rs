@@ -72,6 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Commands::QueryHelp => {
             commands::query::help();
         }
+        Commands::Tquery { builddir, query, format } => {
+            commands::tquery::execute(&builddir, &query, &format).await?;
+        }
+        Commands::TqueryHelp => {
+            commands::tquery::help();
+        }
     }
 
     Ok(())

@@ -13,6 +13,7 @@ pub mod kas;
 pub mod build;
 pub mod clean;
 pub mod query;
+pub mod tquery;
 
 /// Hitzeleiter - Hot conductor build orchestration layer for BitBake/Yocto
 #[derive(Parser)]
@@ -87,6 +88,23 @@ pub enum Commands {
 
     /// Show query help and examples
     QueryHelp,
+
+    /// Query task dependencies (configured task graph)
+    Tquery {
+        /// Build directory
+        #[arg(short, long, default_value = "build")]
+        builddir: PathBuf,
+
+        /// Query expression (e.g., "deps(*:busybox:install, 5)")
+        query: String,
+
+        /// Output format: text, json, dot, label, script, env
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+
+    /// Show task query help and examples
+    TqueryHelp,
 }
 
 #[derive(Subcommand)]
