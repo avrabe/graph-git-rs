@@ -415,7 +415,8 @@ impl BuildOrchestrator {
             };
 
             // NEW: Preprocess script to handle BitBake syntax (${@python_expr}, ${VAR[flag]}, etc.)
-            let script = {
+            // Also prepare environment variables for task execution
+            let (script, task_env) = {
                 let preprocess_start = Instant::now();
 
                 // Get recipe variables from parsed recipes, or use defaults
@@ -428,6 +429,9 @@ impl BuildOrchestrator {
                 recipe_vars.entry("PN".to_string()).or_insert_with(|| task.recipe_name.clone());
                 let workdir = build_dir.join("tmp").join(&task.recipe_name);
                 recipe_vars.entry("WORKDIR".to_string()).or_insert_with(|| workdir.to_string_lossy().to_string());
+
+                // Clone recipe_vars for task environment before moving into preprocessor
+                let env_vars = recipe_vars.clone();
 
                 let preprocessor = ScriptPreprocessor::new(recipe_vars);
 
@@ -451,7 +455,7 @@ impl BuildOrchestrator {
                 preprocess_total_time += elapsed;
                 preprocess_count += 1;
 
-                result
+                (result, env_vars)
             };
 
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
@@ -475,7 +479,7 @@ impl BuildOrchestrator {
                 recipe: task.recipe_name.clone(),
                 script,
                 workdir: task_workdir,
-                env: HashMap::new(),
+                env: task_env,  // Use recipe variables as task environment
                 outputs: vec![PathBuf::from(&output_file)],
                 timeout: Some(Duration::from_secs(300)),
                 execution_mode,
