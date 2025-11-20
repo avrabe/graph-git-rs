@@ -18,6 +18,40 @@ export B="${B:-${WORKDIR}/build}"
 export D="${D:-${WORKDIR}/image}"
 export TMPDIR="${TMPDIR:-/tmp}"
 
+# Test and QA directories
+export PTEST_PATH="${PTEST_PATH:-/usr/lib/ptest}"
+export TESTDIR="${TESTDIR:-${WORKDIR}/tests}"
+export QEMU_OPTIONS="${QEMU_OPTIONS:-}"
+
+# Package installation paths
+export PKGD="${PKGD:-${WORKDIR}/package}"
+export PKGDEST="${PKGDEST:-${TMPDIR}/work-shared/pkgdata}"
+
+# Source and patch related
+export PATCHES="${PATCHES:-}"
+export SRC_URI="${SRC_URI:-}"
+export SRCPV="${SRCPV:-${PV}}"
+
+# License and metadata
+export LICENSE="${LICENSE:-CLOSED}"
+export SUMMARY="${SUMMARY:-}"
+export DESCRIPTION="${DESCRIPTION:-}"
+export HOMEPAGE="${HOMEPAGE:-}"
+export SECTION="${SECTION:-base}"
+
+# File and package names
+export FILE="${FILE:-${PN}-${PV}.bb}"
+export BP="${BP:-${PN}-${PV}}"
+export BPN="${BPN:-${PN}}"
+
+# Recipe and layer paths
+export RECIPE_SYSROOT="${RECIPE_SYSROOT:-${TMPDIR}/sysroots/${TARGET_SYS}}"
+export RECIPE_SYSROOT_NATIVE="${RECIPE_SYSROOT_NATIVE:-${TMPDIR}/sysroots/${BUILD_SYS}}"
+
+# Stamp and log directories
+export STAMP="${STAMP:-${TMPDIR}/stamps/${PN}/${PV}}"
+export LOGDIR="${LOGDIR:-${TMPDIR}/logs}"
+
 # Standard paths
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="${HOME:-/tmp}"

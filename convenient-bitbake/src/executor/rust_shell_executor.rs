@@ -116,24 +116,72 @@ impl RustShellExecutor {
         version: Option<&str>,
         workdir: &Path,
     ) {
+        let version_str = version.unwrap_or("1.0");
+
         // Recipe metadata
         self.set_var("PN", recipe);
-        self.set_var("PV", version.unwrap_or("1.0"));
+        self.set_var("PV", version_str);
         self.set_var("PR", "r0");
 
         // Standard BitBake directories
-        self.set_var("WORKDIR", workdir.to_string_lossy().to_string());
+        let workdir_str = workdir.to_string_lossy().to_string();
+        let tmpdir = workdir.join("tmp").to_string_lossy().to_string();
+        self.set_var("WORKDIR", &workdir_str);
         self.set_var("S", workdir.join("src").to_string_lossy().to_string());
         self.set_var("B", workdir.join("build").to_string_lossy().to_string());
         self.set_var("D", workdir.join("image").to_string_lossy().to_string());
-        self.set_var("TMPDIR", workdir.join("tmp").to_string_lossy().to_string());
+        self.set_var("TMPDIR", &tmpdir);
+
+        // Test and QA directories (prevents unbound variable errors)
+        self.set_var("PTEST_PATH", "/usr/lib/ptest");
+        self.set_var("TESTDIR", workdir.join("tests").to_string_lossy().to_string());
+        self.set_var("QEMU_OPTIONS", "");
+
+        // Package installation paths
+        self.set_var("PKGD", workdir.join("package").to_string_lossy().to_string());
+        self.set_var("PKGDEST", format!("{}/work-shared/pkgdata", tmpdir));
+
+        // Source and patch related
+        self.set_var("PATCHES", "");
+        self.set_var("SRC_URI", "");
+        self.set_var("SRCPV", version_str);
+
+        // License and metadata
+        self.set_var("LICENSE", "CLOSED");
+        self.set_var("SUMMARY", "");
+        self.set_var("DESCRIPTION", "");
+        self.set_var("HOMEPAGE", "");
+        self.set_var("SECTION", "base");
+
+        // File and package names
+        self.set_var("FILE", format!("{}-{}.bb", recipe, version_str));
+        self.set_var("BP", format!("{}-{}", recipe, version_str));
+        self.set_var("BPN", recipe);
+
+        // Get target system from environment or use default
+        let target_sys = std::env::var("TARGET_SYS").unwrap_or_else(|_| "x86_64-unknown-linux".to_string());
+        let build_sys = std::env::var("BUILD_SYS").unwrap_or_else(|_| "x86_64-linux".to_string());
+
+        // Recipe and layer paths
+        self.set_var("RECIPE_SYSROOT", format!("{}/sysroots/{}", tmpdir, target_sys));
+        self.set_var("RECIPE_SYSROOT_NATIVE", format!("{}/sysroots/{}", tmpdir, build_sys));
+
+        // Stamp and log directories
+        self.set_var("STAMP", format!("{}/stamps/{}/{}", tmpdir, recipe, version_str));
+        self.set_var("LOGDIR", format!("{}/logs", tmpdir));
 
         // Standard paths
         self.set_var("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         self.set_var("HOME", "/tmp");
         self.set_var("SHELL", "/bin/bash");
 
-        debug!("BitBake environment configured for {}-{}", recipe, version.unwrap_or("1.0"));
+        // Target system variables (for cross-compilation)
+        self.set_var("TARGET_SYS", &target_sys);
+        self.set_var("BUILD_SYS", &build_sys);
+        self.set_var("HOST_SYS", &target_sys);
+
+        debug!("BitBake environment configured for {}-{} with {} comprehensive variables",
+               recipe, version_str, 30);
     }
 
     /// Execute shell script
