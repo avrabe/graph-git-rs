@@ -375,7 +375,7 @@ impl Pipeline {
         (all_tasks, all_helpers)
     }
 
-    /// Find all require and include directives in recipe content
+    /// Find all require, include, and inherit directives in recipe content
     fn find_include_directives(content: &str) -> Vec<String> {
         let mut includes = Vec::new();
 
@@ -401,12 +401,24 @@ impl Pipeline {
                     }
                 }
             }
+
+            // Match: inherit class1 class2 class3
+            if trimmed.starts_with("inherit ") {
+                if let Some(classes) = trimmed.strip_prefix("inherit ") {
+                    // Split by whitespace and add .bbclass extension
+                    for class_name in classes.split_whitespace() {
+                        if !class_name.is_empty() {
+                            includes.push(format!("{}.bbclass", class_name));
+                        }
+                    }
+                }
+            }
         }
 
         includes
     }
 
-    /// Resolve an include path relative to recipe directory
+    /// Resolve an include path relative to recipe directory and layer classes
     fn resolve_include_path(include_path: &str, recipe_dir: &Path) -> Option<PathBuf> {
         // First try relative to recipe's directory
         let relative_path = recipe_dir.join(include_path);
@@ -422,8 +434,26 @@ impl Pipeline {
             }
         }
 
+        // For .bbclass files, search in classes directory relative to layer root
+        if include_path.ends_with(".bbclass") {
+            // Try to find the layer root (go up until we find conf/layer.conf)
+            let mut current = recipe_dir;
+            while let Some(parent) = current.parent() {
+                let layer_conf = parent.join("conf/layer.conf");
+                if layer_conf.exists() {
+                    // Found layer root, check classes directory
+                    let class_path = parent.join("classes").join(include_path);
+                    if class_path.exists() {
+                        return Some(class_path);
+                    }
+                    break;
+                }
+                current = parent;
+            }
+        }
+
         // Could expand to search in BBPATH, classes directory, etc.
-        // For now, just these two locations
+        // For now, just these locations
         None
     }
 
