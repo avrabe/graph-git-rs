@@ -61,6 +61,27 @@ impl QueryParser {
             return Self::parse_attr(query);
         }
 
+        // Task-specific query functions
+        if query.starts_with("script(") {
+            return Self::parse_script(query);
+        }
+
+        if query.starts_with("inputs(") {
+            return Self::parse_inputs(query);
+        }
+
+        if query.starts_with("outputs(") {
+            return Self::parse_outputs(query);
+        }
+
+        if query.starts_with("env(") {
+            return Self::parse_env(query);
+        }
+
+        if query.starts_with("critical-path(") {
+            return Self::parse_critical_path(query);
+        }
+
         // Parse as target pattern
         let pattern = TargetPattern::from_str(query)
             .map_err(|e| format!("Invalid target pattern: {}", e))?;
@@ -178,6 +199,64 @@ impl QueryParser {
         let expr = Box::new(Self::parse(&args[2])?);
 
         Ok(QueryExpr::Attr { name, value, expr })
+    }
+
+    fn parse_script(query: &str) -> Result<QueryExpr, String> {
+        let args = extract_function_args(query, "script")?;
+
+        if args.len() != 1 {
+            return Err(format!("script() takes 1 argument, got {}", args.len()));
+        }
+
+        let expr = Box::new(Self::parse(&args[0])?);
+        Ok(QueryExpr::Script(expr))
+    }
+
+    fn parse_inputs(query: &str) -> Result<QueryExpr, String> {
+        let args = extract_function_args(query, "inputs")?;
+
+        if args.len() != 1 {
+            return Err(format!("inputs() takes 1 argument, got {}", args.len()));
+        }
+
+        let expr = Box::new(Self::parse(&args[0])?);
+        Ok(QueryExpr::Inputs(expr))
+    }
+
+    fn parse_outputs(query: &str) -> Result<QueryExpr, String> {
+        let args = extract_function_args(query, "outputs")?;
+
+        if args.len() != 1 {
+            return Err(format!("outputs() takes 1 argument, got {}", args.len()));
+        }
+
+        let expr = Box::new(Self::parse(&args[0])?);
+        Ok(QueryExpr::Outputs(expr))
+    }
+
+    fn parse_env(query: &str) -> Result<QueryExpr, String> {
+        let args = extract_function_args(query, "env")?;
+
+        if args.len() != 1 {
+            return Err(format!("env() takes 1 argument, got {}", args.len()));
+        }
+
+        let expr = Box::new(Self::parse(&args[0])?);
+        Ok(QueryExpr::Env(expr))
+    }
+
+    fn parse_critical_path(query: &str) -> Result<QueryExpr, String> {
+        let args = extract_function_args(query, "critical-path")?;
+
+        if args.len() != 1 {
+            return Err(format!(
+                "critical-path() takes 1 argument, got {}",
+                args.len()
+            ));
+        }
+
+        let expr = Box::new(Self::parse(&args[0])?);
+        Ok(QueryExpr::CriticalPath(expr))
     }
 }
 
@@ -351,6 +430,98 @@ mod tests {
                 assert!(matches!(*expr, QueryExpr::ReverseDeps { .. }));
             }
             _ => panic!("Expected nested Deps -> ReverseDeps"),
+        }
+    }
+
+    #[test]
+    fn test_parse_script() {
+        let expr = QueryParser::parse("script(*:busybox:configure)").unwrap();
+        match expr {
+            QueryExpr::Script(expr) => {
+                assert!(matches!(*expr, QueryExpr::Target(_)));
+            }
+            _ => panic!("Expected Script"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inputs() {
+        let expr = QueryParser::parse("inputs(*:busybox:compile)").unwrap();
+        match expr {
+            QueryExpr::Inputs(expr) => {
+                assert!(matches!(*expr, QueryExpr::Target(_)));
+            }
+            _ => panic!("Expected Inputs"),
+        }
+    }
+
+    #[test]
+    fn test_parse_outputs() {
+        let expr = QueryParser::parse("outputs(*:busybox:install)").unwrap();
+        match expr {
+            QueryExpr::Outputs(expr) => {
+                assert!(matches!(*expr, QueryExpr::Target(_)));
+            }
+            _ => panic!("Expected Outputs"),
+        }
+    }
+
+    #[test]
+    fn test_parse_env() {
+        let expr = QueryParser::parse("env(*:busybox:configure)").unwrap();
+        match expr {
+            QueryExpr::Env(expr) => {
+                assert!(matches!(*expr, QueryExpr::Target(_)));
+            }
+            _ => panic!("Expected Env"),
+        }
+    }
+
+    #[test]
+    fn test_parse_critical_path() {
+        let expr = QueryParser::parse("critical-path(*:busybox:install)").unwrap();
+        match expr {
+            QueryExpr::CriticalPath(expr) => {
+                assert!(matches!(*expr, QueryExpr::Target(_)));
+            }
+            _ => panic!("Expected CriticalPath"),
+        }
+    }
+
+    #[test]
+    fn test_parse_wildcard_pattern() {
+        // Test wildcard recipe
+        let expr = QueryParser::parse("*:busybox").unwrap();
+        match expr {
+            QueryExpr::Target(pattern) => {
+                assert!(matches!(pattern, TargetPattern::WildcardRecipe { .. }));
+            }
+            _ => panic!("Expected Target with WildcardRecipe"),
+        }
+
+        // Test wildcard task
+        let expr = QueryParser::parse("*:busybox:configure").unwrap();
+        match expr {
+            QueryExpr::Target(pattern) => {
+                assert!(matches!(pattern, TargetPattern::WildcardTask { .. }));
+            }
+            _ => panic!("Expected Target with WildcardTask"),
+        }
+    }
+
+    #[test]
+    fn test_parse_composed_task_query() {
+        // Test composability: script(deps(*:busybox:install, 5))
+        let expr = QueryParser::parse("script(deps(*:busybox:install, 5))").unwrap();
+        match expr {
+            QueryExpr::Script(inner) => match *inner {
+                QueryExpr::Deps { expr, max_depth } => {
+                    assert!(matches!(*expr, QueryExpr::Target(_)));
+                    assert_eq!(max_depth, Some(5));
+                }
+                _ => panic!("Expected Deps inside Script"),
+            },
+            _ => panic!("Expected Script"),
         }
     }
 }
