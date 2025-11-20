@@ -235,4 +235,74 @@ mod tests {
         // Rest should be unchanged
         assert!(processed.contains("./configure"));
     }
+
+    #[test]
+    fn test_bb_utils_contains() {
+        let mut vars = HashMap::new();
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd x11 wayland".to_string());
+        vars.insert("PACKAGECONFIG".to_string(), "ssl ipv6".to_string());
+
+        let preprocessor = ScriptPreprocessor::new(vars);
+
+        // Test bb.utils.contains with systemd (present)
+        let input1 = r#"INIT_SYSTEM="${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'systemd', 'sysvinit', d)}""#;
+        let output1 = preprocessor.preprocess(input1).unwrap();
+        assert!(output1.contains("systemd"), "Expected 'systemd' but got: {}", output1);
+        assert!(!output1.contains("sysvinit"));
+
+        // Test bb.utils.contains with missing feature
+        let input2 = r#"HAS_ALSA="${@bb.utils.contains('DISTRO_FEATURES', 'alsa', 'yes', 'no', d)}""#;
+        let output2 = preprocessor.preprocess(input2).unwrap();
+        assert!(output2.contains("no"), "Expected 'no' but got: {}", output2);
+        assert!(!output2.contains("yes"));
+
+        // Test with PACKAGECONFIG
+        let input3 = r#"SSL_FLAGS="${@bb.utils.contains('PACKAGECONFIG', 'ssl', '--with-ssl', '', d)}""#;
+        let output3 = preprocessor.preprocess(input3).unwrap();
+        assert!(output3.contains("--with-ssl"), "Expected '--with-ssl' but got: {}", output3);
+    }
+
+    #[test]
+    fn test_preprocessing_performance() {
+        use std::time::Instant;
+
+        let mut vars = HashMap::new();
+        vars.insert("PN".to_string(), "test-package".to_string());
+        vars.insert("PV".to_string(), "1.0".to_string());
+        vars.insert("DISTRO_FEATURES".to_string(), "systemd x11 wayland".to_string());
+
+        let preprocessor = ScriptPreprocessor::new(vars);
+
+        // Test script with multiple Python expressions
+        let script = r#"
+            do_configure() {
+                FLAGS="${CFLAGS[extra]}"
+                INIT="${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'systemd', 'sysvinit', d)}"
+                HAS_X11="${@bb.utils.contains('DISTRO_FEATURES', 'x11', 'yes', 'no', d)}"
+                PKG_NAME="${@d.getVar('PN')}"
+                VERSION="${@d.getVar('PV')}"
+                ./configure --prefix=/usr
+            }
+        "#;
+
+        // Warm-up run
+        let _ = preprocessor.preprocess(script).unwrap();
+
+        // Benchmark
+        let iterations = 100;
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = preprocessor.preprocess(script).unwrap();
+        }
+        let elapsed = start.elapsed();
+        let avg_per_run = elapsed / iterations;
+
+        println!("Preprocessing performance:");
+        println!("  Total: {:?} for {} iterations", elapsed, iterations);
+        println!("  Average: {:?} per script", avg_per_run);
+        println!("  Throughput: {:.0} scripts/sec", 1000.0 / avg_per_run.as_millis() as f64);
+
+        // Assert reasonable performance (< 10ms per script on average)
+        assert!(avg_per_run.as_millis() < 10, "Preprocessing too slow: {:?}", avg_per_run);
+    }
 }
