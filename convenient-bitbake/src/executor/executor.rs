@@ -267,24 +267,23 @@ impl TaskExecutor {
 
         // Update environment variables with actual sandbox paths
         let sandbox_root = sandbox.root().to_path_buf();
+        // Set environment variables to sandbox-relative paths (not host absolute paths)
+        // The sandbox namespace makes these paths appear at the root of the sandbox
         sandbox_spec.env.insert(
             "WORKDIR".to_string(),
-            sandbox_root.join("work").to_string_lossy().to_string(),
+            "/work".to_string(),
         );
         sandbox_spec.env.insert(
             "S".to_string(),
-            sandbox_root.join("work/src").to_string_lossy().to_string(),
+            "/work/src".to_string(),
         );
         sandbox_spec.env.insert(
             "B".to_string(),
-            sandbox_root.join("work/build").to_string_lossy().to_string(),
+            "/work/build".to_string(),
         );
         sandbox_spec.env.insert(
             "D".to_string(),
-            sandbox_root
-                .join("work/outputs")
-                .to_string_lossy()
-                .to_string(),
+            "/work/outputs".to_string(),
         );
         sandbox.update_env(sandbox_spec.env);
 
