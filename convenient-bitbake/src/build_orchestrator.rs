@@ -9,11 +9,12 @@ use crate::{
     TaskGraphBuilder, TaskImplementation, TaskSpec,
 };
 use crate::executor::types::{NetworkPolicy, ResourceLimits};
+use crate::executor::ScriptPreprocessor;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Configuration for build orchestration
 pub struct OrchestratorConfig {
@@ -362,7 +363,7 @@ impl BuildOrchestrator {
             }
 
             // Try to find real task implementation
-            let script = if let Some(recipe_impls) = task_implementations.get(&task.recipe_name) {
+            let raw_script = if let Some(recipe_impls) = task_implementations.get(&task.recipe_name) {
                 if let Some(task_impl) = recipe_impls.get(&task.task_name) {
                     self.create_task_script(&task.recipe_name, &task.task_name, &task_impl.code, &all_helpers)
                 } else {
@@ -370,6 +371,28 @@ impl BuildOrchestrator {
                 }
             } else {
                 self.create_placeholder_script(&task.recipe_name, &task.task_name)
+            };
+
+            // NEW: Preprocess script to handle BitBake syntax (${@python_expr}, ${VAR[flag]}, etc.)
+            let script = {
+                let recipe_vars = self.collect_recipe_vars(&task.recipe_name, build_dir);
+                let preprocessor = ScriptPreprocessor::new(recipe_vars);
+
+                match preprocessor.preprocess(&raw_script) {
+                    Ok(processed) => {
+                        // Successfully preprocessed
+                        processed
+                    }
+                    Err(e) => {
+                        // Preprocessing failed - log warning and use original
+                        warn!(
+                            "Script preprocessing failed for {}:{}: {}",
+                            task.recipe_name, task.task_name, e
+                        );
+                        warn!("Falling back to unprocessed script");
+                        raw_script
+                    }
+                }
             };
 
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
@@ -385,7 +408,7 @@ impl BuildOrchestrator {
                 NetworkPolicy::Isolated  // Build tasks should be hermetic
             };
 
-            // Auto-detect execution mode from script
+            // Auto-detect execution mode from script (using preprocessed script)
             let execution_mode = crate::executor::determine_execution_mode(&script);
 
             let spec = TaskSpec {
@@ -405,6 +428,33 @@ impl BuildOrchestrator {
         }
 
         Ok(specs)
+    }
+
+    /// Collect recipe variables for preprocessing
+    fn collect_recipe_vars(&self, recipe_name: &str, build_dir: &Path) -> HashMap<String, String> {
+        let mut vars = HashMap::new();
+
+        // Recipe metadata
+        vars.insert("PN".to_string(), recipe_name.to_string());
+        vars.insert("PV".to_string(), "1.0".to_string());
+        vars.insert("PR".to_string(), "r0".to_string());
+
+        // Directory paths (will be overridden by executor with actual paths)
+        let workdir = build_dir.join("tmp").join(recipe_name);
+        vars.insert("WORKDIR".to_string(), workdir.to_string_lossy().to_string());
+        vars.insert("S".to_string(), workdir.join("src").to_string_lossy().to_string());
+        vars.insert("B".to_string(), workdir.join("build").to_string_lossy().to_string());
+        vars.insert("D".to_string(), workdir.join("image").to_string_lossy().to_string());
+
+        // Other common variables (matching prelude.sh defaults)
+        vars.insert("TMPDIR".to_string(), build_dir.join("tmp").to_string_lossy().to_string());
+        vars.insert("PTEST_PATH".to_string(), "/usr/lib/ptest".to_string());
+        vars.insert("TESTDIR".to_string(), workdir.join("tests").to_string_lossy().to_string());
+
+        // TODO: Extract actual variable values from recipe parsing
+        // For now, using defaults
+
+        vars
     }
 
     /// Create a task script from implementation code with helper functions
