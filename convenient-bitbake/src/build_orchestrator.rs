@@ -363,7 +363,7 @@ impl BuildOrchestrator {
                 script,
                 workdir: task_workdir,
                 env: HashMap::new(),
-                outputs: vec![PathBuf::from(&format!("/work/outputs/{}", output_file))],
+                outputs: vec![PathBuf::from(&output_file)],
                 timeout: Some(Duration::from_secs(300)),
                 execution_mode,
                 network_policy,
@@ -395,8 +395,8 @@ impl BuildOrchestrator {
         // Explicitly create completion marker (don't rely solely on trap)
         let output_file = format!("{}.done", task_name);
         script.push_str("# Mark task as complete\n");
-        script.push_str("mkdir -p /work/outputs\n");
-        script.push_str(&format!("touch \"/work/outputs/{}\"\n", output_file));
+        script.push_str("mkdir -p outputs\n");
+        script.push_str(&format!("touch \"outputs/{}\"\n", output_file));
 
         script
     }
@@ -405,7 +405,7 @@ impl BuildOrchestrator {
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
         let output_file = format!("{}.done", task_name);
         format!(
-            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\nmkdir -p /work/outputs\ntouch \"/work/outputs/{}\"",
+            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\nmkdir -p outputs\ntouch \"outputs/{}\"",
             recipe_name, task_name, output_file
         )
     }
