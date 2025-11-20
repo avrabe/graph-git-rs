@@ -13,7 +13,7 @@ use crate::executor::ScriptPreprocessor;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 /// Configuration for build orchestration
@@ -123,7 +123,10 @@ impl BuildOrchestrator {
         layer_paths: HashMap<String, Vec<PathBuf>>,
     ) -> Result<BuildPlan, Box<dyn std::error::Error + Send + Sync>> {
 
+        let build_start = Instant::now();
+
         // Step 1: Build layer context
+        let stage_start = Instant::now();
         info!("Building layer context with priorities");
         let mut build_context = BuildContext::new();
 
@@ -139,8 +142,10 @@ impl BuildOrchestrator {
         for layer_conf in self.find_layer_confs(&layer_paths)? {
             build_context.add_layer_from_conf(&layer_conf)?;
         }
+        info!("✓ Step 1 completed in {:?}", stage_start.elapsed());
 
         // Step 2: Parse recipes with parallel pipeline
+        let stage_start = Instant::now();
         info!("Parsing BitBake recipes with parallel pipeline");
         let pipeline_config = PipelineConfig {
             max_io_parallelism: self.config.max_io_parallelism,
@@ -153,6 +158,7 @@ impl BuildOrchestrator {
 
         let (recipe_files, _) = pipeline.discover_recipes(&layer_paths).await?;
         let (parsed_recipes, _) = pipeline.parse_recipes(recipe_files).await?;
+        info!("✓ Step 2 completed in {:?} ({} recipes parsed)", stage_start.elapsed(), parsed_recipes.len());
 
         // Rebuild build_context for return value
         let mut build_context = BuildContext::new();
@@ -179,6 +185,7 @@ impl BuildOrchestrator {
         }
 
         // Step 3: Build recipe graph
+        let stage_start = Instant::now();
         info!("Building recipe dependency graph");
 
         // Build class search paths from layer paths (HashMap<String, Vec<PathBuf>>)
@@ -202,13 +209,17 @@ impl BuildOrchestrator {
             ..Default::default()
         });
         let (recipe_graph, _) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
+        info!("✓ Step 3 completed in {:?}", stage_start.elapsed());
 
         // Step 4: Build task execution graph
+        let stage_start = Instant::now();
         info!("Building task execution graph");
         let task_builder = TaskGraphBuilder::new(recipe_graph.clone());
         let task_graph = task_builder.build_full_graph()?;
+        info!("✓ Step 4 completed in {:?}", stage_start.elapsed());
 
         // Step 5: Compute task signatures
+        let stage_start = Instant::now();
         info!("Computing task signatures");
         let mut recipe_hashes = HashMap::new();
         for parsed in &parsed_recipes {
@@ -236,8 +247,10 @@ impl BuildOrchestrator {
             self.config.machine.as_deref(),
             self.config.distro.as_deref(),
         ).await?;
+        info!("✓ Step 5 completed in {:?}", stage_start.elapsed());
 
         // Step 6: Analyze incremental build requirements
+        let stage_start = Instant::now();
         info!("Analyzing incremental build requirements");
         let incremental_stats = self.analyze_incremental_build(
             &task_graph,
@@ -247,8 +260,10 @@ impl BuildOrchestrator {
 
         // Save updated signatures
         sig_cache.save().await?;
+        info!("✓ Step 6 completed in {:?}", stage_start.elapsed());
 
         // Step 7: Create task specifications
+        let stage_start = Instant::now();
         info!("Creating task specifications");
         let task_specs = self.create_task_specs(
             &task_graph,
@@ -256,6 +271,9 @@ impl BuildOrchestrator {
             &helper_implementations,
             &self.config.build_dir,
         )?;
+        info!("✓ Step 7 completed in {:?} ({} task specs created)", stage_start.elapsed(), task_specs.len());
+
+        info!("✓ Build plan completed in {:?}", build_start.elapsed());
 
         Ok(BuildPlan {
             build_context,
@@ -339,7 +357,17 @@ impl BuildOrchestrator {
         let tmp_dir = build_dir.join("tmp");
         fs::create_dir_all(&tmp_dir)?;
 
+        info!("  Processing {} tasks...", task_graph.tasks.len());
+
+        let mut preprocess_count = 0;
+        let mut preprocess_total_time = Duration::ZERO;
+        let mut processed = 0;
+
         for (_task_id, task) in &task_graph.tasks {
+            processed += 1;
+            if processed % 1000 == 0 {
+                info!("    Processed {}/{} tasks", processed, task_graph.tasks.len());
+            }
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
             // Get helper functions for this recipe (both explicit helpers and other task functions)
@@ -375,10 +403,11 @@ impl BuildOrchestrator {
 
             // NEW: Preprocess script to handle BitBake syntax (${@python_expr}, ${VAR[flag]}, etc.)
             let script = {
+                let preprocess_start = Instant::now();
                 let recipe_vars = self.collect_recipe_vars(&task.recipe_name, build_dir);
                 let preprocessor = ScriptPreprocessor::new(recipe_vars);
 
-                match preprocessor.preprocess(&raw_script) {
+                let result = match preprocessor.preprocess(&raw_script) {
                     Ok(processed) => {
                         // Successfully preprocessed
                         processed
@@ -392,7 +421,13 @@ impl BuildOrchestrator {
                         warn!("Falling back to unprocessed script");
                         raw_script
                     }
-                }
+                };
+
+                let elapsed = preprocess_start.elapsed();
+                preprocess_total_time += elapsed;
+                preprocess_count += 1;
+
+                result
             };
 
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
@@ -425,6 +460,14 @@ impl BuildOrchestrator {
             };
 
             specs.insert(task_key, spec);
+        }
+
+        if preprocess_count > 0 {
+            let avg_time = preprocess_total_time / preprocess_count as u32;
+            info!(
+                "  Preprocessing: {} tasks in {:?} (avg {:?}/task)",
+                preprocess_count, preprocess_total_time, avg_time
+            );
         }
 
         Ok(specs)
