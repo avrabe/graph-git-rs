@@ -488,7 +488,8 @@ impl BuildOrchestrator {
 \n\
 export PN=\"{}\"\n\
 export WORKDIR=\"${{WORKDIR:-/work}}\"\n\
-cd \"${{WORKDIR}}\"\n\
+# Note: The executor already changes to WORKDIR before executing the script,\n\
+# so we don't need to cd here. This avoids path duplication issues.\n\
 \n\
 bb_note '[PLACEHOLDER] {}'\n\
 mkdir -p outputs\n\

@@ -267,23 +267,29 @@ impl TaskExecutor {
 
         // Update environment variables with actual sandbox paths
         let sandbox_root = sandbox.root().to_path_buf();
-        // Set environment variables to sandbox-relative paths (not host absolute paths)
-        // The sandbox namespace makes these paths appear at the root of the sandbox
+
+        // IMPORTANT: Since mount namespaces are currently disabled in native_sandbox.rs,
+        // we must use actual host absolute paths to the sandbox directories, not namespace-relative paths.
+        // When mount namespaces are enabled in the future, these should be changed back to /work, /work/src, etc.
+        // Canonicalize to get absolute path (sandbox_root might be relative like "build/hitzeleiter-cache/sandboxes/XXX")
+        let sandbox_root_abs = sandbox_root.canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&sandbox_root));
+        let work_dir = sandbox_root_abs.join("work");
         sandbox_spec.env.insert(
             "WORKDIR".to_string(),
-            "/work".to_string(),
+            work_dir.to_string_lossy().to_string(),
         );
         sandbox_spec.env.insert(
             "S".to_string(),
-            "/work/src".to_string(),
+            work_dir.join("src").to_string_lossy().to_string(),
         );
         sandbox_spec.env.insert(
             "B".to_string(),
-            "/work/build".to_string(),
+            work_dir.join("build").to_string_lossy().to_string(),
         );
         sandbox_spec.env.insert(
             "D".to_string(),
-            "/work/outputs".to_string(),
+            work_dir.join("outputs").to_string_lossy().to_string(),
         );
         sandbox.update_env(sandbox_spec.env);
 
