@@ -38,6 +38,11 @@ impl SandboxManager {
         Ok(Self { root, backend })
     }
 
+    /// Get the sandbox root directory
+    pub fn sandbox_dir(&self) -> &Path {
+        &self.root
+    }
+
     /// Create a sandbox from spec
     pub fn create_sandbox(&self, spec: SandboxSpec) -> ExecutionResult<Sandbox> {
         // Generate unique sandbox ID

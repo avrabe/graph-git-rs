@@ -380,6 +380,15 @@ impl TaskExecutor {
         sandbox_spec.rw_dirs.push(PathBuf::from("/work/temp"));
         sandbox_spec.cwd = PathBuf::from("/work");
 
+        // Create prelude.sh for sandboxed execution
+        const PRELUDE_CONTENT: &str = include_str!("prelude.sh");
+        let prelude_path = self.sandbox_manager.sandbox_dir().join("prelude.sh");
+        std::fs::write(&prelude_path, PRELUDE_CONTENT)?;
+        sandbox_spec.ro_inputs.push((
+            prelude_path,
+            PathBuf::from("/hitzeleiter/prelude.sh"),
+        ));
+
         // If workdir exists, mount it
         if spec.workdir.exists() {
             sandbox_spec.ro_inputs.push((
@@ -390,7 +399,12 @@ impl TaskExecutor {
 
         // Add declared outputs
         for output in &spec.outputs {
-            sandbox_spec.outputs.push(PathBuf::from("/work/outputs").join(output));
+            // If output is already an absolute path, use it as-is
+            if output.is_absolute() {
+                sandbox_spec.outputs.push(output.clone());
+            } else {
+                sandbox_spec.outputs.push(PathBuf::from("/work/outputs").join(output));
+            }
         }
 
         // Copy environment

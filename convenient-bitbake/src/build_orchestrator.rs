@@ -363,7 +363,7 @@ impl BuildOrchestrator {
                 script,
                 workdir: task_workdir,
                 env: HashMap::new(),
-                outputs: vec![PathBuf::from(&output_file)],
+                outputs: vec![PathBuf::from(&format!("/work/outputs/{}", output_file))],
                 timeout: Some(Duration::from_secs(300)),
                 execution_mode,
                 network_policy,
