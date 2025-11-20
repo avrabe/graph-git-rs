@@ -103,69 +103,125 @@ impl AsyncGitRepository {
         let url = self.url.clone();
         let credentials = self.credentials.clone();
 
-        task::spawn_blocking(move || {
-            // Try to open existing repository first
-            if path.exists() {
-                debug!("Opening existing repository at {}", path.display());
-                return Repository::open(&path).map_err(GitError::from);
-            }
+        // Try to open existing repository first (no async needed)
+        if path.exists() {
+            debug!("Opening existing repository at {}", path.display());
+            return Repository::open(&path).map_err(GitError::from);
+        }
 
-            // Clone repository
-            info!("Cloning repository from {} to {}", url, path.display());
+        // Clone repository - first try libgit2
+        info!("Cloning repository from {} to {}", url, path.display());
 
-            let mut callbacks = RemoteCallbacks::new();
+        let libgit2_result = task::spawn_blocking({
+            let path = path.clone();
+            let url = url.clone();
+            let credentials = credentials.clone();
 
-            // Setup credentials if provided
-            if let Some(creds) = credentials {
-                callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
-                    Cred::userpass_plaintext(&creds.username, &creds.password)
+            move || {
+                let mut callbacks = RemoteCallbacks::new();
+
+                // Setup credentials if provided
+                if let Some(creds) = credentials {
+                    callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
+                        Cred::userpass_plaintext(&creds.username, &creds.password)
+                    });
+                }
+
+                callbacks.transfer_progress(|stats| {
+                    if stats.received_objects() == stats.total_objects() {
+                        debug!(
+                            "Resolving deltas {}/{}",
+                            stats.indexed_deltas(),
+                            stats.total_deltas()
+                        );
+                    } else if stats.received_objects() % 100 == 0 {
+                        debug!(
+                            "Received {}/{} objects ({} kb)",
+                            stats.received_objects(),
+                            stats.total_objects(),
+                            stats.received_bytes() / 1024
+                        );
+                    }
+                    true
                 });
+
+                let mut fetch_options = FetchOptions::new();
+                fetch_options.remote_callbacks(callbacks);
+
+                let mut proxy_opts = ProxyOptions::new();
+                proxy_opts.auto();
+                fetch_options.proxy_options(proxy_opts);
+                fetch_options.download_tags(git2::AutotagOption::All);
+
+                let mut checkout_builder = CheckoutBuilder::new();
+                checkout_builder.progress(|_path, cur, total| {
+                    if cur % 100 == 0 || cur == total {
+                        debug!("Checkout progress: {}/{}", cur, total);
+                    }
+                });
+
+                git2::build::RepoBuilder::new()
+                    .fetch_options(fetch_options)
+                    .with_checkout(checkout_builder)
+                    .clone(&url, &path)
             }
-
-            callbacks.transfer_progress(|stats| {
-                if stats.received_objects() == stats.total_objects() {
-                    debug!(
-                        "Resolving deltas {}/{}",
-                        stats.indexed_deltas(),
-                        stats.total_deltas()
-                    );
-                } else if stats.received_objects() % 100 == 0 {
-                    debug!(
-                        "Received {}/{} objects ({} kb)",
-                        stats.received_objects(),
-                        stats.total_objects(),
-                        stats.received_bytes() / 1024
-                    );
-                }
-                true
-            });
-
-            let mut fetch_options = FetchOptions::new();
-            fetch_options.remote_callbacks(callbacks);
-
-            let mut proxy_opts = ProxyOptions::new();
-            proxy_opts.auto();
-            fetch_options.proxy_options(proxy_opts);
-            fetch_options.download_tags(git2::AutotagOption::All);
-
-            let mut checkout_builder = CheckoutBuilder::new();
-            checkout_builder.progress(|_path, cur, total| {
-                if cur % 100 == 0 || cur == total {
-                    debug!("Checkout progress: {}/{}", cur, total);
-                }
-            });
-
-            let repo = git2::build::RepoBuilder::new()
-                .fetch_options(fetch_options)
-                .with_checkout(checkout_builder)
-                .clone(&url, &path)
-                .map_err(|e| GitError::CloneFailed(e.to_string()))?;
-
-            info!("Successfully cloned repository");
-            Ok(repo)
         })
         .await
-        .map_err(|e| GitError::CloneFailed(e.to_string()))?
+        .map_err(|e| GitError::CloneFailed(format!("Task join error: {}", e)))?;
+
+        // Check if libgit2 succeeded
+        match libgit2_result {
+            Ok(repo) => {
+                info!("Successfully cloned repository with libgit2");
+                Ok(repo)
+            }
+            Err(e) => {
+                // Check if it's a proxy authentication error (HTTP 401)
+                let error_msg = e.to_string();
+                if error_msg.contains("401") || error_msg.contains("proxy") {
+                    info!("libgit2 clone failed with proxy error, falling back to system git command");
+
+                    // Fall back to system git command
+                    self.clone_with_system_git().await?;
+
+                    // Open the cloned repository
+                    Repository::open(&path).map_err(GitError::from)
+                } else {
+                    // Not a proxy error, return original error
+                    Err(GitError::CloneFailed(error_msg))
+                }
+            }
+        }
+    }
+
+    /// Clone repository using system git command as fallback
+    ///
+    /// This is used when libgit2 fails due to proxy issues that the system git
+    /// command can handle (e.g., JWT-based proxy authentication)
+    async fn clone_with_system_git(&self) -> GitResult<()> {
+        use tokio::process::Command;
+
+        info!("Using system git command to clone {}", self.url);
+
+        let output = Command::new("git")
+            .arg("clone")
+            .arg("--progress")
+            .arg(&self.url)
+            .arg(&self.path)
+            .output()
+            .await
+            .map_err(|e| GitError::CloneFailed(format!("Failed to execute git command: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(GitError::CloneFailed(format!(
+                "System git clone failed: {}",
+                stderr
+            )));
+        }
+
+        info!("Successfully cloned repository with system git command");
+        Ok(())
     }
 
     /// Fetch updates from remote asynchronously
