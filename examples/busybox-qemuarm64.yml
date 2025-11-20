@@ -1,0 +1,58 @@
+# KAS configuration for building busybox on QEMU ARM64
+# This demonstrates a minimal Yocto/OpenEmbedded build setup for ARM64
+
+header:
+  version: 14
+
+machine: qemuarm64
+distro: poky
+
+target:
+  - busybox
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    branch: kirkstone
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+
+env:
+  # Shared state and download cache for faster builds
+  SSTATE_DIR: /shared/sstate-cache
+  DL_DIR: /shared/downloads
+
+  # Build parallelism
+  BB_NUMBER_THREADS: "8"
+  PARALLEL_MAKE: "-j 8"
+
+local_conf_header:
+  # Additional BitBake configuration
+  build-settings: |
+    # Disk space monitoring
+    BB_DISKMON_DIRS = "\\
+        STOPTASKS,${TMPDIR},1G,100K \\
+        STOPTASKS,${DL_DIR},1G,100K \\
+        STOPTASKS,${SSTATE_DIR},1G,100K \\
+        STOPTASKS,/tmp,100M,100K \\
+        HALT,${TMPDIR},100M,1K \\
+        HALT,${DL_DIR},100M,1K \\
+        HALT,${SSTATE_DIR},100M,1K \\
+        HALT,/tmp,10M,1K"
+
+    # Package management
+    PACKAGE_CLASSES = "package_rpm"
+
+    # Remove documentation for smaller images
+    INHERIT += "rm_work"
+
+    # SDK settings for ARM64
+    SDKMACHINE = "aarch64"
+
+bblayers_conf_header:
+  # Layer configuration
+  layer-settings: |
+    # Priority settings
+    BBMASK = ""
