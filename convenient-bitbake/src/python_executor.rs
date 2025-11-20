@@ -124,7 +124,7 @@ mod bitbake_internal {
 // Each thread gets its own interpreter instance, dramatically reducing
 // the overhead of interpreter creation (from ~50-200ms to ~0.01ms per eval)
 thread_local! {
-    static CACHED_INTERPRETER: RefCell<Option<Interpreter>> = RefCell::new(None);
+    static CACHED_INTERPRETER: RefCell<Option<Arc<Interpreter>>> = RefCell::new(None);
 }
 
 // Performance tracking: count total interpreters created across all threads
@@ -135,7 +135,7 @@ static EVAL_COUNT: AtomicU64 = AtomicU64::new(0);
 static EVAL_TIME_US: AtomicU64 = AtomicU64::new(0);
 
 /// Get or create the thread-local cached interpreter
-fn get_cached_interpreter() -> Interpreter {
+fn get_cached_interpreter() -> Arc<Interpreter> {
     CACHED_INTERPRETER.with(|cache| {
         let mut cache_mut = cache.borrow_mut();
         if cache_mut.is_none() {
@@ -179,9 +179,9 @@ fn get_cached_interpreter() -> Interpreter {
                          count, std::thread::current().id(), creation_time);
             }
 
-            *cache_mut = Some(interp);
+            *cache_mut = Some(Arc::new(interp));
         }
-        // Clone the interpreter (Arc internally, so this is cheap)
+        // Clone the Arc (cheap - just increments reference count)
         cache_mut.as_ref().unwrap().clone()
     })
 }
