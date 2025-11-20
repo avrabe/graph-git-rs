@@ -294,7 +294,7 @@ impl RecipeExtractor {
     }
 
     /// Parse simple variable assignments from recipe content
-    fn parse_variables(&self, content: &str) -> HashMap<String, String> {
+    pub fn parse_variables(&self, content: &str) -> HashMap<String, String> {
         let mut vars: HashMap<String, String> = HashMap::new();
 
         // First, handle line continuations
