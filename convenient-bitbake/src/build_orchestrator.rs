@@ -175,6 +175,8 @@ impl BuildOrchestrator {
         // Extract task implementations and helper functions
         let mut task_implementations = HashMap::new();
         let mut helper_implementations = HashMap::new();
+        let mut recipe_variables = HashMap::new();
+
         for parsed in &parsed_recipes {
             if !parsed.task_impls.is_empty() {
                 task_implementations.insert(parsed.file.name.clone(), parsed.task_impls.clone());
@@ -182,6 +184,15 @@ impl BuildOrchestrator {
             if !parsed.helper_funcs.is_empty() {
                 helper_implementations.insert(parsed.file.name.clone(), parsed.helper_funcs.clone());
             }
+
+            // Extract variables from recipe content for preprocessing
+            let extractor_for_vars = RecipeExtractor::new(ExtractionConfig {
+                extract_tasks: false,
+                use_simple_python_eval: false,
+                ..Default::default()
+            });
+            let vars = extractor_for_vars.parse_variables(&parsed.content);
+            recipe_variables.insert(parsed.file.name.clone(), vars);
         }
 
         // Step 3: Build recipe graph
@@ -269,6 +280,7 @@ impl BuildOrchestrator {
             &task_graph,
             &task_implementations,
             &helper_implementations,
+            &recipe_variables,
             &self.config.build_dir,
         )?;
         info!("✓ Step 7 completed in {:?} ({} task specs created)", stage_start.elapsed(), task_specs.len());
@@ -351,6 +363,7 @@ impl BuildOrchestrator {
         task_graph: &TaskGraph,
         task_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
         helper_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
+        recipe_variables: &HashMap<String, HashMap<String, String>>,
         build_dir: &Path,
     ) -> Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> {
         let mut specs = HashMap::new();
@@ -404,7 +417,18 @@ impl BuildOrchestrator {
             // NEW: Preprocess script to handle BitBake syntax (${@python_expr}, ${VAR[flag]}, etc.)
             let script = {
                 let preprocess_start = Instant::now();
-                let recipe_vars = self.collect_recipe_vars(&task.recipe_name, build_dir);
+
+                // Get recipe variables from parsed recipes, or use defaults
+                let mut recipe_vars = recipe_variables
+                    .get(&task.recipe_name)
+                    .cloned()
+                    .unwrap_or_else(HashMap::new);
+
+                // Add runtime variables that may not be in recipe
+                recipe_vars.entry("PN".to_string()).or_insert_with(|| task.recipe_name.clone());
+                let workdir = build_dir.join("tmp").join(&task.recipe_name);
+                recipe_vars.entry("WORKDIR".to_string()).or_insert_with(|| workdir.to_string_lossy().to_string());
+
                 let preprocessor = ScriptPreprocessor::new(recipe_vars);
 
                 let result = match preprocessor.preprocess(&raw_script) {
