@@ -39,9 +39,11 @@
 pub mod parser;
 pub mod expr;
 pub mod recipe_query;
+pub mod task_query;
 pub mod output;
 
 pub use parser::QueryParser;
 pub use expr::{QueryExpr, TargetPattern};
 pub use recipe_query::RecipeQueryEngine;
+pub use task_query::{TaskQueryEngine, TaskTarget};
 pub use output::{OutputFormat, QueryResult, format_results};
