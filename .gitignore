@@ -13,6 +13,7 @@ coverage.json
 
 # KAS checkout directories
 /build
+/build-*
 /poky
 /meta-openembedded
 
