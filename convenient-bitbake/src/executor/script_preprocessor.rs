@@ -11,7 +11,6 @@ use regex::Regex;
 use std::collections::HashMap;
 use tracing::{debug, warn};
 
-#[cfg(feature = "python-execution")]
 use crate::python_executor::PythonExecutor;
 
 /// Preprocesses BitBake scripts to handle special syntax
@@ -20,20 +19,15 @@ pub struct ScriptPreprocessor {
     datastore: HashMap<String, String>,
 
     /// Python executor for inline expressions
-    #[cfg(feature = "python-execution")]
-    python_executor: Option<PythonExecutor>,
+    python_executor: PythonExecutor,
 }
 
 impl ScriptPreprocessor {
     /// Create new preprocessor with recipe variables
     pub fn new(vars: HashMap<String, String>) -> Self {
-        #[cfg(feature = "python-execution")]
-        let python_executor = Some(PythonExecutor::new());
-
         Self {
             datastore: vars,
-            #[cfg(feature = "python-execution")]
-            python_executor,
+            python_executor: PythonExecutor::new(),
         }
     }
 
@@ -73,8 +67,12 @@ impl ScriptPreprocessor {
     /// Examples:
     /// - ${@d.getVar('CFLAGS')} → "-O2 -pipe"
     /// - ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', 'yes', 'no', d)} → "yes"
-    #[cfg(feature = "python-execution")]
     fn expand_python_expressions(&self, script: &str) -> Result<String, String> {
+        // Fast path: if no Python expressions, return early
+        if !script.contains("${@") {
+            return Ok(script.to_string());
+        }
+
         // Match ${@...} including nested braces
         // This regex handles simple cases; complex nesting needs a parser
         let re = Regex::new(r"\$\{@([^}]+)\}").map_err(|e| e.to_string())?;
@@ -84,26 +82,21 @@ impl ScriptPreprocessor {
 
         for cap in re.captures_iter(script) {
             let full_match = cap.get(0).unwrap().as_str();
-            let python_code = cap.get(1).unwrap().as_str();
+            let python_expr = cap.get(1).unwrap().as_str();
 
-            debug!("Evaluating Python expression: {}", python_code);
+            debug!("Evaluating Python expression: {}", python_expr);
 
-            if let Some(ref executor) = self.python_executor {
-                match executor.execute(python_code, &self.datastore) {
-                    Ok(output) => {
-                        let value = output.stdout.trim();
-                        debug!("  → Result: {}", value);
-
-                        result = result.replace(full_match, value);
-                        replacements += 1;
-                    }
-                    Err(e) => {
-                        // Log warning but continue (BitBake's behavior)
-                        warn!("Failed to evaluate Python expression '{}': {}", python_code, e);
-
-                        // Replace with empty string (BitBake behavior)
-                        result = result.replace(full_match, "");
-                    }
+            match self.python_executor.eval(python_expr, &self.datastore) {
+                Ok(value) => {
+                    debug!("  → Result: {}", value);
+                    result = result.replace(full_match, &value);
+                    replacements += 1;
+                }
+                Err(e) => {
+                    // Log warning but continue (BitBake's behavior)
+                    warn!("Failed to evaluate Python expression '{}': {}", python_expr, e);
+                    // Replace with empty string (BitBake behavior)
+                    result = result.replace(full_match, "");
                 }
             }
         }
@@ -111,21 +104,6 @@ impl ScriptPreprocessor {
         if replacements > 0 {
             debug!("Expanded {} Python expressions", replacements);
         }
-
-        Ok(result)
-    }
-
-    /// Fallback when Python execution is not available - just remove expressions
-    #[cfg(not(feature = "python-execution"))]
-    fn expand_python_expressions(&self, script: &str) -> Result<String, String> {
-        // Fast path: if no Python expressions, return early
-        if !script.contains("${@") {
-            return Ok(script.to_string());
-        }
-
-        // Remove Python expressions without logging (too verbose)
-        let re = Regex::new(r"\$\{@([^}]+)\}").map_err(|e| e.to_string())?;
-        let result = re.replace_all(script, "").to_string();
 
         Ok(result)
     }
@@ -211,7 +189,6 @@ mod tests {
         assert!(!output.contains("[extra]"));
     }
 
-    #[cfg(feature = "python-execution")]
     #[test]
     fn test_expand_python_expression() {
         let mut vars = HashMap::new();
