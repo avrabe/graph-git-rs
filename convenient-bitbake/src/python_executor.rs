@@ -5,8 +5,9 @@
 
 use rustpython::{
     vm::{builtins::PyStrRef, pyclass, pymodule, PyObjectRef, PyPayload, PyResult, VirtualMachine},
-    InterpreterConfig, Interpreter,
+    InterpreterConfig,
 };
+use rustpython_vm::Interpreter;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
