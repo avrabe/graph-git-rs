@@ -302,7 +302,12 @@ fn discover_layers(
     let mut layer_paths: HashMap<String, Vec<PathBuf>> = HashMap::new();
 
     for (repo_name, config) in &kas.config.repos {
-        let repo_path = workspace.join(repo_name);
+        // Use config.path if specified, otherwise fall back to workspace/repo_name
+        let repo_path = if let Some(ref path) = config.path {
+            workspace.join(path)
+        } else {
+            workspace.join(repo_name)
+        };
 
         if !repo_path.exists() {
             continue;
