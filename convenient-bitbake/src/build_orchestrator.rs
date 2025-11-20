@@ -375,7 +375,8 @@ impl BuildOrchestrator {
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
             fs::create_dir_all(&task_workdir)?;
 
-            let output_file = format!("{}.done", task.task_name);
+            // Output file will be created at work/outputs/<task>.done
+            let output_file = format!("work/outputs/{}.done", task.task_name);
 
             // Determine network policy based on task type
             let network_policy = if task.task_name == "do_fetch" || task.task_name.contains("fetch") {
@@ -423,12 +424,12 @@ impl BuildOrchestrator {
         // Set recipe-specific variables
         script.push_str(&format!("export PN=\"{}\"\n", recipe_name));
 
-        // Set up work directories
-        script.push_str("# Set up work directories\n");
-        script.push_str("export WORKDIR=\"/work\"\n");
-        script.push_str("export S=\"${WORKDIR}/src\"\n");
-        script.push_str("export B=\"${WORKDIR}/build\"\n");
-        script.push_str("export D=\"${WORKDIR}/image\"\n");
+        // Set up work directories - use variables that will be set by executor
+        script.push_str("# Set up work directories (paths will be set by executor)\n");
+        script.push_str("export WORKDIR=\"${WORKDIR:-/work}\"\n");
+        script.push_str("export S=\"${S:-${WORKDIR}/src}\"\n");
+        script.push_str("export B=\"${B:-${WORKDIR}/build}\"\n");
+        script.push_str("export D=\"${D:-${WORKDIR}/image}\"\n");
         script.push_str("bbdirs \"${WORKDIR}\" \"${S}\" \"${B}\" \"${D}\"\n");
         script.push_str("cd \"${WORKDIR}\"\n\n");
 
@@ -469,20 +470,21 @@ impl BuildOrchestrator {
         script.push_str("\n\n");
 
         // Explicitly create completion marker (don't rely solely on trap)
-        let output_file = format!("{}.done", task_name);
+        // Output will be collected from work/outputs/<task>.done by the executor
+        let output_filename = format!("{}.done", task_name);
         script.push_str("# Mark task as complete\n");
         script.push_str("mkdir -p outputs\n");
-        script.push_str(&format!("touch \"outputs/{}\"\n", output_file));
+        script.push_str(&format!("touch \"outputs/{}\"\n", output_filename));
 
         script
     }
 
     /// Create a placeholder script for tasks without implementation
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
-        let output_file = format!("{}.done", task_name);
+        let output_filename = format!("{}.done", task_name);
         format!(
-            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nbb_note '[PLACEHOLDER] {}'\nmkdir -p outputs\ntouch \"outputs/{}\"",
-            recipe_name, task_name, output_file
+            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nexport WORKDIR=\"${{WORKDIR:-/work}}\"\ncd \"${{WORKDIR}}\"\nbb_note '[PLACEHOLDER] {}'\nmkdir -p outputs\ntouch \"outputs/{}\"",
+            recipe_name, task_name, output_filename
         )
     }
 }
