@@ -77,6 +77,8 @@ pub struct ParsedRecipe {
     pub content: String,
     /// Extracted task implementations
     pub task_impls: HashMap<String, TaskImplementation>,
+    /// Extracted helper functions
+    pub helper_funcs: HashMap<String, TaskImplementation>,
     /// Content hash
     pub hash: String,
 }
@@ -286,7 +288,7 @@ impl Pipeline {
 
         // Extract task implementations from main file
         let recipe_path = recipe_file.path.clone();
-        let task_impls = tokio::task::spawn_blocking({
+        let (task_impls, helper_funcs) = tokio::task::spawn_blocking({
             let content = content.clone();
             let task_extractor = Arc::clone(&task_extractor);
             let recipe_path = recipe_path.clone();
@@ -300,19 +302,25 @@ impl Pipeline {
             file: recipe_file,
             content,
             task_impls,
+            helper_funcs,
             hash,
         }))
     }
 
-    /// Extract task implementations from recipe and all its included files
+    /// Extract task implementations and helper functions from recipe and all its included files
     fn extract_tasks_with_includes(
         content: &str,
         recipe_path: &Path,
         task_extractor: &TaskExtractor,
-    ) -> HashMap<String, TaskImplementation> {
-        // Extract tasks from main recipe
-        let mut all_tasks = task_extractor.extract_from_content(content);
+    ) -> (HashMap<String, TaskImplementation>, HashMap<String, TaskImplementation>) {
+        use crate::task_extractor::RecipeImplementations;
+
+        // Extract tasks and helpers from main recipe
+        let main_impls = task_extractor.extract_all_from_content(content);
+        let mut all_tasks = main_impls.tasks.clone();
+        let mut all_helpers = main_impls.helpers.clone();
         let main_task_count = all_tasks.len();
+        let main_helper_count = all_helpers.len();
 
         // Find all require and include directives
         let includes = Self::find_include_directives(content);
@@ -326,18 +334,23 @@ impl Pipeline {
             if let Some(resolved_path) = Self::resolve_include_path(include_path, recipe_dir) {
                 // Read and parse the include file
                 if let Ok(include_content) = std::fs::read_to_string(&resolved_path) {
-                    let include_tasks = task_extractor.extract_from_content(&include_content);
+                    let include_impls = task_extractor.extract_all_from_content(&include_content);
 
-                    if !include_tasks.is_empty() {
+                    if !include_impls.tasks.is_empty() || !include_impls.helpers.is_empty() {
                         info!("✓ Extracted {} tasks from {:?} for recipe {:?}",
-                              include_tasks.len(),
+                              include_impls.tasks.len(),
                               resolved_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")),
                               recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
                     }
 
                     // Merge tasks from include file
                     // Include files are processed first, so recipe can override
-                    all_tasks = task_extractor.merge_implementations(&include_tasks, &all_tasks);
+                    all_tasks = task_extractor.merge_implementations(&include_impls.tasks, &all_tasks);
+
+                    // Merge helpers from include file (recipe helpers take precedence)
+                    for (name, helper) in include_impls.helpers {
+                        all_helpers.entry(name).or_insert(helper);
+                    }
                 } else {
                     info!("✗ Failed to read include file: {:?}", resolved_path);
                 }
@@ -351,13 +364,15 @@ impl Pipeline {
         }
 
         let total_tasks = all_tasks.len();
-        if total_tasks > main_task_count {
-            info!("Recipe {:?}: {} tasks total ({} from main, {} from includes)",
+        let total_helpers = all_helpers.len();
+        if total_tasks > main_task_count || total_helpers > main_helper_count {
+            info!("Recipe {:?}: {} tasks total ({} from main, {} from includes), {} helpers total ({} from main, {} from includes)",
                   recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")),
-                  total_tasks, main_task_count, total_tasks - main_task_count);
+                  total_tasks, main_task_count, total_tasks - main_task_count,
+                  total_helpers, main_helper_count, total_helpers - main_helper_count);
         }
 
-        all_tasks
+        (all_tasks, all_helpers)
     }
 
     /// Find all require and include directives in recipe content

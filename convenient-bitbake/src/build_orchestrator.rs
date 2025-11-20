@@ -50,6 +50,9 @@ pub struct BuildPlan {
     /// Task implementations extracted from recipes
     pub task_implementations: HashMap<String, HashMap<String, TaskImplementation>>,
 
+    /// Helper function implementations extracted from recipes
+    pub helper_implementations: HashMap<String, HashMap<String, TaskImplementation>>,
+
     /// Signature cache for incremental builds
     pub signature_cache: SignatureCache,
 
@@ -162,11 +165,15 @@ impl BuildOrchestrator {
             build_context.add_layer_from_conf(&layer_conf)?;
         }
 
-        // Extract task implementations
+        // Extract task implementations and helper functions
         let mut task_implementations = HashMap::new();
+        let mut helper_implementations = HashMap::new();
         for parsed in &parsed_recipes {
             if !parsed.task_impls.is_empty() {
                 task_implementations.insert(parsed.file.name.clone(), parsed.task_impls.clone());
+            }
+            if !parsed.helper_funcs.is_empty() {
+                helper_implementations.insert(parsed.file.name.clone(), parsed.helper_funcs.clone());
             }
         }
 
@@ -245,6 +252,7 @@ impl BuildOrchestrator {
         let task_specs = self.create_task_specs(
             &task_graph,
             &task_implementations,
+            &helper_implementations,
             &self.config.build_dir,
         )?;
 
@@ -254,6 +262,7 @@ impl BuildOrchestrator {
             task_graph,
             task_specs,
             task_implementations,
+            helper_implementations,
             signature_cache: sig_cache,
             incremental_stats,
         })
@@ -322,6 +331,7 @@ impl BuildOrchestrator {
         &self,
         task_graph: &TaskGraph,
         task_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
+        helper_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
         build_dir: &Path,
     ) -> Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> {
         let mut specs = HashMap::new();
@@ -331,10 +341,27 @@ impl BuildOrchestrator {
         for (_task_id, task) in &task_graph.tasks {
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
+            // Get helper functions for this recipe (both explicit helpers and other task functions)
+            let mut all_helpers = helper_implementations
+                .get(&task.recipe_name)
+                .cloned()
+                .unwrap_or_default();
+
+            // Also include all other task functions from this recipe as potential helpers
+            // (e.g., do_prepare_config can be called by do_configure)
+            if let Some(recipe_tasks) = task_implementations.get(&task.recipe_name) {
+                for (task_fn_name, task_fn_impl) in recipe_tasks {
+                    // Don't include the current task itself
+                    if task_fn_name != &task.task_name {
+                        all_helpers.insert(format!("do_{}", task_fn_name), task_fn_impl.clone());
+                    }
+                }
+            }
+
             // Try to find real task implementation
             let script = if let Some(recipe_impls) = task_implementations.get(&task.recipe_name) {
                 if let Some(task_impl) = recipe_impls.get(&task.task_name) {
-                    self.create_task_script(&task.recipe_name, &task.task_name, &task_impl.code)
+                    self.create_task_script(&task.recipe_name, &task.task_name, &task_impl.code, &all_helpers)
                 } else {
                     self.create_placeholder_script(&task.recipe_name, &task.task_name)
                 }
@@ -376,8 +403,14 @@ impl BuildOrchestrator {
         Ok(specs)
     }
 
-    /// Create a task script from implementation code
-    fn create_task_script(&self, recipe_name: &str, task_name: &str, code: &str) -> String {
+    /// Create a task script from implementation code with helper functions
+    fn create_task_script(
+        &self,
+        recipe_name: &str,
+        task_name: &str,
+        code: &str,
+        helpers: &HashMap<String, TaskImplementation>,
+    ) -> String {
         let mut script = String::new();
 
         // Source shared prelude for common environment and functions
@@ -386,6 +419,16 @@ impl BuildOrchestrator {
 
         // Set recipe-specific variables
         script.push_str(&format!("export PN=\"{}\"\n\n", recipe_name));
+
+        // Add helper functions before the task implementation
+        if !helpers.is_empty() {
+            script.push_str("# Helper functions from recipe\n");
+            for (helper_name, helper_impl) in helpers {
+                script.push_str(&format!("{}() {{\n", helper_name));
+                script.push_str(&helper_impl.code);
+                script.push_str("\n}\n\n");
+            }
+        }
 
         // Task code
         script.push_str("# Task implementation\n");
