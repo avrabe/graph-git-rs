@@ -309,6 +309,137 @@ impl PythonExecutor {
             .join("\n")
     }
 
+    /// Evaluate a Python expression and return its value as a string
+    ///
+    /// This is used for BitBake's ${@python_expr} inline expressions.
+    ///
+    /// # Arguments
+    /// * `python_expr` - The Python expression to evaluate (e.g., "d.getVar('CFLAGS')")
+    /// * `initial_vars` - Variables to pre-populate in the DataStore
+    ///
+    /// # Returns
+    /// Result with the expression value as a string, or an error message
+    pub fn eval(
+        &self,
+        python_expr: &str,
+        initial_vars: &HashMap<String, String>,
+    ) -> Result<String, String> {
+        // Create interpreter with module registration using InterpreterConfig
+        let interp = InterpreterConfig::new()
+            .init_stdlib()
+            .init_hook(Box::new(|vm| {
+                // Register our bitbake_internal module with the DataStore class
+                vm.add_native_module(
+                    "bitbake_internal".to_owned(),
+                    Box::new(bitbake_internal::make_module),
+                );
+
+                // Register bb.utils module
+                vm.add_native_module(
+                    "bb.utils".to_owned(),
+                    Box::new(bb_utils::make_module),
+                );
+
+                // Register bb.fetch2 module (Python-to-Rust fetch bridge)
+                vm.add_native_module(
+                    "bb.fetch2".to_owned(),
+                    Box::new(crate::python_bridge::bb_fetch2::make_module),
+                );
+
+                // Register top-level bb module
+                vm.add_native_module(
+                    "bb".to_owned(),
+                    Box::new(crate::python_bridge::bb::make_module),
+                );
+            }))
+            .interpreter();
+
+        // Execute in VM context
+        interp.enter(|vm| {
+            self.eval_in_vm(vm, python_expr, initial_vars)
+        }).map_err(|e| format!("Evaluation error: {:?}", e))
+    }
+
+    fn eval_in_vm(
+        &self,
+        vm: &VirtualMachine,
+        python_expr: &str,
+        initial_vars: &HashMap<String, String>,
+    ) -> PyResult<String> {
+        // Create inner DataStoreInner
+        let inner = Arc::new(Mutex::new(DataStoreInner::new()));
+
+        // Populate with initial variables
+        for (key, value) in initial_vars {
+            inner.lock().unwrap().set_initial(key.clone(), value.clone());
+        }
+
+        // Import our module first to ensure type registration
+        let scope = vm.new_scope_with_builtins();
+        vm.run_block_expr(scope.clone(), "import bitbake_internal")?;
+
+        // Create DataStore as a Python object using our registered class
+        let datastore = bitbake_internal::DataStore {
+            inner: inner.clone(),
+        };
+        let d_obj = datastore.into_pyobject(vm);
+
+        // Add 'd' as a global
+        scope.globals.set_item("d", d_obj.clone(), vm)?;
+
+        // Create bb.utils module with contains function and helper functions
+        let bb_utils_code = r#"
+class _BBUtils:
+    def __init__(self, d_obj):
+        self._d = d_obj
+
+    def contains(self, var, item, true_val, false_val, d):
+        # Get variable value from datastore
+        value = d.getVar(var, True)
+        if value is None:
+            return false_val
+        # Check if item is in the space-separated value
+        items = value.split()
+        return true_val if item in items else false_val
+
+class _BB:
+    def __init__(self, d_obj):
+        self.utils = _BBUtils(d_obj)
+
+bb = _BB(d)
+
+# Helper function used by os-release recipe
+def sanitise_value(value):
+    """Sanitise value for unquoted OS release fields"""
+    # Simple sanitisation: remove quotes and dangerous characters
+    value = value.replace('"', '').replace("'", '').replace('`', '')
+    return value.strip()
+"#;
+        vm.run_block_expr(scope.clone(), bb_utils_code)?;
+
+        // Compile the expression in Eval mode
+        let code_obj = match vm.compile(
+            python_expr,
+            rustpython_vm::compiler::Mode::Eval,
+            "<bitbake_expr>".to_owned()
+        ) {
+            Ok(code) => code,
+            Err(e) => {
+                return Err(vm.new_exception_msg(
+                    vm.ctx.exceptions.syntax_error.to_owned(),
+                    format!("Compile error: {:?}", e),
+                ));
+            }
+        };
+
+        // Evaluate the expression
+        let result_obj = vm.run_code_obj(code_obj, scope)?;
+
+        // Convert result to string
+        let result_str = result_obj.str(vm)?;
+        Ok(result_str.as_str().to_string())
+    }
+
     /// Execute Python code with a mocked BitBake DataStore
     ///
     /// # Arguments
