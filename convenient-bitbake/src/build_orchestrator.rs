@@ -375,8 +375,8 @@ impl BuildOrchestrator {
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
             fs::create_dir_all(&task_workdir)?;
 
-            // Output file will be created at work/outputs/<task>.done
-            let output_file = format!("work/outputs/{}.done", task.task_name);
+            // Output file - executor will prepend /work/outputs/ for relative paths
+            let output_file = format!("{}.done", task.task_name);
 
             // Determine network policy based on task type
             let network_policy = if task.task_name == "do_fetch" || task.task_name.contains("fetch") {
@@ -483,7 +483,16 @@ impl BuildOrchestrator {
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
         let output_filename = format!("{}.done", task_name);
         format!(
-            "#!/bin/bash\n. /hitzeleiter/prelude.sh\nexport PN=\"{}\"\nexport WORKDIR=\"${{WORKDIR:-/work}}\"\ncd \"${{WORKDIR}}\"\nbb_note '[PLACEHOLDER] {}'\nmkdir -p outputs\ntouch \"outputs/{}\"",
+            "#!/bin/bash\n\
+. /hitzeleiter/prelude.sh\n\
+\n\
+export PN=\"{}\"\n\
+export WORKDIR=\"${{WORKDIR:-/work}}\"\n\
+cd \"${{WORKDIR}}\"\n\
+\n\
+bb_note '[PLACEHOLDER] {}'\n\
+mkdir -p outputs\n\
+touch \"outputs/{}\"\n",
             recipe_name, task_name, output_filename
         )
     }
