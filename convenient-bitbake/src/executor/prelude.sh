@@ -18,6 +18,14 @@ export B="${B:-${WORKDIR}/build}"
 export D="${D:-${WORKDIR}/image}"
 export TMPDIR="${TMPDIR:-/tmp}"
 
+# Target architecture (must be defined early for use in other variables)
+export TARGET_ARCH="${TARGET_ARCH:-x86_64}"
+export TARGET_OS="${TARGET_OS:-linux}"
+export TARGET_VENDOR="${TARGET_VENDOR:-unknown}"
+export TARGET_SYS="${TARGET_SYS:-${TARGET_ARCH}-${TARGET_VENDOR}-${TARGET_OS}}"
+export BUILD_SYS="${BUILD_SYS:-$(uname -m)-linux}"
+export HOST_SYS="${HOST_SYS:-${TARGET_SYS}}"
+
 # Test and QA directories
 export PTEST_PATH="${PTEST_PATH:-/usr/lib/ptest}"
 export TESTDIR="${TESTDIR:-${WORKDIR}/tests}"
@@ -206,14 +214,6 @@ export LDFLAGS="${LDFLAGS:-}"
 # Make flags
 export EXTRA_OEMAKE="${EXTRA_OEMAKE:-}"
 export PARALLEL_MAKE="${PARALLEL_MAKE:--j$(nproc)}"
-
-# Target architecture
-export TARGET_ARCH="${TARGET_ARCH:-x86_64}"
-export TARGET_OS="${TARGET_OS:-linux}"
-export TARGET_VENDOR="${TARGET_VENDOR:-unknown}"
-export TARGET_SYS="${TARGET_SYS:-${TARGET_ARCH}-${TARGET_VENDOR}-${TARGET_OS}}"
-export BUILD_SYS="${BUILD_SYS:-$(uname -m)-linux}"
-export HOST_SYS="${HOST_SYS:-${TARGET_SYS}}"
 
 # Staging and sysroot paths
 export STAGING_DIR="${STAGING_DIR:-${TMPDIR}/sysroots}"

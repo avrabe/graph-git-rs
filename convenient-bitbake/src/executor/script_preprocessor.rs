@@ -115,21 +115,17 @@ impl ScriptPreprocessor {
         Ok(result)
     }
 
-    /// Fallback when Python execution is not available
+    /// Fallback when Python execution is not available - just remove expressions
     #[cfg(not(feature = "python-execution"))]
     fn expand_python_expressions(&self, script: &str) -> Result<String, String> {
-        // Just remove Python expressions if RustPython not available
-        let re = Regex::new(r"\$\{@([^}]+)\}").map_err(|e| e.to_string())?;
-
-        let mut count = 0;
-        let result = re.replace_all(script, |_caps: &regex::Captures| {
-            count += 1;
-            "" // Remove the expression
-        }).to_string();
-
-        if count > 0 {
-            warn!("Removed {} Python expressions (python-execution feature not enabled)", count);
+        // Fast path: if no Python expressions, return early
+        if !script.contains("${@") {
+            return Ok(script.to_string());
         }
+
+        // Remove Python expressions without logging (too verbose)
+        let re = Regex::new(r"\$\{@([^}]+)\}").map_err(|e| e.to_string())?;
+        let result = re.replace_all(script, "").to_string();
 
         Ok(result)
     }
