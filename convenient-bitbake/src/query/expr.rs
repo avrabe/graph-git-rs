@@ -57,6 +57,22 @@ pub enum QueryExpr {
     Intersect(Box<QueryExpr>, Box<QueryExpr>),
     Union(Box<QueryExpr>, Box<QueryExpr>),
     Except(Box<QueryExpr>, Box<QueryExpr>),
+
+    /// Task-specific queries (for tquery)
+    /// Show task script content
+    Script(Box<QueryExpr>),
+
+    /// Show task inputs
+    Inputs(Box<QueryExpr>),
+
+    /// Show task outputs
+    Outputs(Box<QueryExpr>),
+
+    /// Show task environment variables
+    Env(Box<QueryExpr>),
+
+    /// Critical path analysis
+    CriticalPath(Box<QueryExpr>),
 }
 
 impl fmt::Display for QueryExpr {
@@ -91,6 +107,11 @@ impl fmt::Display for QueryExpr {
             QueryExpr::Intersect(a, b) => write!(f, "{} intersect {}", a, b),
             QueryExpr::Union(a, b) => write!(f, "{} union {}", a, b),
             QueryExpr::Except(a, b) => write!(f, "{} except {}", a, b),
+            QueryExpr::Script(expr) => write!(f, "script({})", expr),
+            QueryExpr::Inputs(expr) => write!(f, "inputs({})", expr),
+            QueryExpr::Outputs(expr) => write!(f, "outputs({})", expr),
+            QueryExpr::Env(expr) => write!(f, "env({})", expr),
+            QueryExpr::CriticalPath(expr) => write!(f, "critical-path({})", expr),
         }
     }
 }
@@ -116,6 +137,16 @@ pub enum TargetPattern {
 
     /// All tasks for a recipe (meta-core:busybox:*)
     RecipeAllTasks { layer: String, recipe: String },
+
+    /// Wildcard patterns (for cross-layer searches)
+    /// Recipe in any layer (*:busybox)
+    WildcardRecipe { recipe: String },
+
+    /// Task in any layer (*:busybox:configure)
+    WildcardTask { recipe: String, task: String },
+
+    /// All tasks for recipe in any layer (*:busybox:*)
+    WildcardRecipeAllTasks { recipe: String },
 }
 
 impl TargetPattern {
@@ -137,6 +168,9 @@ impl TargetPattern {
                 layer: l,
                 recipe: r,
             } => l == layer && r == recipe,
+            TargetPattern::WildcardRecipe { recipe: r } => r == recipe,
+            TargetPattern::WildcardTask { recipe: r, .. } => r == recipe,
+            TargetPattern::WildcardRecipeAllTasks { recipe: r } => r == recipe,
         }
     }
 
@@ -158,6 +192,9 @@ impl TargetPattern {
                 layer: l,
                 recipe: r,
             } => l == layer && r == recipe,
+            TargetPattern::WildcardRecipe { recipe: r } => r == recipe,
+            TargetPattern::WildcardTask { recipe: r, task: t } => r == recipe && t == task,
+            TargetPattern::WildcardRecipeAllTasks { recipe: r } => r == recipe,
         }
     }
 }
@@ -176,6 +213,9 @@ impl fmt::Display for TargetPattern {
             TargetPattern::RecipeAllTasks { layer, recipe } => {
                 write!(f, "{}:{}:*", layer, recipe)
             }
+            TargetPattern::WildcardRecipe { recipe } => write!(f, "*:{}", recipe),
+            TargetPattern::WildcardTask { recipe, task } => write!(f, "*:{}:{}", recipe, task),
+            TargetPattern::WildcardRecipeAllTasks { recipe } => write!(f, "*:{}:*", recipe),
         }
     }
 }
@@ -193,28 +233,46 @@ impl std::str::FromStr for TargetPattern {
         match parts.len() {
             1 => Err(format!("Invalid target pattern: {}", s)),
             2 => {
-                let layer = parts[0].to_string();
+                let layer = parts[0];
                 let recipe_or_wildcard = parts[1];
 
-                if recipe_or_wildcard == "..." {
-                    Ok(TargetPattern::LayerAll(layer))
+                // Handle wildcard layer
+                if layer == "*" {
+                    Ok(TargetPattern::WildcardRecipe {
+                        recipe: recipe_or_wildcard.to_string(),
+                    })
+                } else if recipe_or_wildcard == "..." {
+                    Ok(TargetPattern::LayerAll(layer.to_string()))
                 } else {
                     Ok(TargetPattern::Recipe {
-                        layer,
+                        layer: layer.to_string(),
                         recipe: recipe_or_wildcard.to_string(),
                     })
                 }
             }
             3 => {
-                let layer = parts[0].to_string();
+                let layer = parts[0];
                 let recipe = parts[1].to_string();
                 let task = parts[2];
 
-                if task == "*" {
-                    Ok(TargetPattern::RecipeAllTasks { layer, recipe })
+                // Handle wildcard layer
+                if layer == "*" {
+                    if task == "*" {
+                        Ok(TargetPattern::WildcardRecipeAllTasks { recipe })
+                    } else {
+                        Ok(TargetPattern::WildcardTask {
+                            recipe,
+                            task: task.to_string(),
+                        })
+                    }
+                } else if task == "*" {
+                    Ok(TargetPattern::RecipeAllTasks {
+                        layer: layer.to_string(),
+                        recipe,
+                    })
                 } else {
                     Ok(TargetPattern::Task {
-                        layer,
+                        layer: layer.to_string(),
                         recipe,
                         task: task.to_string(),
                     })

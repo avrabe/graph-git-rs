@@ -97,6 +97,13 @@ impl<'a> RecipeQueryEngine<'a> {
                 let b_results: HashSet<RecipeTarget> = self.execute_expr(b)?.into_iter().collect();
                 Ok(a_results.difference(&b_results).cloned().collect())
             }
+
+            // Task-specific queries not supported in recipe query
+            QueryExpr::Script(_) => Err("script() is only supported in task queries (use tquery)".to_string()),
+            QueryExpr::Inputs(_) => Err("inputs() is only supported in task queries (use tquery)".to_string()),
+            QueryExpr::Outputs(_) => Err("outputs() is only supported in task queries (use tquery)".to_string()),
+            QueryExpr::Env(_) => Err("env() is only supported in task queries (use tquery)".to_string()),
+            QueryExpr::CriticalPath(_) => Err("critical-path() is only supported in task queries (use tquery)".to_string()),
         }
     }
 
