@@ -54,14 +54,17 @@ bb_debug() {
 # Helper: Create directory if it doesn't exist
 bbdirs() {
     for dir in "$@"; do
-        # Skip if it already exists (as directory or symlink)
-        if [ ! -e "$dir" ]; then
+        # Skip if it already exists as a symlink (even if broken) or as a directory
+        if [ -L "$dir" ] || [ -d "$dir" ]; then
+            # Already exists as symlink or directory, skip
+            continue
+        elif [ -e "$dir" ]; then
+            # Exists but is neither symlink nor directory - this is an error
+            bb_fatal "bbdirs: $dir exists but is not a directory or symlink"
+        else
+            # Doesn't exist, create it
             mkdir -p "$dir"
-        elif [ ! -d "$dir" ]; then
-            # Exists but not a directory - this is an error
-            bb_fatal "bbdirs: $dir exists but is not a directory"
         fi
-        # If it exists and is a directory (or symlink to directory), do nothing
     done
 }
 

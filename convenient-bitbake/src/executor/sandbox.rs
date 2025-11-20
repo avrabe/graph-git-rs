@@ -94,8 +94,9 @@ impl Sandbox {
         for (host_path, sandbox_path) in &spec.ro_inputs {
             let dest = root.join(sandbox_path.strip_prefix("/").unwrap_or(sandbox_path));
 
-            // Skip if dest already exists (from previous run or another source)
-            if dest.exists() {
+            // Skip if dest already exists (including broken symlinks)
+            // Use symlink_metadata instead of exists() to catch broken symlinks
+            if dest.symlink_metadata().is_ok() {
                 debug!("Skipping ro_input {}: destination already exists", dest.display());
                 continue;
             }
