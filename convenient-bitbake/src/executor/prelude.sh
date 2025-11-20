@@ -494,6 +494,61 @@ EOF
     chmod +x "$wrapper_path"
 }
 
+#
+# merge_config.sh: Merge kernel config fragments (stub for kern-tools)
+#
+merge_config.sh() {
+    bb_note "merge_config.sh: $*"
+
+    # Parse arguments
+    local merge_mode=""
+    local output_file=".config"
+    local inputs=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -m)
+                merge_mode="merge"
+                shift
+                ;;
+            -O)
+                output_file="$2"
+                shift 2
+                ;;
+            *)
+                inputs+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # If we have input configs, merge them
+    if [ ${#inputs[@]} -gt 0 ]; then
+        bb_note "Merging ${#inputs[@]} config fragments into ${output_file}"
+
+        # Simple implementation: concatenate config fragments
+        for cfg in "${inputs[@]}"; do
+            if [ -f "$cfg" ]; then
+                bb_note "  Merging: $cfg"
+                cat "$cfg" >> "${output_file}"
+            else
+                bb_warn "Config fragment not found: $cfg"
+            fi
+        done
+    fi
+
+    return 0
+}
+
+#
+# src_patches: Return list of patches from SRC_URI (stub)
+#
+src_patches() {
+    # This would normally parse SRC_URI and return patches
+    # For now, return empty
+    return 0
+}
+
 # Ensure output directory exists
 bbdirs "${D}"
 
