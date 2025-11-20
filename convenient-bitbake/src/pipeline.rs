@@ -368,8 +368,8 @@ impl Pipeline {
         if total_tasks > main_task_count || total_helpers > main_helper_count {
             info!("Recipe {:?}: {} tasks total ({} from main, {} from includes), {} helpers total ({} from main, {} from includes)",
                   recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")),
-                  total_tasks, main_task_count, total_tasks - main_task_count,
-                  total_helpers, main_helper_count, total_helpers - main_helper_count);
+                  total_tasks, main_task_count, total_tasks.saturating_sub(main_task_count),
+                  total_helpers, main_helper_count, total_helpers.saturating_sub(main_helper_count));
         }
 
         (all_tasks, all_helpers)
