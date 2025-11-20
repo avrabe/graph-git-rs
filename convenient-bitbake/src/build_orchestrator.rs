@@ -349,10 +349,13 @@ impl BuildOrchestrator {
 
             // Also include all other task functions from this recipe as potential helpers
             // (e.g., do_prepare_config can be called by do_configure)
+            // Only include shell functions for shell tasks (don't mix Python and shell)
             if let Some(recipe_tasks) = task_implementations.get(&task.recipe_name) {
                 for (task_fn_name, task_fn_impl) in recipe_tasks {
                     // Don't include the current task itself
-                    if task_fn_name != &task.task_name {
+                    // Don't include Python functions in shell scripts
+                    if task_fn_name != &task.task_name
+                        && task_fn_impl.impl_type == crate::task_extractor::TaskImplementationType::Shell {
                         all_helpers.insert(format!("do_{}", task_fn_name), task_fn_impl.clone());
                     }
                 }

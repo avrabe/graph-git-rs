@@ -1,0 +1,17 @@
+header:
+  version: 11
+
+machine: qemuarm64
+distro: poky
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    refspec: kirkstone
+    path: build-qemuarm64/repos/poky
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+
+target: busybox
