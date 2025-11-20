@@ -10,6 +10,7 @@ use super::types::{SandboxSpec, ExecutionError, ExecutionResult};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::debug;
 
 /// Manages sandbox creation and execution
 pub struct SandboxManager {
@@ -92,6 +93,13 @@ impl Sandbox {
         // Mount (symlink/copy) read-only inputs
         for (host_path, sandbox_path) in &spec.ro_inputs {
             let dest = root.join(sandbox_path.strip_prefix("/").unwrap_or(sandbox_path));
+
+            // Skip if dest already exists (from previous run or another source)
+            if dest.exists() {
+                debug!("Skipping ro_input {}: destination already exists", dest.display());
+                continue;
+            }
+
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
             }
