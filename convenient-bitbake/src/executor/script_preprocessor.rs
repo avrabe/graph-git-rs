@@ -9,7 +9,7 @@
 
 use regex::Regex;
 use std::collections::HashMap;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::python_executor::PythonExecutor;
 use crate::simple_python_eval::SimplePythonEvaluator;

@@ -32,8 +32,7 @@
 //! - Implement host functions for CAS access
 
 use super::external::{
-    ExecutorCapabilities, ExecutorError, ExecutorMessage, ExecutorResponse, ExecutorResult,
-    ExecutorStatus, ExternalExecutor,
+    ExecutorCapabilities, ExecutorError, ExecutorMessage, ExecutorResponse, ExecutorResult, ExternalExecutor,
 };
 use std::path::PathBuf;
 use tokio::sync::mpsc;

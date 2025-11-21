@@ -9,7 +9,7 @@
 //!
 //! This ensures that changes propagate correctly through the dependency graph.
 
-use crate::{ContentHash, TaskGraph, TaskImplementation};
+use crate::{TaskGraph, TaskImplementation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

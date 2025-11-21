@@ -1,7 +1,7 @@
 // ! Task scheduler with priority queue and critical path analysis
 
 use crate::recipe_graph::{RecipeGraph, RecipeId, TaskId};
-use std::collections::{HashMap, HashSet, VecDeque, BinaryHeap};
+use std::collections::{HashMap, HashSet, BinaryHeap};
 use std::cmp::Ordering;
 
 /// Task priority for scheduling
@@ -102,7 +102,7 @@ impl TaskScheduler {
 
         // Compute critical path lengths using topological sort + dynamic programming
         let mut critical_lengths: HashMap<TaskId, u32> = HashMap::new();
-        let mut visited: HashSet<TaskId> = HashSet::new();
+        let visited: HashSet<TaskId> = HashSet::new();
 
         // Process tasks in reverse topological order (leaves first)
         let sorted_tasks = self.topological_sort(&task_deps);

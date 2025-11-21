@@ -10,7 +10,7 @@
 //! Each stage computes content hashes to enable incremental builds.
 
 use crate::{
-    BuildContext, ContentHash, ExtractionConfig, RecipeExtractor, RecipeGraph,
+    BuildContext, RecipeExtractor, RecipeGraph,
     TaskExtractor, TaskImplementation,
 };
 use serde::{Deserialize, Serialize};
@@ -313,7 +313,7 @@ impl Pipeline {
         recipe_path: &Path,
         task_extractor: &TaskExtractor,
     ) -> (HashMap<String, TaskImplementation>, HashMap<String, TaskImplementation>) {
-        use crate::task_extractor::RecipeImplementations;
+        
 
         // Extract tasks and helpers from main recipe
         let main_impls = task_extractor.extract_all_from_content(content);

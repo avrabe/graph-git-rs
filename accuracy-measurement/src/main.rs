@@ -6,7 +6,7 @@ use colored::Colorize;
 use convenient_bitbake::{ExtractionConfig, RecipeExtractor, RecipeGraph};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -149,10 +149,7 @@ fn measure_recipes(recipes: &[PathBuf], phase10_enabled: bool) -> AccuracyReport
     config.use_simple_python_eval = true;
 
     // Enable RustPython for complex Python patterns (Phase 11)
-    #[cfg(feature = "python-execution")]
-    {
-        config.use_python_executor = phase10_enabled;
-    }
+    config.use_python_executor = phase10_enabled;
 
     // Set up default variables for Python block evaluation
     config.default_variables.insert("DISTRO_FEATURES".to_string(), "systemd pam usrmerge".to_string());

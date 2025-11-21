@@ -25,9 +25,8 @@
 //! - ⚠️  No real security - for development only
 
 use super::types::{ExecutionError, ExecutionResult, SandboxSpec};
-use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 

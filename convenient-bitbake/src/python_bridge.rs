@@ -18,7 +18,7 @@
 //! - `bb.utils` - Utility functions (in python_executor.rs)
 
 use rustpython::vm::{
-    builtins::{PyListRef, PyStrRef},
+    builtins::PyListRef,
     pyclass, pymodule, PyObjectRef, PyPayload, PyResult, VirtualMachine,
 };
 use std::path::PathBuf;

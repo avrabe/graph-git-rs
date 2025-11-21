@@ -11,7 +11,6 @@
 
 use super::types::ExecutionMode;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// Action that can be executed directly without bash
 #[derive(Debug, Clone, PartialEq)]

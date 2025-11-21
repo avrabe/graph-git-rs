@@ -3,9 +3,9 @@
 //! Handles downloading and unpacking sources from SRC_URI
 
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 #[derive(Debug)]
 pub enum FetchError {

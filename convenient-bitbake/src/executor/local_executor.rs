@@ -4,12 +4,11 @@
 //! channel-based communication. It runs in-process but uses the same message protocol
 //! as the future WASM component executor, making it easy to swap implementations.
 
-use super::executor::{ExecutionStats, TaskExecutor};
+use super::executor::TaskExecutor;
 use super::external::{
     ExecutorCapabilities, ExecutorError, ExecutorMessage, ExecutorResponse, ExecutorResult,
     ExecutorStatus, ExternalExecutor,
 };
-use super::types::{TaskOutput, TaskSpec};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
