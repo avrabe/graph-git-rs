@@ -439,14 +439,16 @@ fn extract_include(node: &SyntaxNode, recipe: &mut BitbakeRecipe, required: bool
     // Include ERROR_TOKEN as they might be valid path characters like '-' or '.'
     let mut path = String::new();
     let mut found_keyword = false;
+    let mut skipped_first_keyword = false;
 
     for elem in node.descendants_with_tokens() {
         if let Some(token) = elem.as_token() {
             let text = token.text();
 
-            // Skip the include/require keyword itself
-            if text == "include" || text == "require" {
+            // Skip only the FIRST include/require keyword
+            if !skipped_first_keyword && (text == "include" || text == "require") {
                 found_keyword = true;
+                skipped_first_keyword = true;
                 continue;
             }
 
@@ -457,6 +459,7 @@ fn extract_include(node: &SyntaxNode, recipe: &mut BitbakeRecipe, required: bool
 
             // After the keyword, collect everything else as the path
             // This includes IDENT, VAR_EXPANSION, STRING, and even ERROR_TOKEN (which might be '-' or '.')
+            // Now "include" in the path (like conf/machine/include/arm) won't be skipped
             if found_keyword {
                 let trimmed = text.trim_matches('"').trim_matches('\'');
                 path.push_str(trimmed);
