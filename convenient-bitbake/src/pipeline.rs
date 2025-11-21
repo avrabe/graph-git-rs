@@ -220,50 +220,71 @@ impl Pipeline {
         &self,
         recipes: Vec<RecipeFile>,
     ) -> Result<(Vec<ParsedRecipe>, StageHash), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Stage 2: Parsing {} recipes in parallel", recipes.len());
+        info!("Stage 2: Parsing {} recipes in parallel (max {} concurrent)",
+              recipes.len(), self.config.max_io_parallelism);
 
         let task_extractor = Arc::new(TaskExtractor::new());
 
-        // Process recipes in batches to limit parallelism
-        let chunk_size = self.config.max_io_parallelism;
-        let mut all_parsed = Vec::new();
+        // Use futures stream with buffer_unordered for true parallel processing
+        // This allows tasks to complete independently without batch blocking
+        use futures::stream::{self, StreamExt};
 
-        for chunk in recipes.chunks(chunk_size) {
-            let mut tasks = Vec::new();
+        let max_concurrent = self.config.max_io_parallelism;
 
-            for recipe_file in chunk {
-                let recipe_file = recipe_file.clone();
+        let total_recipes = recipes.len();
+        let progress_counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let last_report = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+
+        let all_parsed: Vec<ParsedRecipe> = stream::iter(recipes)
+            .map(|recipe_file| {
                 let task_extractor = Arc::clone(&task_extractor);
-
-                let task = tokio::spawn(async move {
+                async move {
                     Self::parse_single_recipe(recipe_file, task_extractor).await
-                });
-
-                tasks.push(task);
-            }
-
-            // Wait for this batch
-            for task in tasks {
-                if let Ok(Ok(Some(parsed))) = task.await {
-                    all_parsed.push(parsed);
                 }
-            }
-        }
+            })
+            .buffer_unordered(max_concurrent)  // Process up to N recipes concurrently
+            .filter_map(|result| async move {
+                match result {
+                    Ok(Some(parsed)) => Some(parsed),
+                    Ok(None) => None,
+                    Err(e) => {
+                        debug!("Failed to parse recipe: {}", e);
+                        None
+                    }
+                }
+            })
+            .inspect({
+                let progress_counter = Arc::clone(&progress_counter);
+                let last_report = Arc::clone(&last_report);
+                move |_| {
+                    let count = progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    // Report progress every 100 recipes or every 2 seconds
+                    let mut last = last_report.lock().unwrap();
+                    if count % 100 == 0 || last.elapsed().as_secs() >= 2 {
+                        let pct = (count as f64 / total_recipes as f64) * 100.0;
+                        info!("  Progress: {}/{} recipes parsed ({:.1}%)", count, total_recipes, pct);
+                        *last = std::time::Instant::now();
+                    }
+                }
+            })
+            .collect()
+            .await;
 
         // Sort for deterministic hashing
-        all_parsed.sort_by(|a, b| a.file.path.cmp(&b.file.path));
+        let mut sorted_parsed = all_parsed;
+        sorted_parsed.sort_by(|a, b| a.file.path.cmp(&b.file.path));
 
         // Compute stage hash
         let mut hash_input = String::new();
-        for parsed in &all_parsed {
+        for parsed in &sorted_parsed {
             hash_input.push_str(&format!("{}:{}\n", parsed.file.path.display(), parsed.hash));
         }
         let stage_hash = StageHash::from_string("parse", &hash_input);
 
-        info!("  Parsed {} recipes successfully", all_parsed.len());
+        info!("  ✓ Parsed {} recipes successfully", sorted_parsed.len());
         debug!("  Stage hash: {}", stage_hash.hash);
 
-        Ok((all_parsed, stage_hash))
+        Ok((sorted_parsed, stage_hash))
     }
 
     /// Parse a single recipe file
