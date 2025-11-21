@@ -666,14 +666,18 @@ pub fn determine_execution_mode(script: &str) -> ExecutionMode {
         return ExecutionMode::Python;
     }
 
-    // Analyze for DirectRust capability
-    let analysis = analyze_script(script);
+    // TEMPORARY: Force Shell mode for all non-Python scripts
+    // DirectRust is not yet fully implemented, so we need to use Shell mode
+    // to ensure tasks actually execute properly (especially unpack, configure, etc.)
+    ExecutionMode::Shell
 
-    if analysis.is_simple {
-        ExecutionMode::DirectRust
-    } else {
-        ExecutionMode::Shell
-    }
+    // TODO: Re-enable DirectRust optimization once it's fully implemented
+    // let analysis = analyze_script(script);
+    // if analysis.is_simple {
+    //     ExecutionMode::DirectRust
+    // } else {
+    //     ExecutionMode::Shell
+    // }
 }
 
 #[cfg(test)]
