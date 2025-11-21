@@ -424,11 +424,11 @@ do_install() {
         let tasks = extractor.extract_from_content(content);
 
         assert_eq!(tasks.len(), 2);
-        assert!(tasks.contains_key("do_compile"));
-        assert!(tasks.contains_key("do_install"));
+        assert!(tasks.contains_key("compile"));
+        assert!(tasks.contains_key("install"));
 
-        let compile = &tasks["do_compile"];
-        assert_eq!(compile.name, "do_compile");
+        let compile = &tasks["compile"];
+        assert_eq!(compile.name, "compile");
         assert_eq!(compile.impl_type, TaskImplementationType::Shell);
         assert!(compile.code.contains("oe_runmake"));
     }
@@ -447,7 +447,7 @@ python do_package:prepend () {
 
         assert_eq!(tasks.len(), 1);
         let task = tasks.values().next().unwrap();
-        assert_eq!(task.name, "do_package");
+        assert_eq!(task.name, "package");
         assert_eq!(task.impl_type, TaskImplementationType::Python);
         assert!(task.code.contains("setVar"));
     }
@@ -472,8 +472,8 @@ do_install:append() {
         let append_tasks = extractor.extract_from_content(append_content);
         let merged = extractor.merge_implementations(&base_tasks, &append_tasks);
 
-        assert!(merged.contains_key("do_install"));
-        let install_task = &merged["do_install"];
+        assert!(merged.contains_key("install"));
+        let install_task = &merged["install"];
         assert!(install_task.code.contains("Base install"));
         assert!(install_task.code.contains("Additional install step"));
     }

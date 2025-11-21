@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Simulate crash and recovery by creating new CAS instance
     drop(cas);
-    let cas_recovered = ContentAddressableStore::new(tmp1.path())?;
+    let mut cas_recovered = ContentAddressableStore::new(tmp1.path())?;
     let recovered_content = cas_recovered.get(&hash)?;
     assert_eq!(recovered_content, content);
     println!("✓ Content survived simulated crash (fsync worked)");
