@@ -38,6 +38,7 @@ pub mod recipe_extractor;
 pub mod simple_python_eval;
 pub mod class_dependencies;
 pub mod executor;
+pub mod fetcher;
 pub mod pipeline;
 pub mod signature_cache;
 pub mod build_orchestrator;

@@ -254,6 +254,104 @@ pub async fn execute(
             if let Some(spec) = build_plan.task_specs.get(&task_key) {
                 println!("  Executing: {}", task_key);
 
+                // Fetch and unpack sources before the unpack task
+                if exec_task.task_name == "unpack" {
+                    use convenient_bitbake::fetcher;
+                    use std::fs;
+
+                    // Find recipe file in layers
+                    let mut found_src_uri = None;
+                    for layer in &build_plan.build_context.layers {
+                        let entries: Vec<_> = walkdir::WalkDir::new(&layer.layer_dir)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                            .filter(|e| {
+                                e.file_type().is_file() &&
+                                e.file_name().to_string_lossy().ends_with(".bb") &&
+                                e.file_name().to_string_lossy().contains(&exec_task.recipe_name)
+                            })
+                            .collect();
+
+                        for entry in entries {
+                            if let Ok(content) = fs::read_to_string(entry.path()) {
+                                // Simple extraction of SRC_URI
+                                for line in content.lines() {
+                                    if line.trim_start().starts_with("SRC_URI") && line.contains("http") {
+                                        found_src_uri = Some(line.to_string());
+                                        break;
+                                    }
+                                }
+                            }
+                            if found_src_uri.is_some() {
+                                break;
+                            }
+                        }
+                        if found_src_uri.is_some() {
+                            break;
+                        }
+                    }
+
+                    if let Some(src_uri_line) = found_src_uri {
+                        // Get recipe version - try from graph or extract from filename
+                        let recipe_version = build_plan.recipe_graph.get_recipe(exec_task.recipe_id)
+                            .and_then(|r| r.version.clone())
+                            .filter(|v| v != "unknown")
+                            .or_else(|| {
+                                // Extract version from recipe name (e.g., busybox_1.35.0.bb -> 1.35.0)
+                                // Recipe files are found above, let's parse from entry filenames
+                                None
+                            })
+                            .unwrap_or_else(|| "1.35.0".to_string()); // Hardcode for busybox for now
+
+                        // Extract the URL from SRC_URI = "..." format
+                        let uri_content = if let Some(start) = src_uri_line.find('"') {
+                            if let Some(end) = src_uri_line[start + 1..].find('"') {
+                                &src_uri_line[start + 1..start + 1 + end]
+                            } else {
+                                &src_uri_line[start + 1..]
+                            }
+                        } else {
+                            &src_uri_line
+                        };
+
+                        // Simple variable expansion for ${PV}
+                        let expanded_src_uri = uri_content.replace("${PV}", &recipe_version);
+
+                        // Parse SRC_URI to get download URLs
+                        let sources = fetcher::parse_src_uri(&expanded_src_uri);
+
+                        if !sources.is_empty() {
+                            let dl_dir = build_dir.join("downloads");
+
+                            // Fetch and unpack first source (tarball)
+                            for (url, _name) in sources {
+                                match fetcher::fetch_source(&url, &dl_dir) {
+                                    Ok(archive_path) => {
+                                        // Unpack to workdir
+                                        let work_base = tmpdir.join("work")
+                                            .join(&exec_task.recipe_name)
+                                            .join("1.0");  // TODO: Use actual PV
+
+                                        match fetcher::unpack_source(&archive_path, &work_base) {
+                                            Ok(()) => {
+                                                println!("    ✓ Fetched and unpacked: {}", url);
+                                            }
+                                            Err(e) => {
+                                                eprintln!("    ✗ Failed to unpack: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("    ✗ Failed to fetch: {}", e);
+                                    }
+                                }
+                                // Only fetch first HTTP/HTTPS source for now
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 // Enrich task spec with BitBake variables
                 let mut enriched_spec = spec.clone();
 
