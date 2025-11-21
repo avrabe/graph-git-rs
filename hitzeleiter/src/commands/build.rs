@@ -12,7 +12,7 @@ use convenient_bitbake::{
     TaskGraphBuilder,
 };
 use convenient_bitbake::executor::{
-    TaskExecutor, CacheManager,
+    TaskExecutor, CacheManager, TaskMonitor,
 };
 
 use std::collections::HashMap;
@@ -186,6 +186,19 @@ pub async fn execute(
     let cache_dir = build_dir.join("hitzeleiter-cache");
     let mut executor = TaskExecutor::new(&cache_dir)?;
 
+    // Create task monitor for nice UI
+    let monitor = TaskMonitor::new();
+
+    // Register all tasks in the monitor
+    for task in exec_graph.tasks.values() {
+        let task_key = format!("{}:{}", task.recipe_name, task.task_name);
+        monitor.register_task(
+            task_key.clone(),
+            task.recipe_name.clone(),
+            task.task_name.clone(),
+        );
+    }
+
     let mut completed = 0;
     let mut from_cache = 0;
     let mut failed = 0;
@@ -199,7 +212,9 @@ pub async fn execute(
             let task_key = format!("{}:{}", exec_task.recipe_name, exec_task.task_name);
 
             if let Some(spec) = build_plan.task_specs.get(&task_key) {
-                println!("  Executing: {}", task_key);
+                // Mark task as started in monitor
+                monitor.task_started(&task_key);
+                println!("  ▶️  {}", task_key);
 
                 // Fetch and unpack sources before the unpack task
                 if exec_task.task_name == "unpack" {
@@ -352,18 +367,34 @@ pub async fn execute(
                 match executor.execute_task(enriched_spec) {
                     Ok(output) => {
                         if output.exit_code == 0 {
-                            completed += 1;
-                            // Check cache hit via executor stats
+                            // Check if from cache
                             let current_stats = executor.stats();
-                            if current_stats.cache_hits > from_cache {
+                            let cached = current_stats.cache_hits > from_cache;
+                            if cached {
                                 from_cache = current_stats.cache_hits;
-                                println!("    ✓ Completed (from cache)");
-                            } else {
-                                println!("    ✓ Completed ({:.2}s)", output.duration_ms as f64 / 1000.0);
                             }
+
+                            // Mark task as completed in monitor
+                            monitor.task_completed(&task_key, &output, cached);
+
+                            if cached {
+                                println!("      ✅ Completed (from cache 💾)");
+                            } else {
+                                println!("      ✅ Completed ({:.2}s)", output.duration_ms as f64 / 1000.0);
+                            }
+
+                            completed += 1;
+
+                            // Show progress
+                            let total_tasks = exec_graph.tasks.len();
+                            let progress_pct = (completed as f64 / total_tasks as f64) * 100.0;
+                            println!("      📊 Progress: {}/{} ({:.1}%)", completed, total_tasks, progress_pct);
                         } else {
-                            failed += 1;
-                            println!("    ✗ Failed (exit code: {})", output.exit_code);
+                            // Mark task as failed in monitor
+                            let error_msg = format!("Exit code: {}", output.exit_code);
+                            monitor.task_failed(&task_key, &error_msg);
+
+                            println!("      ❌ Failed (exit code: {})", output.exit_code);
 
                             if !output.stderr.is_empty() {
                                 let preview = if output.stderr.len() > 500 {
@@ -375,12 +406,17 @@ pub async fn execute(
                                     println!("      {}", line);
                                 }
                             }
+
+                            failed += 1;
                             break;
                         }
                     }
                     Err(e) => {
+                        // Mark task as failed in monitor
+                        monitor.task_failed(&task_key, &e.to_string());
+
+                        println!("      ❌ Error: {}", e);
                         failed += 1;
-                        println!("    ✗ Error: {}", e);
                         break;
                     }
                 }
@@ -392,15 +428,17 @@ pub async fn execute(
 
     println!();
 
-    // ========== Display Build Statistics ==========
-    let exec_stats = executor.stats();
+    // ========== Display Build Statistics with TaskMonitor ==========
+    println!("{}", monitor.get_stats());
 
-    println!("📊 Build Statistics:");
-    println!("  Tasks completed:  {}", completed);
-    println!("  From cache:       {}", from_cache);
-    println!("  Failed:           {}", failed);
+    // Also show executor cache stats
+    let exec_stats = executor.stats();
+    println!("🔧 Executor Statistics:");
+    println!("  Tasks executed:   {}", exec_stats.tasks_executed);
+    println!("  Cache hits:       {}", exec_stats.cache_hits);
+    println!("  Cache misses:     {}", exec_stats.cache_misses);
     if exec_stats.tasks_executed > 0 {
-        println!("  Cache hit rate:   {:.1}%", exec_stats.cache_hit_rate() * 100.0);
+        println!("  Executor hit rate: {:.1}%", exec_stats.cache_hit_rate() * 100.0);
     }
     println!();
 
