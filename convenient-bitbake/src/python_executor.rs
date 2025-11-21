@@ -625,22 +625,35 @@ impl PythonExecutor {
         // Add 'd' as a global
         scope.globals.set_item("d", d_obj.clone(), vm)?;
 
-        // Import native bb.utils module and make functions available in global scope
-        let bb_utils_code = r#"
-# Import the native bb.utils module
-try:
-    import bb.utils
-    # Make bb.utils functions available in global scope for direct access
-    meson_array = bb.utils.meson_array
-    meson_cpu_family = bb.utils.meson_cpu_family
-    meson_operating_system = bb.utils.meson_operating_system
-    meson_endian = bb.utils.meson_endian
-    rust_tool = bb.utils.rust_tool
-    use_updatercd = bb.utils.use_updatercd
-except Exception as e:
-    print(f"ERROR importing bb.utils: {type(e).__name__}: {e}")
-    raise
+        // Register helper functions directly in global scope (avoiding module import issues)
+        // Get the bb_utils module and extract its functions
+        let bb_utils_module = bb_utils::make_module(vm);
 
+        // Register each function directly in global scope
+        if let Ok(meson_array_fn) = bb_utils_module.get_attr("meson_array", vm) {
+            scope.globals.set_item("meson_array", meson_array_fn, vm)?;
+        }
+        if let Ok(meson_cpu_family_fn) = bb_utils_module.get_attr("meson_cpu_family", vm) {
+            scope.globals.set_item("meson_cpu_family", meson_cpu_family_fn, vm)?;
+        }
+        if let Ok(meson_operating_system_fn) = bb_utils_module.get_attr("meson_operating_system", vm) {
+            scope.globals.set_item("meson_operating_system", meson_operating_system_fn, vm)?;
+        }
+        if let Ok(meson_endian_fn) = bb_utils_module.get_attr("meson_endian", vm) {
+            scope.globals.set_item("meson_endian", meson_endian_fn, vm)?;
+        }
+        if let Ok(rust_tool_fn) = bb_utils_module.get_attr("rust_tool", vm) {
+            scope.globals.set_item("rust_tool", rust_tool_fn, vm)?;
+        }
+        if let Ok(use_updatercd_fn) = bb_utils_module.get_attr("use_updatercd", vm) {
+            scope.globals.set_item("use_updatercd", use_updatercd_fn, vm)?;
+        }
+        if let Ok(contains_fn) = bb_utils_module.get_attr("contains", vm) {
+            scope.globals.set_item("bb_utils_contains", contains_fn, vm)?;
+        }
+
+        // Add helper functions and bb namespace via Python code
+        let bb_utils_code = r#"
 # Helper function used by os-release recipe
 def sanitise_value(value):
     """Sanitise value for unquoted OS release fields"""
@@ -648,21 +661,16 @@ def sanitise_value(value):
     value = value.replace('"', '').replace("'", '').replace('`', '')
     return value.strip()
 
-# Create bb namespace object (since we don't register top-level bb module)
-# This allows code like: bb.utils.contains()
-import sys
+# Create bb namespace object for bb.utils.contains() style calls
+class _BBUtils:
+    contains = bb_utils_contains  # Reference to the native contains function
+
 class _BB:
-    pass
+    utils = _BBUtils()
+
 bb = _BB()
-bb.utils = sys.modules['bb.utils']  # Reference to the bb.utils module
 "#;
-        match vm.run_block_expr(scope.clone(), bb_utils_code) {
-            Ok(_) => {},
-            Err(e) => {
-                warn!("Failed to setup bb.utils: {:?}", e);
-                return Err(e);
-            }
-        }
+        vm.run_block_expr(scope.clone(), bb_utils_code)?;
 
         // Compile the expression in Eval mode
         let code_obj = match vm.compile(
@@ -739,22 +747,35 @@ bb.utils = sys.modules['bb.utils']  # Reference to the bb.utils module
         // Add 'd' as a global
         scope.globals.set_item("d", d_obj.clone(), vm)?;
 
-        // Import native bb.utils module and make functions available in global scope
-        let bb_utils_code = r#"
-# Import the native bb.utils module
-try:
-    import bb.utils
-    # Make bb.utils functions available in global scope for direct access
-    meson_array = bb.utils.meson_array
-    meson_cpu_family = bb.utils.meson_cpu_family
-    meson_operating_system = bb.utils.meson_operating_system
-    meson_endian = bb.utils.meson_endian
-    rust_tool = bb.utils.rust_tool
-    use_updatercd = bb.utils.use_updatercd
-except Exception as e:
-    print(f"ERROR importing bb.utils: {type(e).__name__}: {e}")
-    raise
+        // Register helper functions directly in global scope (avoiding module import issues)
+        // Get the bb_utils module and extract its functions
+        let bb_utils_module = bb_utils::make_module(vm);
 
+        // Register each function directly in global scope
+        if let Ok(meson_array_fn) = bb_utils_module.get_attr("meson_array", vm) {
+            scope.globals.set_item("meson_array", meson_array_fn, vm)?;
+        }
+        if let Ok(meson_cpu_family_fn) = bb_utils_module.get_attr("meson_cpu_family", vm) {
+            scope.globals.set_item("meson_cpu_family", meson_cpu_family_fn, vm)?;
+        }
+        if let Ok(meson_operating_system_fn) = bb_utils_module.get_attr("meson_operating_system", vm) {
+            scope.globals.set_item("meson_operating_system", meson_operating_system_fn, vm)?;
+        }
+        if let Ok(meson_endian_fn) = bb_utils_module.get_attr("meson_endian", vm) {
+            scope.globals.set_item("meson_endian", meson_endian_fn, vm)?;
+        }
+        if let Ok(rust_tool_fn) = bb_utils_module.get_attr("rust_tool", vm) {
+            scope.globals.set_item("rust_tool", rust_tool_fn, vm)?;
+        }
+        if let Ok(use_updatercd_fn) = bb_utils_module.get_attr("use_updatercd", vm) {
+            scope.globals.set_item("use_updatercd", use_updatercd_fn, vm)?;
+        }
+        if let Ok(contains_fn) = bb_utils_module.get_attr("contains", vm) {
+            scope.globals.set_item("bb_utils_contains", contains_fn, vm)?;
+        }
+
+        // Add helper functions and bb namespace via Python code
+        let bb_utils_code = r#"
 # Helper function used by os-release recipe
 def sanitise_value(value):
     """Sanitise value for unquoted OS release fields"""
@@ -762,21 +783,16 @@ def sanitise_value(value):
     value = value.replace('"', '').replace("'", '').replace('`', '')
     return value.strip()
 
-# Create bb namespace object (since we don't register top-level bb module)
-# This allows code like: bb.utils.contains()
-import sys
+# Create bb namespace object for bb.utils.contains() style calls
+class _BBUtils:
+    contains = bb_utils_contains  # Reference to the native contains function
+
 class _BB:
-    pass
+    utils = _BBUtils()
+
 bb = _BB()
-bb.utils = sys.modules['bb.utils']  # Reference to the bb.utils module
 "#;
-        match vm.run_block_expr(scope.clone(), bb_utils_code) {
-            Ok(_) => {},
-            Err(e) => {
-                warn!("Failed to setup bb.utils: {:?}", e);
-                return Err(e);
-            }
-        }
+        vm.run_block_expr(scope.clone(), bb_utils_code)?;
 
         // Dedent the Python code to remove common leading whitespace
         let dedented_code = Self::dedent(python_code);
