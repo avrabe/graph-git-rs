@@ -102,7 +102,7 @@ impl SimpleResolver {
 
     /// Get a variable value (unexpanded)
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.variables.get(name).map(|s| s.as_str())
+        self.variables.get(name).map(std::string::String::as_str)
     }
 
     /// Resolve a string by expanding all ${VAR} references
@@ -162,7 +162,7 @@ impl SimpleResolver {
         // Split on whitespace, handling line continuations
         resolved
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect()
     }
 

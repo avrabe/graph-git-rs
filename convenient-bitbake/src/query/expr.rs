@@ -78,40 +78,40 @@ pub enum QueryExpr {
 impl fmt::Display for QueryExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QueryExpr::Target(pattern) => write!(f, "{}", pattern),
+            QueryExpr::Target(pattern) => write!(f, "{pattern}"),
             QueryExpr::Deps { expr, max_depth } => {
                 if let Some(depth) = max_depth {
-                    write!(f, "deps({}, {})", expr, depth)
+                    write!(f, "deps({expr}, {depth})")
                 } else {
-                    write!(f, "deps({})", expr)
+                    write!(f, "deps({expr})")
                 }
             }
             QueryExpr::ReverseDeps { universe, target } => {
-                write!(f, "rdeps({}, {})", universe, target)
+                write!(f, "rdeps({universe}, {target})")
             }
             QueryExpr::SomePath { from, to } => {
-                write!(f, "somepath({}, {})", from, to)
+                write!(f, "somepath({from}, {to})")
             }
             QueryExpr::AllPaths { from, to } => {
-                write!(f, "allpaths({}, {})", from, to)
+                write!(f, "allpaths({from}, {to})")
             }
             QueryExpr::Kind { pattern, expr } => {
-                write!(f, "kind('{}', {})", pattern, expr)
+                write!(f, "kind('{pattern}', {expr})")
             }
             QueryExpr::Filter { pattern, expr } => {
-                write!(f, "filter('{}', {})", pattern, expr)
+                write!(f, "filter('{pattern}', {expr})")
             }
             QueryExpr::Attr { name, value, expr } => {
-                write!(f, "attr('{}', '{}', {})", name, value, expr)
+                write!(f, "attr('{name}', '{value}', {expr})")
             }
-            QueryExpr::Intersect(a, b) => write!(f, "{} intersect {}", a, b),
-            QueryExpr::Union(a, b) => write!(f, "{} union {}", a, b),
-            QueryExpr::Except(a, b) => write!(f, "{} except {}", a, b),
-            QueryExpr::Script(expr) => write!(f, "script({})", expr),
-            QueryExpr::Inputs(expr) => write!(f, "inputs({})", expr),
-            QueryExpr::Outputs(expr) => write!(f, "outputs({})", expr),
-            QueryExpr::Env(expr) => write!(f, "env({})", expr),
-            QueryExpr::CriticalPath(expr) => write!(f, "critical-path({})", expr),
+            QueryExpr::Intersect(a, b) => write!(f, "{a} intersect {b}"),
+            QueryExpr::Union(a, b) => write!(f, "{a} union {b}"),
+            QueryExpr::Except(a, b) => write!(f, "{a} except {b}"),
+            QueryExpr::Script(expr) => write!(f, "script({expr})"),
+            QueryExpr::Inputs(expr) => write!(f, "inputs({expr})"),
+            QueryExpr::Outputs(expr) => write!(f, "outputs({expr})"),
+            QueryExpr::Env(expr) => write!(f, "env({expr})"),
+            QueryExpr::CriticalPath(expr) => write!(f, "critical-path({expr})"),
         }
     }
 }
@@ -203,19 +203,19 @@ impl fmt::Display for TargetPattern {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TargetPattern::All => write!(f, "//..."),
-            TargetPattern::LayerAll(layer) => write!(f, "{}:...", layer),
-            TargetPattern::Recipe { layer, recipe } => write!(f, "{}:{}", layer, recipe),
+            TargetPattern::LayerAll(layer) => write!(f, "{layer}:..."),
+            TargetPattern::Recipe { layer, recipe } => write!(f, "{layer}:{recipe}"),
             TargetPattern::Task {
                 layer,
                 recipe,
                 task,
-            } => write!(f, "{}:{}:{}", layer, recipe, task),
+            } => write!(f, "{layer}:{recipe}:{task}"),
             TargetPattern::RecipeAllTasks { layer, recipe } => {
-                write!(f, "{}:{}:*", layer, recipe)
+                write!(f, "{layer}:{recipe}:*")
             }
-            TargetPattern::WildcardRecipe { recipe } => write!(f, "*:{}", recipe),
-            TargetPattern::WildcardTask { recipe, task } => write!(f, "*:{}:{}", recipe, task),
-            TargetPattern::WildcardRecipeAllTasks { recipe } => write!(f, "*:{}:*", recipe),
+            TargetPattern::WildcardRecipe { recipe } => write!(f, "*:{recipe}"),
+            TargetPattern::WildcardTask { recipe, task } => write!(f, "*:{recipe}:{task}"),
+            TargetPattern::WildcardRecipeAllTasks { recipe } => write!(f, "*:{recipe}:*"),
         }
     }
 }
@@ -231,7 +231,7 @@ impl std::str::FromStr for TargetPattern {
         let parts: Vec<&str> = s.split(':').collect();
 
         match parts.len() {
-            1 => Err(format!("Invalid target pattern: {}", s)),
+            1 => Err(format!("Invalid target pattern: {s}")),
             2 => {
                 let layer = parts[0];
                 let recipe_or_wildcard = parts[1];
@@ -278,7 +278,7 @@ impl std::str::FromStr for TargetPattern {
                     })
                 }
             }
-            _ => Err(format!("Invalid target pattern: {}", s)),
+            _ => Err(format!("Invalid target pattern: {s}")),
         }
     }
 }

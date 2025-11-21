@@ -329,7 +329,7 @@ impl Parser {
     // === Helper methods ===
 
     fn current(&self) -> SyntaxKind {
-        self.tokens.get(self.pos).map(|t| t.kind).unwrap_or(SyntaxKind::EOF)
+        self.tokens.get(self.pos).map_or(SyntaxKind::EOF, |t| t.kind)
     }
 
     fn current_token(&self) -> Option<&Token> {
@@ -363,8 +363,7 @@ impl Parser {
 
     fn error(&mut self, message: String) {
         let span = self.current_token()
-            .map(|t| t.span.clone())
-            .unwrap_or(0..0);
+            .map_or(0..0, |t| t.span.clone());
 
         self.errors.push(ParseError { message, span });
     }

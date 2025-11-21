@@ -69,7 +69,7 @@ impl IncludeResolver {
     fn parse_include_file(&mut self, path: &Path) -> Result<BitbakeRecipe, String> {
         // Check for circular includes
         if self.parsing_stack.contains(path) {
-            return Err(format!("Circular include detected: {:?}", path));
+            return Err(format!("Circular include detected: {path:?}"));
         }
 
         // Check cache
@@ -83,7 +83,7 @@ impl IncludeResolver {
         // Parse the file
         debug!("Parsing include file: {:?}", path);
         let mut recipe = BitbakeRecipe::parse_file(path).map_err(|e| {
-            format!("Failed to parse include file {:?}: {}", path, e)
+            format!("Failed to parse include file {path:?}: {e}")
         })?;
 
         // Recursively resolve includes in this file
@@ -117,16 +117,12 @@ impl IncludeResolver {
         debug!("Resolved include path: {}", resolved_path);
 
         // Find the include file
-        let include_path = match self.find_include_file(&resolved_path, base_dir) {
-            Some(path) => path,
-            None => {
-                if include.required {
-                    return Err(format!("Required file not found: {}", resolved_path));
-                } else {
-                    warn!("Include file not found (non-fatal): {}", resolved_path);
-                    return Ok(None);
-                }
+        let include_path = if let Some(path) = self.find_include_file(&resolved_path, base_dir) { path } else {
+            if include.required {
+                return Err(format!("Required file not found: {resolved_path}"));
             }
+            warn!("Include file not found (non-fatal): {}", resolved_path);
+            return Ok(None);
         };
 
         // Parse it (with caching and recursive resolution)

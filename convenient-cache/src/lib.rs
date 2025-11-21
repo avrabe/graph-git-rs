@@ -137,7 +137,7 @@ impl BazelRemoteCache {
     ///
     /// # Arguments
     ///
-    /// * `base_url` - Base URL of the cache server (e.g., "http://localhost:9090")
+    /// * `base_url` - Base URL of the cache server (e.g., "<http://localhost:9090>")
     ///
     /// # Errors
     ///

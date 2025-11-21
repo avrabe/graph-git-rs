@@ -174,11 +174,10 @@ impl<'a> TaskQueryEngine<'a> {
         }
 
         while let Some((task_id, depth)) = queue.pop_front() {
-            if let Some(max) = max_depth {
-                if depth >= max {
+            if let Some(max) = max_depth
+                && depth >= max {
                     continue;
                 }
-            }
 
             if let Some(task) = self.graph.tasks.get(&task_id) {
                 for &dep_id in &task.depends_on {

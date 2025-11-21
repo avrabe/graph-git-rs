@@ -28,7 +28,7 @@ impl std::str::FromStr for OutputFormat {
             "json" => Ok(OutputFormat::Json),
             "graph" => Ok(OutputFormat::Graph),
             "label" => Ok(OutputFormat::Label),
-            _ => Err(format!("Unknown output format: {}", s)),
+            _ => Err(format!("Unknown output format: {s}")),
         }
     }
 }
@@ -70,13 +70,13 @@ fn format_text(targets: &[RecipeTarget], metadata: Option<QueryMetadata>) -> Res
         output.push_str(&format!("# Query: {}\n", meta.query));
         output.push_str(&format!("# Targets: {}\n", meta.target_count));
         if let Some(time) = meta.execution_time_ms {
-            output.push_str(&format!("# Execution time: {}ms\n", time));
+            output.push_str(&format!("# Execution time: {time}ms\n"));
         }
         output.push('\n');
     }
 
     for target in targets {
-        output.push_str(&format!("{}\n", target));
+        output.push_str(&format!("{target}\n"));
     }
 
     Ok(output)
@@ -88,7 +88,7 @@ fn format_json(targets: &[RecipeTarget], metadata: Option<QueryMetadata>) -> Res
         metadata,
     };
 
-    serde_json::to_string_pretty(&result).map_err(|e| format!("JSON serialization error: {}", e))
+    serde_json::to_string_pretty(&result).map_err(|e| format!("JSON serialization error: {e}"))
 }
 
 fn format_graph(targets: &[RecipeTarget]) -> Result<String, String> {
@@ -102,7 +102,7 @@ fn format_graph(targets: &[RecipeTarget]) -> Result<String, String> {
 
     for target in targets {
         let label = format!("{}:{}", target.layer, target.recipe);
-        output.push_str(&format!("  \"{}\";\n", label));
+        output.push_str(&format!("  \"{label}\";\n"));
     }
 
     output.push_str("}\n");
@@ -114,7 +114,7 @@ fn format_label(targets: &[RecipeTarget]) -> Result<String, String> {
     let mut output = String::new();
 
     for target in targets {
-        output.push_str(&format!("{}\n", target));
+        output.push_str(&format!("{target}\n"));
     }
 
     Ok(output)
@@ -134,17 +134,17 @@ pub fn format_graph_with_deps(
     // Add nodes
     for target in targets {
         let label = format!("{}:{}", target.layer, target.recipe);
-        output.push_str(&format!("  \"{}\";\n", label));
+        output.push_str(&format!("  \"{label}\";\n"));
     }
 
-    output.push_str("\n");
+    output.push('\n');
 
     // Add edges
     for (from, to_list) in deps {
         let from_label = format!("{}:{}", from.layer, from.recipe);
         for to in to_list {
             let to_label = format!("{}:{}", to.layer, to.recipe);
-            output.push_str(&format!("  \"{}\" -> \"{}\";\n", from_label, to_label));
+            output.push_str(&format!("  \"{from_label}\" -> \"{to_label}\";\n"));
         }
     }
 

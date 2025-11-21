@@ -122,7 +122,7 @@ pub async fn execute(
     let recipe_id = build_plan.recipe_graph.find_recipe(target)
         .ok_or_else(|| format!("Recipe '{}' not found", target))?;
     let recipe = build_plan.recipe_graph.get_recipe(recipe_id)
-        .ok_or_else(|| format!("Recipe not found in graph"))?;
+        .ok_or_else(|| "Recipe not found in graph".to_string())?;
 
     println!("  ✓ Found: {} {}", recipe.name, recipe.version.as_deref().unwrap_or("unknown"));
 
@@ -243,7 +243,7 @@ pub async fn execute(
                         let recipe_version = build_plan.recipe_graph.get_recipe(exec_task.recipe_id)
                             .and_then(|r| r.version.clone())
                             .filter(|v| v != "unknown")
-                            .or_else(|| {
+                            .or({
                                 // Extract version from recipe name (e.g., busybox_1.35.0.bb -> 1.35.0)
                                 // Recipe files are found above, let's parse from entry filenames
                                 None

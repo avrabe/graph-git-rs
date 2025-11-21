@@ -106,7 +106,7 @@ impl KasManifest {
                                 path: path.file_name().unwrap().to_str().unwrap().to_string(),
                                 manifest,
                             };
-                            kas_manifests.push(kas)
+                            kas_manifests.push(kas);
                         }
                         Err(e) => debug!("Failed to parse {}: {}", path.display(), e),
                     }
@@ -114,7 +114,7 @@ impl KasManifest {
                 Err(e) => {
                     warn!("Error reading directory entry: {}", e);
                 }
-            };
+            }
         }
         kas_manifests
     }

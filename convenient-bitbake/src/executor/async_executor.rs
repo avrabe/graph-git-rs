@@ -119,7 +119,7 @@ impl AsyncTaskExecutor {
                     }
                     Err((task_id, _task_key, recipe, task, error, _duration)) => {
                         scheduler.mark_failed(task_id);
-                        eprintln!("Task failed: {}:{} - {:?}", recipe, task, error);
+                        eprintln!("Task failed: {recipe}:{task} - {error:?}");
                         return Err(error);
                     }
                 }

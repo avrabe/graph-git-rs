@@ -84,7 +84,7 @@ impl QueryParser {
 
         // Parse as target pattern
         let pattern = TargetPattern::from_str(query)
-            .map_err(|e| format!("Invalid target pattern: {}", e))?;
+            .map_err(|e| format!("Invalid target pattern: {e}"))?;
         Ok(QueryExpr::Target(pattern))
     }
 
@@ -281,11 +281,10 @@ fn find_operator(s: &str, op: &str) -> Option<usize> {
             _ => {}
         }
 
-        if depth == 0 && !in_quote {
-            if s[i..].starts_with(op) {
+        if depth == 0 && !in_quote
+            && s[i..].starts_with(op) {
                 return Some(i);
             }
-        }
     }
 
     None
@@ -293,12 +292,12 @@ fn find_operator(s: &str, op: &str) -> Option<usize> {
 
 /// Extract function arguments from a function call
 fn extract_function_args(query: &str, func_name: &str) -> Result<Vec<String>, String> {
-    if !query.starts_with(&format!("{}(", func_name)) {
-        return Err(format!("Not a {} function call", func_name));
+    if !query.starts_with(&format!("{func_name}(")) {
+        return Err(format!("Not a {func_name} function call"));
     }
 
     if !query.ends_with(')') {
-        return Err(format!("Missing closing parenthesis in {}", func_name));
+        return Err(format!("Missing closing parenthesis in {func_name}"));
     }
 
     let args_str = &query[func_name.len() + 1..query.len() - 1];

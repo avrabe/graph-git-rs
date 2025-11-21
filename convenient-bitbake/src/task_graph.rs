@@ -222,12 +222,12 @@ impl TaskGraphBuilder {
         let recipe_id = self
             .recipe_graph
             .find_recipe(recipe_name)
-            .ok_or_else(|| format!("Recipe not found: {}", recipe_name))?;
+            .ok_or_else(|| format!("Recipe not found: {recipe_name}"))?;
 
         let task_id = self
             .recipe_graph
             .find_task(recipe_id, task_name)
-            .ok_or_else(|| format!("Task not found: {}:{}", recipe_name, task_name))?;
+            .ok_or_else(|| format!("Task not found: {recipe_name}:{task_name}"))?;
 
         self.build_for_task(task_id)
     }

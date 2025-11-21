@@ -23,7 +23,7 @@ impl PokyTester {
         let start = Instant::now();
 
         let status = Command::new("git")
-            .args(&[
+            .args([
                 "clone",
                 "--depth", "1",
                 "--branch", "kirkstone",
@@ -33,8 +33,7 @@ impl PokyTester {
             .status()?;
 
         if !status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 "Failed to clone Poky",
             ));
         }
@@ -54,7 +53,7 @@ impl PokyTester {
         for entry in WalkDir::new(&self.poky_path)
             .follow_links(true)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("bb") {
@@ -96,7 +95,7 @@ impl PokyTester {
 
     /// Test building a specific recipe
     pub fn test_build(&self, recipe: &str) -> std::io::Result<BuildStats> {
-        println!("Building recipe: {}", recipe);
+        println!("Building recipe: {recipe}");
         let start = Instant::now();
 
         // TODO: Integrate with our build system

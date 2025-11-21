@@ -181,6 +181,7 @@ impl GrpcCacheClient {
 }
 
 /// Convert SHA-256 hash to Digest
+#[must_use] 
 pub fn sha256_digest(hash: &str, size: i64) -> Digest {
     Digest {
         hash: hash.to_string(),

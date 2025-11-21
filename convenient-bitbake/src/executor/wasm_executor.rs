@@ -225,7 +225,7 @@ impl ExternalExecutor for WasmExecutorHost {
 /// This defines the interface between the host and the WASM component.
 /// Save as `wit/executor.wit` when implementing.
 #[allow(dead_code)]
-const EXECUTOR_WIT: &str = r#"
+const EXECUTOR_WIT: &str = r"
 // WIT definition for task executor component
 
 package bitzel:executor@0.1.0;
@@ -289,7 +289,7 @@ world executor-component {
     export executor;
     import host;
 }
-"#;
+";
 
 /// Future: Compilation instructions for building the executor WASM component
 ///
@@ -303,7 +303,7 @@ world executor-component {
 ///
 /// The resulting `executor.component.wasm` can then be loaded by WasmExecutorHost.
 #[allow(dead_code)]
-const BUILD_INSTRUCTIONS: &str = r#"
+const BUILD_INSTRUCTIONS: &str = r"
 # Building the Executor WASM Component
 
 ## Prerequisites
@@ -346,7 +346,7 @@ The host (WasmExecutorHost) will:
 2. Instantiate with host imports (CAS access)
 3. Call component exports for task execution
 4. Manage lifecycle (start/stop/health)
-"#;
+";
 
 #[cfg(test)]
 mod tests {

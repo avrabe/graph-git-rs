@@ -46,7 +46,7 @@ impl LayerConfig {
             .to_string();
 
         // Extract priority - look for BBFILE_PRIORITY_<collection>
-        let priority_key = format!("BBFILE_PRIORITY_{}", collection);
+        let priority_key = format!("BBFILE_PRIORITY_{collection}");
         let priority = recipe
             .variables
             .get(&priority_key)
@@ -54,29 +54,29 @@ impl LayerConfig {
             .unwrap_or(0);
 
         // Extract version
-        let version_key = format!("LAYERVERSION_{}", collection);
+        let version_key = format!("LAYERVERSION_{collection}");
         let version = recipe.variables.get(&version_key).cloned();
 
         // Extract dependencies
-        let depends_key = format!("LAYERDEPENDS_{}", collection);
+        let depends_key = format!("LAYERDEPENDS_{collection}");
         let depends = recipe
             .variables
             .get(&depends_key)
             .map(|s| {
                 s.split_whitespace()
-                    .map(|d| d.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
 
         // Extract series compatibility
-        let compat_key = format!("LAYERSERIES_COMPAT_{}", collection);
+        let compat_key = format!("LAYERSERIES_COMPAT_{collection}");
         let series_compat = recipe
             .variables
             .get(&compat_key)
             .map(|s| {
                 s.split_whitespace()
-                    .map(|c| c.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -204,7 +204,7 @@ impl BuildContext {
     /// Find machine configuration file in layers
     fn find_machine_conf(&self, machine: &str) -> Option<PathBuf> {
         for layer in &self.layers {
-            let machine_conf = layer.layer_dir.join(format!("conf/machine/{}.conf", machine));
+            let machine_conf = layer.layer_dir.join(format!("conf/machine/{machine}.conf"));
             if machine_conf.exists() {
                 info!("Found machine config: {:?}", machine_conf);
                 return Some(machine_conf);
@@ -216,7 +216,7 @@ impl BuildContext {
     /// Find distro configuration file in layers
     fn find_distro_conf(&self, distro: &str) -> Option<PathBuf> {
         for layer in &self.layers {
-            let distro_conf = layer.layer_dir.join(format!("conf/distro/{}.conf", distro));
+            let distro_conf = layer.layer_dir.join(format!("conf/distro/{distro}.conf"));
             if distro_conf.exists() {
                 info!("Found distro config: {:?}", distro_conf);
                 return Some(distro_conf);
@@ -235,9 +235,8 @@ impl BuildContext {
                 info!("Loading machine configuration for: {}", machine);
                 self.load_conf_file(&machine_conf)?;
                 return Ok(());
-            } else {
-                warn!("Machine configuration not found for: {}", machine);
             }
+            warn!("Machine configuration not found for: {}", machine);
         }
         Ok(())
     }
@@ -252,9 +251,8 @@ impl BuildContext {
                 info!("Loading distro configuration for: {}", distro);
                 self.load_conf_file(&distro_conf)?;
                 return Ok(());
-            } else {
-                warn!("Distro configuration not found for: {}", distro);
             }
+            warn!("Distro configuration not found for: {}", distro);
         }
         Ok(())
     }

@@ -171,8 +171,7 @@ impl<N, E> DAG<N, E> {
         // Check if edge would create cycle
         if self.would_create_cycle(from, to) {
             return Err(GraphError::CycleDetected(format!(
-                "Adding edge {} -> {} would create a cycle",
-                from, to
+                "Adding edge {from} -> {to} would create a cycle"
             )));
         }
 

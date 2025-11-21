@@ -303,8 +303,8 @@ impl InteractiveExecutor {
     fn debug_task_failure(&self, task_key: &str, error: &str) {
         println!("\n🐛 Task Failure Debugger");
         println!("════════════════════════════════════════");
-        println!("Task: {}", task_key);
-        println!("Error: {}", error);
+        println!("Task: {task_key}");
+        println!("Error: {error}");
 
         if let Some(task) = self.monitor.get_task(task_key) {
             println!("\nTask Details:");
@@ -315,7 +315,7 @@ impl InteractiveExecutor {
                 println!("  Duration: {:.2}s", duration as f64 / 1000.0);
             }
             if let Some(ref msg) = task.error_message {
-                println!("  Error: {}", msg);
+                println!("  Error: {msg}");
             }
         }
 
@@ -353,7 +353,7 @@ impl InteractiveExecutor {
             .filter(|t| t.state == state)
             .collect();
 
-        println!("\n{} Tasks:", state);
+        println!("\n{state} Tasks:");
         if tasks.is_empty() {
             println!("  (none)");
         } else {

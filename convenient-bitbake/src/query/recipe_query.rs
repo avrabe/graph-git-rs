@@ -147,11 +147,10 @@ impl<'a> RecipeQueryEngine<'a> {
         }
 
         while let Some((recipe_id, depth)) = queue.pop_front() {
-            if let Some(max) = max_depth {
-                if depth >= max {
+            if let Some(max) = max_depth
+                && depth >= max {
                     continue;
                 }
-            }
 
             let deps = self.graph.get_dependencies(recipe_id);
             for dep_id in deps {
@@ -354,12 +353,11 @@ impl<'a> RecipeQueryEngine<'a> {
         let mut found_path = false;
         let deps = self.graph.get_dependencies(current);
         for dep_id in deps {
-            if !visited.contains(&dep_id) {
-                if self.find_all_paths_dfs(dep_id, targets, visited, path_nodes) {
+            if !visited.contains(&dep_id)
+                && self.find_all_paths_dfs(dep_id, targets, visited, path_nodes) {
                     found_path = true;
                     path_nodes.insert(current);
                 }
-            }
         }
 
         visited.remove(&current);
@@ -415,8 +413,7 @@ impl<'a> RecipeQueryEngine<'a> {
 
         // Check if recipe has the attribute and it matches the value pattern
         recipe.metadata.get(name)
-            .map(|attr_value| wildcard_match(value, attr_value))
-            .unwrap_or(false)
+            .is_some_and(|attr_value| wildcard_match(value, attr_value))
     }
 }
 

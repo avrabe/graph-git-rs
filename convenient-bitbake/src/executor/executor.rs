@@ -162,7 +162,7 @@ impl TaskExecutor {
             for entry in walkdir::WalkDir::new(&outputs_dir)
                 .follow_links(false)
                 .into_iter()
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
             {
                 if entry.file_type().is_file() {
                     let path = entry.path();
@@ -222,7 +222,7 @@ impl TaskExecutor {
             for entry in walkdir::WalkDir::new(&outputs_dir)
                 .follow_links(false)
                 .into_iter()
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
             {
                 if entry.file_type().is_file() {
                     let path = entry.path();
@@ -359,7 +359,7 @@ impl TaskExecutor {
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if entry.file_type().is_file() {
                 let path = entry.path();

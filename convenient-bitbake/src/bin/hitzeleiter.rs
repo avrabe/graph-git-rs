@@ -147,7 +147,7 @@ async fn build_command(
 
     // Setup repositories
     println!("\n[2/6] Setting up repositories...");
-    let repo_manager = RepositoryManager::new(workspace.to_path_buf());
+    let repo_manager = RepositoryManager::new(workspace);
 
     for (name, config) in &kas.config.repos {
         if config.url.is_some() {
@@ -316,7 +316,7 @@ fn discover_layers(
         let mut layers = Vec::new();
 
         // Add explicitly configured layers
-        for (layer_name, _layer_config) in &config.layers {
+        for layer_name in config.layers.keys() {
             let layer_path = if layer_name.is_empty() || layer_name == "." {
                 repo_path.clone()
             } else {

@@ -263,7 +263,7 @@ impl BitbakeRecipe {
     /// Parse a BitBake file from disk
     pub fn parse_file(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+            .map_err(|e| format!("Failed to read file: {e}"))?;
 
         Self::parse_string(&content, path)
     }
@@ -326,7 +326,7 @@ fn extract_from_cst(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
     if let Some(src_uri_str) = recipe.variables.get("SRC_URI") {
         match parse_src_uri_value(src_uri_str) {
             Ok(sources) => recipe.sources.extend(sources),
-            Err(e) => recipe.parse_warnings.push(format!("Failed to parse SRC_URI: {}", e)),
+            Err(e) => recipe.parse_warnings.push(format!("Failed to parse SRC_URI: {e}")),
         }
     }
 
@@ -478,7 +478,7 @@ fn parse_src_uri_value(value: &str) -> Result<Vec<SourceUri>, String> {
     let mut sources = Vec::new();
 
     // Handle multi-line strings with backslash continuation
-    let cleaned = value.replace("\\\n", " ").replace("\\", "");
+    let cleaned = value.replace("\\\n", " ").replace('\\', "");
 
     // Split on whitespace but respect quotes
     let mut current_uri = String::new();
@@ -588,8 +588,7 @@ impl Bitbake {
         entry
             .file_name()
             .to_str()
-            .map(|s| s.ends_with(".bb") || s.ends_with(".bbappend"))
-            .unwrap_or(false)
+            .is_some_and(|s| s.ends_with(".bb") || s.ends_with(".bbappend"))
             || entry.path().is_dir()
     }
 

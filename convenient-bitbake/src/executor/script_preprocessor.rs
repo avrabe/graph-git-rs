@@ -141,7 +141,7 @@ impl ScriptPreprocessor {
             let var_name = &caps[1];
             let flag_name = &caps[2];
             count += 1;
-            format!("${{{}_{}}}", var_name, flag_name)
+            format!("${{{var_name}_{flag_name}}}")
         }).to_string();
 
         if count > 0 {
