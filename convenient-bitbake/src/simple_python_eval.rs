@@ -91,9 +91,22 @@ impl SimplePythonEvaluator {
             return self.eval_all_distro_features(inner);
         }
 
-        // Handle d.getVar()
+        // Handle d.getVar() - already supports chained methods via apply_string_operations
         if inner.contains("d.getVar") {
             return self.eval_getvar(inner);
+        }
+
+        // Handle oe.utils.trim_version()
+        if inner.contains("oe.utils.trim_version") {
+            return self.eval_trim_version(inner);
+        }
+
+        // Handle array indexing: ['val1', 'val2'][condition]
+        if inner.contains('[') && inner.contains(']') &&
+           (inner.contains("d.getVar") || inner.contains("==") || inner.contains("!=")) {
+            if let Some(result) = self.eval_array_indexing(inner) {
+                return Some(result);
+            }
         }
 
         // Phase 9d: Handle string literals with methods: 'string'.method()
@@ -1670,6 +1683,131 @@ impl SimplePythonEvaluator {
         }
 
         Some(args)
+    }
+
+    /// Evaluate oe.utils.trim_version("1.2.3") -> "1.2"
+    /// Trims version to major.minor (removes patch/build suffixes)
+    fn eval_trim_version(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating oe.utils.trim_version: {}", expr);
+
+        // Find the argument to trim_version()
+        let start = expr.find("oe.utils.trim_version")?;
+        let after = &expr[start + 21..]; // Skip "oe.utils.trim_version"
+
+        let open_paren = after.find('(')?;
+        let after_open = &after[open_paren + 1..];
+
+        // Extract the version string (could be quoted or a variable reference)
+        let trimmed = after_open.trim();
+
+        // Check if it's a quoted string
+        let version_str = if trimmed.starts_with('"') || trimmed.starts_with('\'') {
+            let quote_char = trimmed.chars().next()?;
+            let after_quote = &trimmed[1..];
+            let quote_end = after_quote.find(quote_char)?;
+            after_quote[..quote_end].to_string()
+        } else if trimmed.starts_with("${") {
+            // Variable reference like ${PV} - try to expand it
+            if let Some(var_end) = trimmed.find('}') {
+                let var_content = &trimmed[2..var_end];
+                self.variables.get(var_content)?.clone()
+            } else {
+                return None;
+            }
+        } else {
+            // Try to parse as literal
+            let end = trimmed.find([',', ')'])?;
+            trimmed[..end].trim().to_string()
+        };
+
+        // Trim to major.minor (first two components)
+        let parts: Vec<&str> = version_str.split(['.', '-', '+', '~']).collect();
+        if parts.len() >= 2 {
+            Some(format!("{}.{}", parts[0], parts[1]))
+        } else if parts.len() == 1 {
+            Some(parts[0].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Evaluate array indexing with boolean condition
+    /// Example: ['', '-sf'][d.getVar('TARGET_FPU') == 'soft'] -> '-sf' if TARGET_FPU is 'soft'
+    fn eval_array_indexing(&self, expr: &str) -> Option<String> {
+        debug!("Evaluating array indexing: {}", expr);
+
+        // Find the array literal
+        let array_start = expr.find('[')?;
+        let array_content_start = array_start + 1;
+
+        // Find the end of first array (before second '[')
+        let mut bracket_depth = 1;
+        let mut array_end = None;
+        for (i, ch) in expr[array_content_start..].chars().enumerate() {
+            match ch {
+                '[' => bracket_depth += 1,
+                ']' => {
+                    bracket_depth -= 1;
+                    if bracket_depth == 0 {
+                        array_end = Some(array_content_start + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let array_end = array_end?;
+        let array_content = &expr[array_content_start..array_end];
+
+        // Parse array elements (simple comma-separated quoted strings)
+        let mut elements = Vec::new();
+        let mut current = String::new();
+        let mut in_quotes = false;
+        let mut quote_char = ' ';
+
+        for ch in array_content.chars() {
+            if !in_quotes && (ch == '\'' || ch == '"') {
+                in_quotes = true;
+                quote_char = ch;
+            } else if in_quotes && ch == quote_char {
+                in_quotes = false;
+                elements.push(current.clone());
+                current.clear();
+            } else if in_quotes {
+                current.push(ch);
+            } else if ch == ',' {
+                if !current.trim().is_empty() {
+                    elements.push(current.trim().to_string());
+                    current.clear();
+                }
+            } else if !ch.is_whitespace() {
+                current.push(ch);
+            }
+        }
+
+        if !current.trim().is_empty() {
+            elements.push(current.trim().to_string());
+        }
+
+        debug!("  Array elements: {:?}", elements);
+
+        // Find the condition in the second set of brackets
+        let after_array = &expr[array_end + 1..];
+        let cond_start = after_array.find('[')?;
+        let cond_content_start = cond_start + 1;
+        let cond_end = after_array[cond_content_start..].find(']')?;
+        let condition = &after_array[cond_content_start..cond_content_start + cond_end];
+
+        debug!("  Condition: {}", condition);
+
+        // Evaluate the condition as a boolean
+        let cond_result = self.eval_simple_condition(condition)?;
+        let index = if cond_result { 1 } else { 0 };
+
+        debug!("  Condition result: {}, index: {}", cond_result, index);
+
+        elements.get(index).cloned()
     }
 }
 
