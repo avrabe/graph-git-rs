@@ -1308,6 +1308,15 @@ impl RecipeExtractor {
                 v.split_whitespace()
                     .filter(|s| !s.is_empty())
                     .filter_map(|dep| {
+                        // Filter out BitBake internal variables that appear in DEPENDS
+                        // These are task-level dependency placeholders, not recipe dependencies
+                        if dep.starts_with("${PATCHDEPENDENCY")
+                            || dep.starts_with("${POPULATESYSROOTDEPS")
+                            || dep.starts_with("${USERADDSETSCENEDEPS")
+                        {
+                            return None;
+                        }
+
                         // Skip version constraint parts like "(>=", "2.30)"
                         if dep.starts_with('(') || dep.ends_with(')') {
                             None
@@ -1349,6 +1358,7 @@ impl RecipeExtractor {
             "build",
             "clean",
             "cleanall",
+            "listtasks",
         ];
 
         for task_name in base_tasks {
