@@ -204,7 +204,7 @@ async fn build_command(
 
         // Determine how many tasks to execute
         let total_tasks = build_plan.task_graph.tasks.len();
-        let tasks_to_execute = if max_tasks > 0 && max_tasks < total_tasks {
+        let _tasks_to_execute = if max_tasks > 0 && max_tasks < total_tasks {
             println!("  Limiting execution to first {} tasks (of {})", max_tasks, total_tasks);
             max_tasks
         } else {

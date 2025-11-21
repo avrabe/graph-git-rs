@@ -273,7 +273,7 @@ fn measure_with_comparison(recipes: &[PathBuf]) -> AccuracyReport {
     }
 }
 
-fn test_kas_config(config_path: &Path, output_dir: &Path) {
+fn test_kas_config(config_path: &Path, _output_dir: &Path) {
     println!("{}", "=== Testing Kas Configuration ===".bold().green());
     println!("Config: {}", config_path.display());
 
