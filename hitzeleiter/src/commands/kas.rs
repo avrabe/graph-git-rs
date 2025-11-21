@@ -4,7 +4,7 @@
 //! It handles repository fetching, configuration generation, and build execution.
 
 use convenient_bitbake::{
-    BuildContext, ExtractionConfig, RecipeExtractor, RecipeGraph,
+    BuildContext, ExtractionConfig, RecipeExtractor,
     TaskImplementation,
     Pipeline, PipelineConfig,
 };

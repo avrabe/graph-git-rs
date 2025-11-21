@@ -9,9 +9,10 @@
 
 use regex::Regex;
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use crate::python_executor::PythonExecutor;
+use crate::simple_python_eval::SimplePythonEvaluator;
 
 /// Preprocesses BitBake scripts to handle special syntax
 pub struct ScriptPreprocessor {
@@ -62,7 +63,7 @@ impl ScriptPreprocessor {
         Ok(processed)
     }
 
-    /// Expand ${@python_code} using RustPython
+    /// Expand ${@python_code} using SimplePythonEvaluator or RustPython
     ///
     /// Examples:
     /// - ${@d.getVar('CFLAGS')} → "-O2 -pipe"
@@ -79,22 +80,37 @@ impl ScriptPreprocessor {
 
         let mut result = script.to_string();
         let mut replacements = 0;
+        let mut failed_expressions = 0;
+
+        // Create SimplePythonEvaluator for common BitBake patterns
+        let simple_eval = SimplePythonEvaluator::new(self.datastore.clone());
 
         for cap in re.captures_iter(script) {
             let full_match = cap.get(0).unwrap().as_str();
             let python_expr = cap.get(1).unwrap().as_str();
 
-            debug!("Evaluating Python expression: {}", python_expr);
+            trace!("Evaluating Python expression: {}", python_expr);
 
-            match self.python_executor.eval(python_expr, &self.datastore) {
+            // Try SimplePythonEvaluator first (handles common BitBake patterns)
+            let evaluation_result = if let Some(value) = simple_eval.evaluate(full_match) {
+                debug!("  → SimplePythonEvaluator result: {}", value);
+                Ok(value)
+            } else {
+                // Fallback to RustPython for complex expressions
+                self.python_executor.eval(python_expr, &self.datastore)
+            };
+
+            match evaluation_result {
                 Ok(value) => {
-                    debug!("  → Result: {}", value);
+                    trace!("  → Result: {}", value);
                     result = result.replace(full_match, &value);
                     replacements += 1;
                 }
                 Err(e) => {
-                    // Log warning but continue (BitBake's behavior)
-                    warn!("Failed to evaluate Python expression '{}': {}", python_expr, e);
+                    // Many expressions can't be evaluated without full BitBake context
+                    // Log at trace level instead of warn to reduce noise
+                    trace!("Can't evaluate Python expression '{}': {}", python_expr, e);
+                    failed_expressions += 1;
                     // Replace with empty string (BitBake behavior)
                     result = result.replace(full_match, "");
                 }
@@ -102,7 +118,8 @@ impl ScriptPreprocessor {
         }
 
         if replacements > 0 {
-            debug!("Expanded {} Python expressions", replacements);
+            debug!("Expanded {} Python expressions ({} couldn't be evaluated)",
+                   replacements, failed_expressions);
         }
 
         Ok(result)

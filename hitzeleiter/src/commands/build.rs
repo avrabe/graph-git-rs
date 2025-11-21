@@ -9,7 +9,7 @@
 
 use convenient_bitbake::{
     BuildEnvironment, BuildOrchestrator, OrchestratorConfig,
-    SimplePythonEvaluator, TaskGraphBuilder,
+    TaskGraphBuilder,
 };
 use convenient_bitbake::executor::{
     TaskExecutor, CacheManager,
@@ -19,69 +19,16 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-/// Expand BitBake script with full Python support
-fn expand_script(
-    script: &str,
-    env: &HashMap<String, String>,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let evaluator = SimplePythonEvaluator::new(env.clone());
-
-    // Try to evaluate each ${@...} expression
-    let mut result = script.to_string();
-    let mut changed = true;
-
-    while changed {
-        changed = false;
-        if let Some(start) = result.find("${@") {
-            if let Some(end) = result[start..].find('}') {
-                let expr = &result[start..start + end + 1];
-
-                match evaluator.evaluate(expr) {
-                    Some(value) => {
-                        result = format!("{}{}{}", &result[..start], value, &result[start + end + 1..]);
-                        changed = true;
-                    }
-                    None => {
-                        // Try simple expansion for other ${VAR}
-                        break;
-                    }
-                }
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-
-    // Fallback simple ${VAR} expansion
-    result = simple_expand(&result, env);
-
-    Ok(result)
-}
-
-/// Fallback simple expansion
-fn simple_expand(script: &str, env: &HashMap<String, String>) -> String {
-    let mut result = script.to_string();
-    loop {
-        if let Some(start) = result.find("${") {
-            if let Some(end) = result[start..].find('}') {
-                let var_name = &result[start + 2..start + end];
-                if var_name.starts_with('@') {
-                    // Skip Python expressions in fallback
-                    break;
-                }
-                let replacement = env.get(var_name).cloned().unwrap_or_default();
-                result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    result
-}
+// TODO: Re-enable Python expression expansion when needed
+// /// Expand BitBake script with full Python support
+// #[allow(dead_code)]
+// fn expand_script(
+//     script: &str,
+//     env: &HashMap<String, String>,
+// ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+//     let evaluator = SimplePythonEvaluator::new(env.clone());
+//     ... (code commented out for now)
+// }
 
 /// Execute build with full BuildOrchestrator pipeline
 pub async fn execute(
