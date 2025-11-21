@@ -12,7 +12,7 @@ members = [
 ]
 
 [profile.release]
-lto = true
+lto = false
 #debug = true
 strip = "debuginfo"
 
