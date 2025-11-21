@@ -1364,6 +1364,13 @@ impl RecipeExtractor {
 
             // Parse addtask statements
             if let Some(task) = parse_addtask_statement(line) {
+                // Skip setscene tasks - these are BitBake shared state cache tasks
+                // that shouldn't be executed directly
+                if task.name.ends_with("_setscene") {
+                    debug!("Skipping setscene task: {}", task.name);
+                    continue;
+                }
+
                 // Check if task already exists (from inherited classes)
                 let task_id = if let Some(existing_id) = graph.find_task(recipe_id, &task.name) {
                     existing_id
