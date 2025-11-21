@@ -1344,9 +1344,11 @@ impl RecipeExtractor {
             "configure",
             "compile",
             "install",
-            "package",
             "populate_sysroot",
+            "package",
             "build",
+            "clean",
+            "cleanall",
         ];
 
         for task_name in base_tasks {
