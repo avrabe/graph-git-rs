@@ -430,6 +430,33 @@ impl BuildOrchestrator {
                 let workdir = build_dir.join("tmp").join(&task.recipe_name);
                 recipe_vars.entry("WORKDIR".to_string()).or_insert_with(|| workdir.to_string_lossy().to_string());
 
+                // Add common missing variables with sensible defaults
+                recipe_vars.entry("LLVMVERSION".to_string()).or_insert_with(|| "15".to_string());
+                recipe_vars.entry("TARGET_ARCH".to_string()).or_insert_with(|| "aarch64".to_string());
+                recipe_vars.entry("HOST_ARCH".to_string()).or_insert_with(|| "aarch64".to_string());
+                recipe_vars.entry("BUILD_ARCH".to_string()).or_insert_with(|| "x86_64".to_string());
+                recipe_vars.entry("TARGET_OS".to_string()).or_insert_with(|| "linux".to_string());
+                recipe_vars.entry("HOST_OS".to_string()).or_insert_with(|| "linux".to_string());
+                recipe_vars.entry("BUILD_OS".to_string()).or_insert_with(|| "linux".to_string());
+                recipe_vars.entry("TARGET_SYS".to_string()).or_insert_with(|| "aarch64-poky-linux".to_string());
+                recipe_vars.entry("HOST_SYS".to_string()).or_insert_with(|| "aarch64-poky-linux".to_string());
+                recipe_vars.entry("BUILD_SYS".to_string()).or_insert_with(|| "x86_64-linux".to_string());
+                recipe_vars.entry("AUTOTOOLS_AUXDIR".to_string()).or_insert_with(|| "${S}/build-aux".to_string());
+                recipe_vars.entry("SRCREV".to_string()).or_insert_with(|| "INVALID".to_string());
+                recipe_vars.entry("baselib".to_string()).or_insert_with(|| "lib".to_string());
+                recipe_vars.entry("prefix".to_string()).or_insert_with(|| "/usr".to_string());
+                recipe_vars.entry("bindir".to_string()).or_insert_with(|| "/usr/bin".to_string());
+                recipe_vars.entry("sbindir".to_string()).or_insert_with(|| "/usr/sbin".to_string());
+                recipe_vars.entry("libdir".to_string()).or_insert_with(|| "/usr/lib".to_string());
+                recipe_vars.entry("libexecdir".to_string()).or_insert_with(|| "/usr/libexec".to_string());
+                recipe_vars.entry("includedir".to_string()).or_insert_with(|| "/usr/include".to_string());
+                recipe_vars.entry("datadir".to_string()).or_insert_with(|| "/usr/share".to_string());
+                recipe_vars.entry("sharedstatedir".to_string()).or_insert_with(|| "/var/lib".to_string());
+                recipe_vars.entry("INIT_SYSTEM".to_string()).or_insert_with(|| "sysvinit".to_string());
+                recipe_vars.entry("DISTRO_FEATURES".to_string()).or_insert_with(|| "sysvinit".to_string());
+                recipe_vars.entry("KERNEL_VERSION".to_string()).or_insert_with(|| "5.15".to_string());
+                recipe_vars.entry("KERNEL_IMAGETYPE".to_string()).or_insert_with(|| "Image".to_string());
+
                 // Clone recipe_vars for task environment before moving into preprocessor
                 let env_vars = recipe_vars.clone();
 
