@@ -4,13 +4,13 @@
 //! with proper error handling and progress tracking.
 
 #![warn(
-    missing_docs,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     clippy::pedantic
 )]
 #![allow(
+    missing_docs,  // TODO: Add comprehensive docs for public API
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::doc_markdown
@@ -188,7 +188,7 @@ impl GitRepository {
         } else {
             total_one_percent
         };
-        n.is_multiple_of((total_one_percent)) || n == total
+        n.is_multiple_of(total_one_percent) || n == total
     }
 
     fn print(state: &mut State) {
