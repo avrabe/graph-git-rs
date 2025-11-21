@@ -18,7 +18,7 @@
 //! - `bb.utils` - Utility functions (in python_executor.rs)
 
 use rustpython::vm::{
-    builtins::{PyListRef, PyStrRef},
+    builtins::PyListRef,
     pyclass, pymodule, PyObjectRef, PyPayload, PyResult, VirtualMachine,
 };
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ use crate::{SourceUri, UriScheme};
 /// Module containing bb.fetch2 for source fetching
 #[pymodule]
 pub(crate) mod bb_fetch2 {
-    use super::*;
+    use super::{pyclass, info, debug, PyPayload, PyObjectRef, VirtualMachine, PyResult, PathBuf, parse_src_uri, fetch_handler, PyListRef};
 
     /// Fetch class that downloads sources
     ///
@@ -97,8 +97,7 @@ pub(crate) mod bb_fetch2 {
                     Ok(uri) => uri,
                     Err(e) => {
                         return Err(vm.new_value_error(format!(
-                            "Failed to parse SRC_URI '{}': {}",
-                            url_str, e
+                            "Failed to parse SRC_URI '{url_str}': {e}"
                         )));
                     }
                 };
@@ -110,8 +109,7 @@ pub(crate) mod bb_fetch2 {
                     }
                     Err(e) => {
                         return Err(vm.new_runtime_error(format!(
-                            "Fetch failed for '{}': {}",
-                            url_str, e
+                            "Fetch failed for '{url_str}': {e}"
                         )));
                     }
                 }
@@ -150,7 +148,7 @@ pub(crate) mod bb_fetch2 {
 /// Module containing bb package (top-level)
 #[pymodule]
 pub(crate) mod bb {
-    use super::*;
+    use super::{VirtualMachine, PyObjectRef, PyPayload};
 
     #[pyattr]
     fn fetch2(_vm: &VirtualMachine) -> PyObjectRef {

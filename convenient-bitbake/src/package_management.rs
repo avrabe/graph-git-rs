@@ -68,12 +68,12 @@ impl PackageBuilder {
 
     /// Generate control file (DEB)
     pub fn generate_control(&self) -> String {
-        format!(r#"Package: {}
+        format!(r"Package: {}
 Version: {}
 Architecture: {}
 Description: {}
 Depends: {}
-"#,
+",
             self.metadata.name,
             self.metadata.version,
             self.metadata.arch,
@@ -84,7 +84,7 @@ Depends: {}
 
     /// Generate spec file (RPM)
     pub fn generate_spec(&self) -> String {
-        format!(r#"Name: {}
+        format!(r"Name: {}
 Version: {}
 Release: 1
 Summary: {}
@@ -96,7 +96,7 @@ BuildArch: {}
 
 %files
 {}
-"#,
+",
             self.metadata.name,
             self.metadata.version,
             self.metadata.description,

@@ -5,7 +5,7 @@ use super::direct_executor;
 use super::sandbox::SandboxManager;
 use super::script_analyzer;
 use super::types::{
-    ContentHash, ExecutionError, ExecutionMode, ExecutionResult, NetworkPolicy, ResourceLimits,
+    ContentHash, ExecutionError, ExecutionMode, ExecutionResult,
     SandboxSpec, TaskOutput, TaskSignature, TaskSpec,
 };
 use std::collections::HashMap;
@@ -162,7 +162,7 @@ impl TaskExecutor {
             for entry in walkdir::WalkDir::new(&outputs_dir)
                 .follow_links(false)
                 .into_iter()
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
             {
                 if entry.file_type().is_file() {
                     let path = entry.path();
@@ -222,7 +222,7 @@ impl TaskExecutor {
             for entry in walkdir::WalkDir::new(&outputs_dir)
                 .follow_links(false)
                 .into_iter()
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
             {
                 if entry.file_type().is_file() {
                     let path = entry.path();
@@ -359,7 +359,7 @@ impl TaskExecutor {
         for entry in walkdir::WalkDir::new(dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if entry.file_type().is_file() {
                 let path = entry.path();

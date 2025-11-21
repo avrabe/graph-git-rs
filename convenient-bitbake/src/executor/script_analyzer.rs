@@ -11,7 +11,6 @@
 
 use super::types::ExecutionMode;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// Action that can be executed directly without bash
 #[derive(Debug, Clone, PartialEq)]
@@ -500,7 +499,7 @@ fn parse_ln(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectActi
         line.strip_prefix("ln -s ")?
     };
 
-    let parts: Vec<&str> = rest.trim().split_whitespace().collect();
+    let parts: Vec<&str> = rest.split_whitespace().collect();
     if parts.len() != 2 {
         return None;
     }
@@ -564,24 +563,24 @@ fn expand_variables(s: &str, env_vars: &HashMap<String, String>) -> String {
         ("B", "/work/build"),
         ("D", "/work/image"),
         ("TMPDIR", "/tmp"),
-    ].iter().cloned().collect();
+    ].iter().copied().collect();
 
     // Replace ${VAR}
     for (key, value) in env_vars {
-        result = result.replace(&format!("${{{}}}", key), value);
+        result = result.replace(&format!("${{{key}}}"), value);
     }
 
     // Replace $VAR (simple form)
     for (key, value) in env_vars {
         // Only replace if followed by space, /, or end of string
-        result = result.replace(&format!("${}", key), value);
+        result = result.replace(&format!("${key}"), value);
     }
 
     // Apply defaults for BitBake variables
     for (key, default_value) in defaults {
         if !env_vars.contains_key(key) {
-            result = result.replace(&format!("${{{}}}", key), default_value);
-            result = result.replace(&format!("${}", key), default_value);
+            result = result.replace(&format!("${{{key}}}"), default_value);
+            result = result.replace(&format!("${key}"), default_value);
         }
     }
 
@@ -666,14 +665,18 @@ pub fn determine_execution_mode(script: &str) -> ExecutionMode {
         return ExecutionMode::Python;
     }
 
-    // Analyze for DirectRust capability
-    let analysis = analyze_script(script);
+    // TEMPORARY: Force Shell mode for all non-Python scripts
+    // DirectRust is not yet fully implemented, so we need to use Shell mode
+    // to ensure tasks actually execute properly (especially unpack, configure, etc.)
+    ExecutionMode::Shell
 
-    if analysis.is_simple {
-        ExecutionMode::DirectRust
-    } else {
-        ExecutionMode::Shell
-    }
+    // TODO: Re-enable DirectRust optimization once it's fully implemented
+    // let analysis = analyze_script(script);
+    // if analysis.is_simple {
+    //     ExecutionMode::DirectRust
+    // } else {
+    //     ExecutionMode::Shell
+    // }
 }
 
 #[cfg(test)]

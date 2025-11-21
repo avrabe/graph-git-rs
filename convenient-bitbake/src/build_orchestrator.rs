@@ -4,15 +4,18 @@
 //! layer discovery through task graph generation.
 
 use crate::{
-    BuildContext, ExtractionConfig, LayerConfig, Pipeline, PipelineConfig,
-    RecipeExtractor, RecipeGraph, SignatureCache, TaskExtractor, TaskGraph,
+    BuildContext, ExtractionConfig, Pipeline, PipelineConfig,
+    RecipeExtractor, RecipeGraph, SignatureCache, TaskGraph,
     TaskGraphBuilder, TaskImplementation, TaskSpec,
 };
 use crate::executor::types::{NetworkPolicy, ResourceLimits};
 use crate::executor::ScriptPreprocessor;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -172,6 +175,11 @@ impl BuildOrchestrator {
             build_context.add_layer_from_conf(&layer_conf)?;
         }
 
+        // Load machine and distro configuration files
+        info!("Loading machine and distro configurations");
+        build_context.load_machine_config()?;
+        build_context.load_distro_config()?;
+
         // Extract task implementations and helper functions
         let mut task_implementations = HashMap::new();
         let mut helper_implementations = HashMap::new();
@@ -281,6 +289,7 @@ impl BuildOrchestrator {
             &task_implementations,
             &helper_implementations,
             &recipe_variables,
+            &build_context,
             &self.config.build_dir,
         )?;
         info!("✓ Step 7 completed in {:?} ({} task specs created)", stage_start.elapsed(), task_specs.len());
@@ -329,7 +338,7 @@ impl BuildOrchestrator {
         let mut need_rebuild = 0;
         let mut new_tasks = 0;
 
-        for (_task_id, task) in &task_graph.tasks {
+        for task in task_graph.tasks.values() {
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
             if let Some(current_sig) = sig_cache.get_signature(&task.recipe_name, &task.task_name) {
@@ -364,23 +373,38 @@ impl BuildOrchestrator {
         task_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
         helper_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
         recipe_variables: &HashMap<String, HashMap<String, String>>,
+        build_context: &BuildContext,
         build_dir: &Path,
     ) -> Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut specs = HashMap::new();
         let tmp_dir = build_dir.join("tmp");
         fs::create_dir_all(&tmp_dir)?;
 
-        info!("  Processing {} tasks...", task_graph.tasks.len());
+        let total_tasks = task_graph.tasks.len();
+        info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
-        let mut preprocess_count = 0;
-        let mut preprocess_total_time = Duration::ZERO;
-        let mut processed = 0;
+        // Progress tracking with atomics
+        let processed = Arc::new(AtomicUsize::new(0));
+        let preprocess_total_time = Arc::new(AtomicU64::new(0));
+        let last_report = Arc::new(Mutex::new(Instant::now()));
 
-        for (_task_id, task) in &task_graph.tasks {
-            processed += 1;
-            if processed % 1000 == 0 {
-                info!("    Processed {}/{} tasks", processed, task_graph.tasks.len());
-            }
+        // Use rayon for CPU-bound parallel processing
+        // Note: Rayon uses default thread pool (which is num_cpus by default)
+        let specs: Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> =
+            task_graph.tasks.values()
+            .collect::<Vec<_>>()
+            .par_iter()
+            .map(|task| {
+                let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
+
+                // Report progress every 500 tasks or every 2 seconds
+                if count % 500 == 0 {
+                    let mut last = last_report.lock().unwrap();
+                    if last.elapsed().as_secs() >= 2 {
+                        let pct = (count as f64 / total_tasks as f64) * 100.0;
+                        info!("  Progress: {}/{} tasks ({:.1}%)", count, total_tasks, pct);
+                        *last = Instant::now();
+                    }
+                }
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
             // Get helper functions for this recipe (both explicit helpers and other task functions)
@@ -398,7 +422,7 @@ impl BuildOrchestrator {
                     // Don't include Python functions in shell scripts
                     if task_fn_name != &task.task_name
                         && task_fn_impl.impl_type == crate::task_extractor::TaskImplementationType::Shell {
-                        all_helpers.insert(format!("do_{}", task_fn_name), task_fn_impl.clone());
+                        all_helpers.insert(format!("do_{task_fn_name}"), task_fn_impl.clone());
                     }
                 }
             }
@@ -415,7 +439,8 @@ impl BuildOrchestrator {
             };
 
             // NEW: Preprocess script to handle BitBake syntax (${@python_expr}, ${VAR[flag]}, etc.)
-            let script = {
+            // Also prepare environment variables for task execution
+            let (script, task_env) = {
                 let preprocess_start = Instant::now();
 
                 // Get recipe variables from parsed recipes, or use defaults
@@ -424,10 +449,46 @@ impl BuildOrchestrator {
                     .cloned()
                     .unwrap_or_else(HashMap::new);
 
+                // Merge global variables from build context (machine.conf, distro.conf, etc.)
+                // These should be added BEFORE recipe-specific variables and hardcoded defaults
+                for (key, value) in &build_context.global_variables {
+                    recipe_vars.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+
                 // Add runtime variables that may not be in recipe
                 recipe_vars.entry("PN".to_string()).or_insert_with(|| task.recipe_name.clone());
                 let workdir = build_dir.join("tmp").join(&task.recipe_name);
                 recipe_vars.entry("WORKDIR".to_string()).or_insert_with(|| workdir.to_string_lossy().to_string());
+
+                // Add common missing variables with sensible defaults (only if not already set)
+                recipe_vars.entry("LLVMVERSION".to_string()).or_insert_with(|| "15".to_string());
+                recipe_vars.entry("TARGET_ARCH".to_string()).or_insert_with(|| "aarch64".to_string());
+                recipe_vars.entry("HOST_ARCH".to_string()).or_insert_with(|| "aarch64".to_string());
+                recipe_vars.entry("BUILD_ARCH".to_string()).or_insert_with(|| "x86_64".to_string());
+                recipe_vars.entry("TARGET_OS".to_string()).or_insert_with(|| "linux".to_string());
+                recipe_vars.entry("HOST_OS".to_string()).or_insert_with(|| "linux".to_string());
+                recipe_vars.entry("BUILD_OS".to_string()).or_insert_with(|| "linux".to_string());
+                recipe_vars.entry("TARGET_SYS".to_string()).or_insert_with(|| "aarch64-poky-linux".to_string());
+                recipe_vars.entry("HOST_SYS".to_string()).or_insert_with(|| "aarch64-poky-linux".to_string());
+                recipe_vars.entry("BUILD_SYS".to_string()).or_insert_with(|| "x86_64-linux".to_string());
+                recipe_vars.entry("AUTOTOOLS_AUXDIR".to_string()).or_insert_with(|| "${S}/build-aux".to_string());
+                recipe_vars.entry("SRCREV".to_string()).or_insert_with(|| "INVALID".to_string());
+                recipe_vars.entry("baselib".to_string()).or_insert_with(|| "lib".to_string());
+                recipe_vars.entry("prefix".to_string()).or_insert_with(|| "/usr".to_string());
+                recipe_vars.entry("bindir".to_string()).or_insert_with(|| "/usr/bin".to_string());
+                recipe_vars.entry("sbindir".to_string()).or_insert_with(|| "/usr/sbin".to_string());
+                recipe_vars.entry("libdir".to_string()).or_insert_with(|| "/usr/lib".to_string());
+                recipe_vars.entry("libexecdir".to_string()).or_insert_with(|| "/usr/libexec".to_string());
+                recipe_vars.entry("includedir".to_string()).or_insert_with(|| "/usr/include".to_string());
+                recipe_vars.entry("datadir".to_string()).or_insert_with(|| "/usr/share".to_string());
+                recipe_vars.entry("sharedstatedir".to_string()).or_insert_with(|| "/var/lib".to_string());
+                recipe_vars.entry("INIT_SYSTEM".to_string()).or_insert_with(|| "sysvinit".to_string());
+                recipe_vars.entry("DISTRO_FEATURES".to_string()).or_insert_with(|| "sysvinit".to_string());
+                recipe_vars.entry("KERNEL_VERSION".to_string()).or_insert_with(|| "5.15".to_string());
+                recipe_vars.entry("KERNEL_IMAGETYPE".to_string()).or_insert_with(|| "Image".to_string());
+
+                // Clone recipe_vars for task environment before moving into preprocessor
+                let env_vars = recipe_vars.clone();
 
                 let preprocessor = ScriptPreprocessor::new(recipe_vars);
 
@@ -448,14 +509,14 @@ impl BuildOrchestrator {
                 };
 
                 let elapsed = preprocess_start.elapsed();
-                preprocess_total_time += elapsed;
-                preprocess_count += 1;
+                preprocess_total_time.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
 
-                result
+                (result, env_vars)
             };
 
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
-            fs::create_dir_all(&task_workdir)?;
+            fs::create_dir_all(&task_workdir)
+                .map_err(|e| format!("Failed to create workdir: {}", e))?;
 
             // Output file - executor will prepend /work/outputs/ for relative paths
             let output_file = format!("{}.done", task.task_name);
@@ -475,7 +536,7 @@ impl BuildOrchestrator {
                 recipe: task.recipe_name.clone(),
                 script,
                 workdir: task_workdir,
-                env: HashMap::new(),
+                env: task_env,  // Use recipe variables as task environment
                 outputs: vec![PathBuf::from(&output_file)],
                 timeout: Some(Duration::from_secs(300)),
                 execution_mode,
@@ -483,14 +544,19 @@ impl BuildOrchestrator {
                 resource_limits: ResourceLimits::default(),
             };
 
-            specs.insert(task_key, spec);
-        }
+            Ok((task_key, spec))
+        })
+        .collect::<Result<HashMap<_, _>, _>>();
 
-        if preprocess_count > 0 {
-            let avg_time = preprocess_total_time / preprocess_count as u32;
+        let specs = specs?;
+
+        let total_preprocess_micros = preprocess_total_time.load(Ordering::Relaxed);
+        if total_preprocess_micros > 0 {
+            let total_time = Duration::from_micros(total_preprocess_micros);
+            let avg_micros = total_preprocess_micros / total_tasks as u64;
             info!(
-                "  Preprocessing: {} tasks in {:?} (avg {:?}/task)",
-                preprocess_count, preprocess_total_time, avg_time
+                "  ✓ Preprocessing: {} tasks in {:?} (avg {:?}/task)",
+                total_tasks, total_time, Duration::from_micros(avg_micros)
             );
         }
 
@@ -539,7 +605,7 @@ impl BuildOrchestrator {
         script.push_str(". /hitzeleiter/prelude.sh\n\n");
 
         // Set recipe-specific variables
-        script.push_str(&format!("export PN=\"{}\"\n", recipe_name));
+        script.push_str(&format!("export PN=\"{recipe_name}\"\n"));
 
         // Set up work directories - use variables that will be set by executor
         script.push_str("# Set up work directories (paths will be set by executor)\n");
@@ -575,7 +641,7 @@ impl BuildOrchestrator {
         if !helpers.is_empty() {
             script.push_str("# Helper functions from recipe\n");
             for (helper_name, helper_impl) in helpers {
-                script.push_str(&format!("{}() {{\n", helper_name));
+                script.push_str(&format!("{helper_name}() {{\n"));
                 script.push_str(&helper_impl.code);
                 script.push_str("\n}\n\n");
             }
@@ -588,30 +654,29 @@ impl BuildOrchestrator {
 
         // Explicitly create completion marker (don't rely solely on trap)
         // Output will be collected from work/outputs/<task>.done by the executor
-        let output_filename = format!("{}.done", task_name);
+        let output_filename = format!("{task_name}.done");
         script.push_str("# Mark task as complete\n");
         script.push_str("mkdir -p outputs\n");
-        script.push_str(&format!("touch \"outputs/{}\"\n", output_filename));
+        script.push_str(&format!("touch \"outputs/{output_filename}\"\n"));
 
         script
     }
 
     /// Create a placeholder script for tasks without implementation
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
-        let output_filename = format!("{}.done", task_name);
+        let output_filename = format!("{task_name}.done");
         format!(
             "#!/bin/bash\n\
 . /hitzeleiter/prelude.sh\n\
 \n\
-export PN=\"{}\"\n\
+export PN=\"{recipe_name}\"\n\
 export WORKDIR=\"${{WORKDIR:-/work}}\"\n\
 # Note: The executor already changes to WORKDIR before executing the script,\n\
 # so we don't need to cd here. This avoids path duplication issues.\n\
 \n\
-bb_note '[PLACEHOLDER] {}'\n\
+bb_note '[PLACEHOLDER] {task_name}'\n\
 mkdir -p outputs\n\
-touch \"outputs/{}\"\n",
-            recipe_name, task_name, output_filename
+touch \"outputs/{output_filename}\"\n"
         )
     }
 }

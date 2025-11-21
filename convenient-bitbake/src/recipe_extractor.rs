@@ -11,9 +11,8 @@ use crate::class_dependencies;
 use std::collections::HashMap;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::debug;
 
-#[cfg(feature = "python-execution")]
 use crate::python_executor::PythonExecutor;
 
 /// Build context for override resolution
@@ -72,8 +71,8 @@ impl Default for ExtractionConfig {
         let mut default_variables = HashMap::new();
         // Provide sensible defaults for common build-time variables
         default_variables.insert("DISTRO_FEATURES".to_string(), "systemd pam ipv6 usrmerge".to_string());
-        default_variables.insert("PACKAGECONFIG".to_string(), "".to_string());
-        default_variables.insert("MACHINE_FEATURES".to_string(), "".to_string());
+        default_variables.insert("PACKAGECONFIG".to_string(), String::new());
+        default_variables.insert("MACHINE_FEATURES".to_string(), String::new());
 
         Self {
             use_python_executor: false,
@@ -132,13 +131,11 @@ struct PythonBlockInfo {
 /// Extracts dependencies from BitBake recipe content
 pub struct RecipeExtractor {
     config: ExtractionConfig,
-    #[cfg(feature = "python-execution")]
     executor: Option<PythonExecutor>,
 }
 
 impl RecipeExtractor {
     pub fn new(config: ExtractionConfig) -> Self {
-        #[cfg(feature = "python-execution")]
         let executor = if config.use_python_executor {
             Some(PythonExecutor::new())
         } else {
@@ -147,7 +144,6 @@ impl RecipeExtractor {
 
         Self {
             config,
-            #[cfg(feature = "python-execution")]
             executor,
         }
     }
@@ -198,7 +194,7 @@ impl RecipeExtractor {
 
         // Also check for package-specific RDEPENDS:${PN} variants
         if let Some(pn) = variables.get("PN") {
-            let pkg_specific_key = format!("RDEPENDS:{}", pn);
+            let pkg_specific_key = format!("RDEPENDS:{pn}");
             let pkg_rdepends = self.extract_dependency_list(&variables, &pkg_specific_key);
             rdepends.extend(pkg_rdepends);
         }
@@ -472,7 +468,7 @@ impl RecipeExtractor {
                 let var_name = line[..pos].trim().to_string();
                 let value = self.clean_value(&line[pos + op.len()..]);
                 // These operators don't support override syntax
-                return Some((var_name, op_str.to_string(), None, value));
+                return Some((var_name, (*op_str).to_string(), None, value));
             }
         }
 
@@ -643,7 +639,6 @@ impl RecipeExtractor {
     }
 
     /// Dedent Python code by removing common leading whitespace
-    #[cfg(feature = "python-execution")]
     fn dedent_python(&self, code: &str) -> String {
         let lines: Vec<&str> = code.lines().collect();
 
@@ -704,16 +699,13 @@ impl RecipeExtractor {
                         }
                         ExecutionStrategy::RustPython => {
                             // For complex blocks, use RustPython executor if enabled
-                            #[cfg(feature = "python-execution")]
-                            {
-                                if let Some(ref executor) = self.executor {
-                                    let dedented_code = self.dedent_python(&python_block.code);
-                                    let result = executor.execute(&dedented_code, &eval_vars);
-                                    if result.success {
-                                        for (var_name, value) in result.variables_set {
-                                            vars.insert(var_name.clone(), value.clone());
-                                            eval_vars.insert(var_name, value);
-                                        }
+                            if let Some(ref executor) = self.executor {
+                                let dedented_code = self.dedent_python(&python_block.code);
+                                let result = executor.execute(&dedented_code, &eval_vars);
+                                if result.success {
+                                    for (var_name, value) in result.variables_set {
+                                        vars.insert(var_name.clone(), value.clone());
+                                        eval_vars.insert(var_name, value);
                                     }
                                 }
                             }
@@ -721,16 +713,13 @@ impl RecipeExtractor {
                     }
                 } else {
                     // IR parser failed - fall back to RustPython if available
-                    #[cfg(feature = "python-execution")]
-                    {
-                        if let Some(ref executor) = self.executor {
-                            let dedented_code = self.dedent_python(&python_block.code);
-                            let result = executor.execute(&dedented_code, &eval_vars);
-                            if result.success {
-                                for (var_name, value) in result.variables_set {
-                                    vars.insert(var_name.clone(), value.clone());
-                                    eval_vars.insert(var_name, value);
-                                }
+                    if let Some(ref executor) = self.executor {
+                        let dedented_code = self.dedent_python(&python_block.code);
+                        let result = executor.execute(&dedented_code, &eval_vars);
+                        if result.success {
+                            for (var_name, value) in result.variables_set {
+                                vars.insert(var_name.clone(), value.clone());
+                                eval_vars.insert(var_name, value);
                             }
                         }
                     }
@@ -866,7 +855,7 @@ impl RecipeExtractor {
 
             // Find matching }
             if let Some(end_pos) = self.find_closing_brace(&result[abs_pos..]) {
-                let expr = &result[abs_pos..abs_pos + end_pos + 1];
+                let expr = &result[abs_pos..=(abs_pos + end_pos)];
 
                 // Try to evaluate it
                 // Merge default variables with recipe variables (recipe vars take precedence)
@@ -878,7 +867,7 @@ impl RecipeExtractor {
                 // Phase 10: Try IR parser + executor first if enabled
                 if self.config.use_python_ir {
                     // Extract the Python expression (remove ${@ and })
-                    let python_expr = if expr.starts_with("${@") && expr.ends_with("}") {
+                    let python_expr = if expr.starts_with("${@") && expr.ends_with('}') {
                         &expr[3..expr.len()-1]
                     } else {
                         expr
@@ -915,7 +904,7 @@ impl RecipeExtractor {
 
                 if let Some(evaluated_value) = evaluated {
                     // Replace the expression with the evaluated result
-                    result.replace_range(abs_pos..abs_pos + end_pos + 1, &evaluated_value);
+                    result.replace_range(abs_pos..=(abs_pos + end_pos), &evaluated_value);
                     start = abs_pos + evaluated_value.len();
                 } else {
                     // Can't evaluate, keep original and move past it
@@ -989,10 +978,10 @@ impl RecipeExtractor {
                             .trim_matches('\'');
 
                         // Parse comma-separated fields
-                        let fields: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
+                        let fields: Vec<&str> = value.split(',').map(str::trim).collect();
 
-                        let enable = fields.first().unwrap_or(&"").to_string();
-                        let disable = fields.get(1).unwrap_or(&"").to_string();
+                        let enable = (*fields.first().unwrap_or(&"")).to_string();
+                        let disable = (*fields.get(1).unwrap_or(&"")).to_string();
 
                         // Phase 7g: Parse build_deps field and handle variable references
                         let build_deps_str = fields.get(2).unwrap_or(&"");
@@ -1031,7 +1020,7 @@ impl RecipeExtractor {
             .split_whitespace()
             .map(|dep| {
                 // Phase 7g: Try to expand simple ${VAR} references from default_variables
-                if dep.starts_with("${") && dep.ends_with("}") {
+                if dep.starts_with("${") && dep.ends_with('}') {
                     let var_name = &dep[2..dep.len() - 1];
                     self.config.default_variables
                         .get(var_name)
@@ -1128,7 +1117,7 @@ impl RecipeExtractor {
                     "PV" => variables.get("PV").cloned(),
                     "P" => {
                         // P = ${PN}-${PV}
-                        variables.get("PV").map(|pv| format!("{}-{}", recipe_name, pv))
+                        variables.get("PV").map(|pv| format!("{recipe_name}-{pv}"))
                     }
                     // Enhanced variable expansion (Phase 7e)
                     // Try to get from variables first, then from default_variables, then use sensible defaults
@@ -1163,7 +1152,7 @@ impl RecipeExtractor {
                     "MLPREFIX" => variables.get("MLPREFIX")
                         .or_else(|| self.config.default_variables.get("MLPREFIX"))
                         .cloned()
-                        .or_else(|| Some("".to_string())),
+                        .or_else(|| Some(String::new())),
                     "TARGET_PREFIX" => variables.get("TARGET_PREFIX")
                         .or_else(|| self.config.default_variables.get("TARGET_PREFIX"))
                         .cloned(),
@@ -1267,25 +1256,24 @@ impl RecipeExtractor {
         let distro_features = variables
             .get("DISTRO_FEATURES")
             .or_else(|| self.config.default_variables.get("DISTRO_FEATURES"))
-            .map(|s| s.as_str())
-            .unwrap_or("");
+            .map_or("", std::string::String::as_str);
 
         // Get dependencies for each class
         for class_name in classes {
             // Try dynamic .bbclass parsing first (Phase 7b+7f), fall back to hardcoded
-            let (class_build_deps, class_runtime_deps) = if !self.config.class_search_paths.is_empty() {
+            let (class_build_deps, class_runtime_deps) = if self.config.class_search_paths.is_empty() {
+                // No search paths configured - use hardcoded mappings only
+                (
+                    class_dependencies::get_class_build_deps(&class_name, distro_features),
+                    class_dependencies::get_class_runtime_deps(&class_name, distro_features),
+                )
+            } else {
                 // Phase 7f: Pass recipe variables for Python expression evaluation in .bbclass files
                 class_dependencies::get_class_deps_dynamic(
                     &class_name,
                     distro_features,
                     &self.config.class_search_paths,
                     variables,
-                )
-            } else {
-                // No search paths configured - use hardcoded mappings only
-                (
-                    class_dependencies::get_class_build_deps(&class_name, distro_features),
-                    class_dependencies::get_class_runtime_deps(&class_name, distro_features),
                 )
             };
 
@@ -1320,6 +1308,15 @@ impl RecipeExtractor {
                 v.split_whitespace()
                     .filter(|s| !s.is_empty())
                     .filter_map(|dep| {
+                        // Filter out BitBake internal variables that appear in DEPENDS
+                        // These are task-level dependency placeholders, not recipe dependencies
+                        if dep.starts_with("${PATCHDEPENDENCY")
+                            || dep.starts_with("${POPULATESYSROOTDEPS")
+                            || dep.starts_with("${USERADDSETSCENEDEPS")
+                        {
+                            return None;
+                        }
+
                         // Skip version constraint parts like "(>=", "2.30)"
                         if dep.starts_with('(') || dep.ends_with(')') {
                             None
@@ -1347,8 +1344,14 @@ impl RecipeExtractor {
         let mut task_flags = Vec::new();
         let mut disabled_tasks = std::collections::HashSet::new();
 
-        // Add base tasks that all BitBake recipes inherit from base.bbclass
-        // These are standard tasks defined in meta/classes-global/base.bbclass
+        // Add base tasks that all BitBake recipes inherit from base.bbclass and its inherited classes
+        // Base tasks from base.bbclass: fetch, unpack, configure, compile, install, build, cleansstate, cleanall
+        // Base tasks from patch.bbclass: patch (inherited by base.bbclass)
+        // Base tasks from staging.bbclass: populate_sysroot, prepare_recipe_sysroot (inherited by base.bbclass)
+        // Base tasks from package.bbclass: package, packagedata
+        //
+        // Note: Utility tasks (clean, listtasks, checkuri) from utility-tasks.bbclass are deliberately
+        // excluded as they are debugging/maintenance tools, not part of the normal build flow
         let base_tasks = vec![
             "fetch",
             "unpack",
@@ -1356,9 +1359,13 @@ impl RecipeExtractor {
             "configure",
             "compile",
             "install",
-            "package",
             "populate_sysroot",
+            "prepare_recipe_sysroot",
+            "package",
+            "packagedata",
             "build",
+            "cleansstate",
+            "cleanall",
         ];
 
         for task_name in base_tasks {
@@ -1376,6 +1383,13 @@ impl RecipeExtractor {
 
             // Parse addtask statements
             if let Some(task) = parse_addtask_statement(line) {
+                // Skip setscene tasks - these are BitBake shared state cache tasks
+                // that shouldn't be executed directly
+                if task.name.ends_with("_setscene") {
+                    debug!("Skipping setscene task: {}", task.name);
+                    continue;
+                }
+
                 // Check if task already exists (from inherited classes)
                 let task_id = if let Some(existing_id) = graph.find_task(recipe_id, &task.name) {
                     existing_id
@@ -1421,7 +1435,7 @@ impl RecipeExtractor {
                             graph.find_task(recipe_id, stripped)
                         } else {
                             // Try adding "do_" prefix
-                            graph.find_task(recipe_id, &format!("do_{}", name))
+                            graph.find_task(recipe_id, &format!("do_{name}"))
                         }
                     })
                 })
@@ -1435,7 +1449,7 @@ impl RecipeExtractor {
                             graph.find_task(recipe_id, stripped)
                         } else {
                             // Try adding "do_" prefix
-                            graph.find_task(recipe_id, &format!("do_{}", name))
+                            graph.find_task(recipe_id, &format!("do_{name}"))
                         }
                     })
                 })
@@ -1456,13 +1470,12 @@ impl RecipeExtractor {
                 task_node.before.extend(before_ids);
 
                 // Debug: Log if busybox task is getting dependencies
-                if busybox_constraints {
-                    if let Some((recipe_name, task_name)) = debug_info {
+                if busybox_constraints
+                    && let Some((recipe_name, task_name)) = debug_info {
                         debug!("  {} after: {} -> {} (added {} from {:?})",
                             task_name, after_count_before, task_node.after.len(),
                             after_ids.len(), after_names);
                     }
-                }
             }
         }
 
@@ -1477,7 +1490,7 @@ impl RecipeExtractor {
         // Filter out disabled tasks (those removed by deltask)
         // Need to handle both "do_taskname" and "taskname" formats
         task_names.retain(|name| {
-            let task_with_do = format!("do_{}", name);
+            let task_with_do = format!("do_{name}");
             !disabled_tasks.contains(name) && !disabled_tasks.contains(&task_with_do)
         });
 
@@ -1516,7 +1529,7 @@ impl RecipeExtractor {
         file_path: &Path,
     ) -> Result<RecipeExtraction, String> {
         let mut content = std::fs::read_to_string(file_path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+            .map_err(|e| format!("Failed to read file: {e}"))?;
 
         let recipe_name = file_path
             .file_stem()
@@ -1585,31 +1598,25 @@ impl RecipeExtractor {
                         seen_files.insert(include_file_path.clone());
 
                         // Read the include file
-                        match std::fs::read_to_string(&include_file_path) {
-                            Ok(include_content) => {
-                                // Recursively resolve includes in the included file
-                                match self.resolve_includes_in_content(
-                                    &include_content,
-                                    &include_file_path,
-                                    &base_name,
-                                ) {
-                                    Ok(resolved_include) => {
-                                        resolved.push_str(&resolved_include);
-                                        resolved.push('\n');
-                                    }
-                                    Err(_) => {
-                                        // If recursive resolution fails, just use the content
-                                        resolved.push_str(&include_content);
-                                        resolved.push('\n');
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                // Include file not readable - comment it out
-                                resolved.push_str("# ");
-                                resolved.push_str(line);
+                        if let Ok(include_content) = std::fs::read_to_string(&include_file_path) {
+                            // Recursively resolve includes in the included file
+                            if let Ok(resolved_include) = self.resolve_includes_in_content(
+                                &include_content,
+                                &include_file_path,
+                                &base_name,
+                            ) {
+                                resolved.push_str(&resolved_include);
+                                resolved.push('\n');
+                            } else {
+                                // If recursive resolution fails, just use the content
+                                resolved.push_str(&include_content);
                                 resolved.push('\n');
                             }
+                        } else {
+                            // Include file not readable - comment it out
+                            resolved.push_str("# ");
+                            resolved.push_str(line);
+                            resolved.push('\n');
                         }
                     }
                     None => {
@@ -1703,12 +1710,14 @@ impl RecipeExtractor {
         }
 
         // Append class tasks to the resolved content
-        if !class_content.is_empty() {
+        if class_content.is_empty() {
+            debug!("No tasks found from inherited classes");
+        } else {
             let task_count = class_content.lines().filter(|l| l.trim().starts_with("addtask")).count();
             debug!("Appending {} addtask statements from inherited classes", task_count);
 
             // Debug: For busybox, show what we're appending
-            if recipe_path.file_name().and_then(|n| n.to_str()).map(|n| n.contains("busybox")).unwrap_or(false) {
+            if recipe_path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.contains("busybox")) {
                 debug!("busybox class content (first 5 addtask lines):");
                 for (i, line) in class_content.lines().filter(|l| l.trim().starts_with("addtask")).take(5).enumerate() {
                     debug!("  [{}] {}", i, line.trim());
@@ -1717,8 +1726,6 @@ impl RecipeExtractor {
 
             resolved.push_str("\n# Tasks from inherited classes (base + explicit)\n");
             resolved.push_str(&class_content);
-        } else {
-            debug!("No tasks found from inherited classes");
         }
 
         Ok(resolved)
@@ -1738,8 +1745,8 @@ impl RecipeExtractor {
         }
         processed.insert(class_name.to_string());
 
-        if let Some(class_path) = self.find_class_file(class_name, recipe_path) {
-            if let Ok(class_content) = std::fs::read_to_string(&class_path) {
+        if let Some(class_path) = self.find_class_file(class_name, recipe_path)
+            && let Ok(class_content) = std::fs::read_to_string(&class_path) {
                 // First, recursively process inherited classes
                 for line in class_content.lines() {
                     let trimmed = line.trim();
@@ -1760,7 +1767,6 @@ impl RecipeExtractor {
                     }
                 }
             }
-        }
     }
 
     /// Parse inherit statement
@@ -1772,7 +1778,7 @@ impl RecipeExtractor {
 
     /// Find .bbclass file in search paths
     fn find_class_file(&self, class_name: &str, recipe_path: &Path) -> Option<std::path::PathBuf> {
-        let class_filename = format!("{}.bbclass", class_name);
+        let class_filename = format!("{class_name}.bbclass");
 
         // Try configured search paths first
         for search_path in &self.config.class_search_paths {

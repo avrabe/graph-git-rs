@@ -52,32 +52,32 @@ impl ConfigGenerator {
 
         // Machine and distro
         if let Some(machine) = &self.kas_config.machine {
-            content.push_str(&format!("MACHINE ?= \"{}\"\n", machine));
+            content.push_str(&format!("MACHINE ?= \"{machine}\"\n"));
         }
 
         if let Some(distro) = &self.kas_config.distro {
-            content.push_str(&format!("DISTRO ?= \"{}\"\n", distro));
+            content.push_str(&format!("DISTRO ?= \"{distro}\"\n"));
         }
 
-        content.push_str("\n");
+        content.push('\n');
 
         // Default paths
         content.push_str("# Build directories\n");
         content.push_str("TMPDIR = \"${TOPDIR}/tmp\"\n");
         content.push_str("DL_DIR ?= \"${TOPDIR}/downloads\"\n");
         content.push_str("SSTATE_DIR ?= \"${TOPDIR}/sstate-cache\"\n");
-        content.push_str("\n");
+        content.push('\n');
 
         // Bitzel cache directory
         content.push_str("# Bitzel cache (Bazel-style CAS)\n");
         content.push_str("BITZEL_CACHE_DIR ?= \"${TOPDIR}/bitzel-cache\"\n");
-        content.push_str("\n");
+        content.push('\n');
 
         // Custom headers from kas
         if let Some(headers) = &self.kas_config.local_conf_header {
             content.push_str("# Custom configuration from kas\n");
             for (section_name, section_content) in headers {
-                content.push_str(&format!("# Section: {}\n", section_name));
+                content.push_str(&format!("# Section: {section_name}\n"));
                 content.push_str(section_content);
                 content.push_str("\n\n");
             }
@@ -86,13 +86,13 @@ impl ConfigGenerator {
         // Package management
         content.push_str("# Package management\n");
         content.push_str("PACKAGE_CLASSES ?= \"package_ipk\"\n");
-        content.push_str("\n");
+        content.push('\n');
 
         // Parallelism
         content.push_str("# Build parallelism\n");
         content.push_str("BB_NUMBER_THREADS ?= \"${@oe.utils.cpu_count()}\"\n");
         content.push_str("PARALLEL_MAKE ?= \"-j ${@oe.utils.cpu_count()}\"\n");
-        content.push_str("\n");
+        content.push('\n');
 
         // Write file
         let local_conf_path = conf_dir.join("local.conf");
@@ -122,7 +122,7 @@ impl ConfigGenerator {
         if let Some(headers) = &self.kas_config.bblayers_conf_header {
             content.push_str("# Custom configuration from kas\n");
             for (section_name, section_content) in headers {
-                content.push_str(&format!("# Section: {}\n", section_name));
+                content.push_str(&format!("# Section: {section_name}\n"));
                 content.push_str(section_content);
                 content.push_str("\n\n");
             }
@@ -131,7 +131,7 @@ impl ConfigGenerator {
         // BBLAYERS
         content.push_str("BBLAYERS ?= \" \\\n");
 
-        for (_repo_name, layers) in &self.layer_paths {
+        for layers in self.layer_paths.values() {
             for layer_path in layers {
                 content.push_str(&format!("  {} \\\n", layer_path.display()));
             }
@@ -164,7 +164,7 @@ impl ConfigGenerator {
         if let Some(env) = &self.kas_config.env {
             content.push_str("\n# Custom environment from kas\n");
             for (key, value) in env {
-                content.push_str(&format!("export {}=\"{}\"\n", key, value));
+                content.push_str(&format!("export {key}=\"{value}\"\n"));
             }
         }
 
@@ -172,11 +172,11 @@ impl ConfigGenerator {
         content.push_str(&format!("echo \"  Build directory: {}\"\n", self.build_dir.display()));
 
         if let Some(machine) = &self.kas_config.machine {
-            content.push_str(&format!("echo \"  Machine: {}\"\n", machine));
+            content.push_str(&format!("echo \"  Machine: {machine}\"\n"));
         }
 
         if let Some(distro) = &self.kas_config.distro {
-            content.push_str(&format!("echo \"  Distro: {}\"\n", distro));
+            content.push_str(&format!("echo \"  Distro: {distro}\"\n"));
         }
 
         // Write file

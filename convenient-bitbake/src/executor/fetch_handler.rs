@@ -145,15 +145,14 @@ fn fetch_git(src_uri: &SourceUri, downloads_dir: &Path) -> FetchResult<PathBuf> 
 
     // Use shallow clone for speed (unless full history needed)
     if src_uri.srcrev.is_none() && src_uri.tag.is_none() {
-        cmd.args(&["--depth", "1"]);
+        cmd.args(["--depth", "1"]);
     }
 
     // Clone specific branch if specified
-    if let Some(ref branch) = src_uri.branch {
-        if !src_uri.nobranch {
-            cmd.args(&["--branch", branch]);
+    if let Some(ref branch) = src_uri.branch
+        && !src_uri.nobranch {
+            cmd.args(["--branch", branch]);
         }
-    }
 
     // Add URL and destination
     cmd.arg(&src_uri.url);
@@ -189,7 +188,7 @@ fn update_git_repo(repo_dir: &Path, src_uri: &SourceUri) -> FetchResult<PathBuf>
 
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_dir);
-    cmd.args(&["fetch", "origin"]);
+    cmd.args(["fetch", "origin"]);
 
     if let Some(ref branch) = src_uri.branch {
         cmd.arg(branch);
@@ -207,7 +206,7 @@ fn update_git_repo(repo_dir: &Path, src_uri: &SourceUri) -> FetchResult<PathBuf>
     } else if let Some(ref tag) = src_uri.tag {
         checkout_git_revision(repo_dir, tag)?;
     } else if let Some(ref branch) = src_uri.branch {
-        checkout_git_revision(repo_dir, &format!("origin/{}", branch))?;
+        checkout_git_revision(repo_dir, &format!("origin/{branch}"))?;
     }
 
     Ok(repo_dir.to_path_buf())
@@ -219,7 +218,7 @@ fn checkout_git_revision(repo_dir: &Path, revision: &str) -> FetchResult<()> {
 
     let output = Command::new("git")
         .current_dir(repo_dir)
-        .args(&["checkout", revision])
+        .args(["checkout", revision])
         .output()?;
 
     if !output.status.success() {
@@ -272,7 +271,7 @@ fn fetch_http(src_uri: &SourceUri, downloads_dir: &Path) -> FetchResult<PathBuf>
 /// Download file using wget
 fn download_with_wget(url: &str, dest: &Path) -> FetchResult<()> {
     let output = Command::new("wget")
-        .args(&[
+        .args([
             "-O", dest.to_str().unwrap(),
             "--no-check-certificate",  // Some build servers use self-signed certs
             url
@@ -291,7 +290,7 @@ fn download_with_wget(url: &str, dest: &Path) -> FetchResult<()> {
 /// Download file using curl
 fn download_with_curl(url: &str, dest: &Path) -> FetchResult<()> {
     let output = Command::new("curl")
-        .args(&[
+        .args([
             "-o", dest.to_str().unwrap(),
             "-L",  // Follow redirects
             "--insecure",  // Some build servers use self-signed certs
@@ -347,7 +346,7 @@ fn extract_repo_name(url: &str) -> FetchResult<String> {
     let name = url_clean
         .rsplit('/')
         .next()
-        .ok_or_else(|| FetchError::InvalidUrl(format!("Cannot extract repo name from: {}", url)))?
+        .ok_or_else(|| FetchError::InvalidUrl(format!("Cannot extract repo name from: {url}")))?
         .trim_end_matches(".git");
 
     Ok(name.to_string())
@@ -364,13 +363,13 @@ fn extract_filename(url: &str) -> FetchResult<String> {
     let name = url_clean
         .rsplit('/')
         .next()
-        .ok_or_else(|| FetchError::InvalidUrl(format!("Cannot extract filename from: {}", url)))?;
+        .ok_or_else(|| FetchError::InvalidUrl(format!("Cannot extract filename from: {url}")))?;
 
     // Remove query parameters if present
     let name_clean = name.split('?').next().unwrap_or(name);
 
     if name_clean.is_empty() {
-        return Err(FetchError::InvalidUrl(format!("Empty filename in: {}", url)));
+        return Err(FetchError::InvalidUrl(format!("Empty filename in: {url}")));
     }
 
     Ok(name_clean.to_string())

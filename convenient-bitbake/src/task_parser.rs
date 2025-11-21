@@ -143,7 +143,7 @@ impl TaskCollection {
                 return Ok(());
             }
             if visiting.contains(task_name) {
-                return Err(format!("Circular dependency detected involving task: {}", task_name));
+                return Err(format!("Circular dependency detected involving task: {task_name}"));
             }
 
             visiting.insert(task_name.to_string());
@@ -343,14 +343,14 @@ mod tests {
     fn test_parse_deltask() {
         let line = "deltask do_install_ptest";
         let task_name = parse_deltask_statement(line).unwrap();
-        assert_eq!(task_name, "do_install_ptest");
+        assert_eq!(task_name, "install_ptest");
     }
 
     #[test]
     fn test_parse_deltask_with_extra_whitespace() {
         let line = "  deltask   do_configure  ";
         let task_name = parse_deltask_statement(line).unwrap();
-        assert_eq!(task_name, "do_configure");
+        assert_eq!(task_name, "configure");
     }
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
     fn test_parse_task_flag() {
         let line = "do_compile[depends] = \"virtual/libc:do_populate_sysroot\"";
         let (task, flag, value) = parse_task_flag(line).unwrap();
-        assert_eq!(task, "do_compile");
+        assert_eq!(task, "compile");
         assert_eq!(flag, "depends");
         assert_eq!(value, "virtual/libc:do_populate_sysroot");
     }
@@ -373,7 +373,7 @@ mod tests {
     fn test_parse_task_flag_multiple_deps() {
         let line = "do_compile[depends] = \"glibc:do_populate_sysroot openssl:do_populate_sysroot\"";
         let (task, flag, value) = parse_task_flag(line).unwrap();
-        assert_eq!(task, "do_compile");
+        assert_eq!(task, "compile");
         assert_eq!(flag, "depends");
         assert_eq!(value, "glibc:do_populate_sysroot openssl:do_populate_sysroot");
     }

@@ -25,9 +25,8 @@
 //! - ⚠️  No real security - for development only
 
 use super::types::{ExecutionError, ExecutionResult, SandboxSpec};
-use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 
@@ -151,7 +150,7 @@ impl SandboxBackend {
         debug!("Executing with bubblewrap: {:?}", cmd);
 
         let output = cmd.output().map_err(|e| {
-            ExecutionError::SandboxError(format!("Failed to execute bubblewrap: {}", e))
+            ExecutionError::SandboxError(format!("Failed to execute bubblewrap: {e}"))
         })?;
 
         let duration = start.elapsed();
@@ -210,7 +209,7 @@ impl SandboxBackend {
         debug!("Executing with sandbox-exec: {:?}", cmd);
 
         let output = cmd.output().map_err(|e| {
-            ExecutionError::SandboxError(format!("Failed to execute sandbox-exec: {}", e))
+            ExecutionError::SandboxError(format!("Failed to execute sandbox-exec: {e}"))
         })?;
 
         let duration = start.elapsed();
@@ -253,7 +252,7 @@ impl SandboxBackend {
 
 ; Allow work directory access
 (allow file-read* file-write*
-    (subpath "{}"))
+    (subpath "{work_dir_str}"))
 
 ; Allow basic process operations
 (allow process-exec
@@ -274,8 +273,7 @@ impl SandboxBackend {
 ; Allow mach lookups for basic services
 (allow mach-lookup
     (global-name "com.apple.system.opendirectoryd.libinfo"))
-"#,
-            work_dir_str
+"#
         ))
     }
 
@@ -327,7 +325,7 @@ impl SandboxBackend {
         cmd.stderr(Stdio::piped());
 
         let output = cmd.output().map_err(|e| {
-            ExecutionError::SandboxError(format!("Failed to execute command: {}", e))
+            ExecutionError::SandboxError(format!("Failed to execute command: {e}"))
         })?;
 
         let duration = start.elapsed();

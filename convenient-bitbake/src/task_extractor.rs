@@ -117,7 +117,7 @@ impl TaskExtractor {
                 let (code, end_line) = self.extract_function_body(&lines, i);
 
                 let key = if let Some(ref suffix) = override_suffix {
-                    format!("{}{}", task_name, suffix)
+                    format!("{task_name}{suffix}")
                 } else {
                     task_name.clone()
                 };
@@ -143,7 +143,7 @@ impl TaskExtractor {
                 let (code, end_line) = self.extract_function_body(&lines, i);
 
                 let key = if let Some(ref suffix) = override_suffix {
-                    format!("{}{}", task_name, suffix)
+                    format!("{task_name}{suffix}")
                 } else {
                     task_name.clone()
                 };
@@ -169,7 +169,7 @@ impl TaskExtractor {
                 let (code, end_line) = self.extract_function_body(&lines, i);
 
                 let key = if let Some(ref suffix) = override_suffix {
-                    format!("{}{}", task_name, suffix)
+                    format!("{task_name}{suffix}")
                 } else {
                     task_name.clone()
                 };
@@ -190,8 +190,8 @@ impl TaskExtractor {
             // Check it doesn't start with "do_" or "python" or "fakeroot"
             if !line.starts_with("do_")
                 && !line.starts_with("python ")
-                && !line.starts_with("fakeroot ") {
-                if let Some(caps) = self.helper_func_regex.captures(line) {
+                && !line.starts_with("fakeroot ")
+                && let Some(caps) = self.helper_func_regex.captures(line) {
                     let func_name = caps.get(1).unwrap().as_str().to_string();
                     let (code, end_line) = self.extract_function_body(&lines, i);
 
@@ -206,7 +206,6 @@ impl TaskExtractor {
                     i = end_line + 1;
                     continue;
                 }
-            }
 
             i += 1;
         }
@@ -232,7 +231,7 @@ impl TaskExtractor {
                 let (code, end_line) = self.extract_function_body(&lines, i);
 
                 let key = if let Some(ref suffix) = override_suffix {
-                    format!("{}{}", task_name, suffix)
+                    format!("{task_name}{suffix}")
                 } else {
                     task_name.clone()
                 };
@@ -258,7 +257,7 @@ impl TaskExtractor {
                 let (code, end_line) = self.extract_function_body(&lines, i);
 
                 let key = if let Some(ref suffix) = override_suffix {
-                    format!("{}{}", task_name, suffix)
+                    format!("{task_name}{suffix}")
                 } else {
                     task_name.clone()
                 };
@@ -284,7 +283,7 @@ impl TaskExtractor {
                 let (code, end_line) = self.extract_function_body(&lines, i);
 
                 let key = if let Some(ref suffix) = override_suffix {
-                    format!("{}{}", task_name, suffix)
+                    format!("{task_name}{suffix}")
                 } else {
                     task_name.clone()
                 };
@@ -351,7 +350,7 @@ impl TaskExtractor {
     /// Extract task implementations from a recipe file
     pub fn extract_from_file(&self, path: &Path) -> Result<HashMap<String, TaskImplementation>, String> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+            .map_err(|e| format!("Failed to read file: {e}"))?;
         Ok(self.extract_from_content(&content))
     }
 
@@ -424,11 +423,11 @@ do_install() {
         let tasks = extractor.extract_from_content(content);
 
         assert_eq!(tasks.len(), 2);
-        assert!(tasks.contains_key("do_compile"));
-        assert!(tasks.contains_key("do_install"));
+        assert!(tasks.contains_key("compile"));
+        assert!(tasks.contains_key("install"));
 
-        let compile = &tasks["do_compile"];
-        assert_eq!(compile.name, "do_compile");
+        let compile = &tasks["compile"];
+        assert_eq!(compile.name, "compile");
         assert_eq!(compile.impl_type, TaskImplementationType::Shell);
         assert!(compile.code.contains("oe_runmake"));
     }
@@ -447,7 +446,7 @@ python do_package:prepend () {
 
         assert_eq!(tasks.len(), 1);
         let task = tasks.values().next().unwrap();
-        assert_eq!(task.name, "do_package");
+        assert_eq!(task.name, "package");
         assert_eq!(task.impl_type, TaskImplementationType::Python);
         assert!(task.code.contains("setVar"));
     }
@@ -472,8 +471,8 @@ do_install:append() {
         let append_tasks = extractor.extract_from_content(append_content);
         let merged = extractor.merge_implementations(&base_tasks, &append_tasks);
 
-        assert!(merged.contains_key("do_install"));
-        let install_task = &merged["do_install"];
+        assert!(merged.contains_key("install"));
+        let install_task = &merged["install"];
         assert!(install_task.code.contains("Base install"));
         assert!(install_task.code.contains("Additional install step"));
     }

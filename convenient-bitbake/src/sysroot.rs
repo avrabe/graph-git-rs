@@ -15,7 +15,7 @@
 //! - Atomic (filesystem operation)
 //! - Works when artifacts and sandbox are on the same filesystem
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

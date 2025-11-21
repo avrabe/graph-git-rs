@@ -87,7 +87,7 @@ impl Sandbox {
     /// Check if kernel supports overlayfs
     fn check_overlay_support() -> Result<bool> {
         let filesystems = fs::read_to_string("/proc/filesystems")
-            .map_err(|e| SandboxError::Io(e))?;
+            .map_err(SandboxError::Io)?;
         Ok(filesystems.contains("overlay"))
     }
 

@@ -4,7 +4,7 @@
 //! It handles repository fetching, configuration generation, and build execution.
 
 use convenient_bitbake::{
-    BuildContext, ExtractionConfig, RecipeExtractor, RecipeGraph,
+    BuildContext, ExtractionConfig, RecipeExtractor,
     TaskImplementation,
     Pipeline, PipelineConfig,
 };
@@ -73,7 +73,7 @@ pub async fn execute(
                 tracing::info!("Cloning {} (branch: {})...", repo_name, branch);
 
                 let output = Command::new("git")
-                    .args(&[
+                    .args([
                         "clone",
                         "--branch",
                         branch,
@@ -101,7 +101,7 @@ pub async fn execute(
 
         // Collect layer paths for this repo
         let mut repo_layers = Vec::new();
-        for (layer_name, _) in &repo.layers {
+        for layer_name in repo.layers.keys() {
             let layer_path = repo_dir.join(layer_name);
             if layer_path.exists() {
                 tracing::debug!("  Found layer: {:?}", layer_path);
@@ -144,7 +144,7 @@ pub async fn execute(
     }
 
     // Add layers with their priorities from layer.conf
-    for (_repo_name, layers) in &layer_paths {
+    for layers in layer_paths.values() {
         for layer_path in layers {
             let layer_conf = layer_path.join("conf/layer.conf");
             if layer_conf.exists() {

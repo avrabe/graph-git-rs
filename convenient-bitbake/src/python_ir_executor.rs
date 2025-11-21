@@ -4,7 +4,6 @@
 use crate::python_ir::{OpKind, Operation, PythonIR, ValueId, ExecutionStrategy};
 use std::collections::HashMap;
 
-#[cfg(feature = "python-execution")]
 use crate::python_executor::PythonExecutor;
 
 /// Result of IR execution
@@ -145,42 +144,31 @@ impl IRExecutor {
 
     /// Execute using RustPython fallback
     fn execute_rustpython(&self, ir: &PythonIR) -> IRExecutionResult {
-        #[cfg(feature = "python-execution")]
-        {
-            // Find ComplexPython operation and extract code
-            for operation in ir.operations() {
-                if let OpKind::ComplexPython { code } = &operation.kind {
-                    let executor = PythonExecutor::new();
-                    let result = executor.execute(&code, &self.initial_vars);
+        // Find ComplexPython operation and extract code
+        for operation in ir.operations() {
+            if let OpKind::ComplexPython { code } = &operation.kind {
+                let executor = PythonExecutor::new();
+                let result = executor.execute(code, &self.initial_vars);
 
-                    return if result.success {
-                        IRExecutionResult::success(
-                            result.variables_set,
-                            result.variables_read,
-                            ExecutionStrategy::RustPython,
-                        )
-                    } else {
-                        IRExecutionResult::failure(
-                            result.error.unwrap_or_else(|| "Unknown error".to_string()),
-                            ExecutionStrategy::RustPython,
-                        )
-                    };
-                }
+                return if result.success {
+                    IRExecutionResult::success(
+                        result.variables_set,
+                        result.variables_read,
+                        ExecutionStrategy::RustPython,
+                    )
+                } else {
+                    IRExecutionResult::failure(
+                        result.error.unwrap_or_else(|| "Unknown error".to_string()),
+                        ExecutionStrategy::RustPython,
+                    )
+                };
             }
-
-            IRExecutionResult::failure(
-                "No ComplexPython operation found for RustPython execution".to_string(),
-                ExecutionStrategy::RustPython,
-            )
         }
 
-        #[cfg(not(feature = "python-execution"))]
-        {
-            IRExecutionResult::failure(
-                "RustPython execution requested but python-execution feature not enabled".to_string(),
-                ExecutionStrategy::RustPython,
-            )
-        }
+        IRExecutionResult::failure(
+            "No ComplexPython operation found for RustPython execution".to_string(),
+            ExecutionStrategy::RustPython,
+        )
     }
 
     /// Execute single operation (static mode)
@@ -223,7 +211,7 @@ impl IRExecutor {
 
                 if let Some(value_str) = self.values.get(value) {
                     let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(expanded_var_name, format!("{}{}", current, value_str));
+                    self.current_vars.insert(expanded_var_name, format!("{current}{value_str}"));
                 }
                 Ok(())
             }
@@ -234,7 +222,7 @@ impl IRExecutor {
 
                 if let Some(value_str) = self.values.get(value) {
                     let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(expanded_var_name, format!("{}{}", value_str, current));
+                    self.current_vars.insert(expanded_var_name, format!("{value_str}{current}"));
                 }
                 Ok(())
             }
@@ -289,7 +277,7 @@ impl IRExecutor {
 
                 if let Some(value_str) = self.values.get(value) {
                     let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(expanded_var_name, format!("{}{}", current, value_str));
+                    self.current_vars.insert(expanded_var_name, format!("{current}{value_str}"));
                 }
                 Ok(())
             }
@@ -300,7 +288,7 @@ impl IRExecutor {
 
                 if let Some(value_str) = self.values.get(value) {
                     let current = self.current_vars.get(&expanded_var_name).cloned().unwrap_or_default();
-                    self.current_vars.insert(expanded_var_name, format!("{}{}", value_str, current));
+                    self.current_vars.insert(expanded_var_name, format!("{value_str}{current}"));
                 }
                 Ok(())
             }
@@ -309,7 +297,7 @@ impl IRExecutor {
                 if let Some(result_id) = op.result {
                     let left_val = self.values.get(left).cloned().unwrap_or_default();
                     let right_val = self.values.get(right).cloned().unwrap_or_default();
-                    self.values.insert(result_id, format!("{}{}", left_val, right_val));
+                    self.values.insert(result_id, format!("{left_val}{right_val}"));
                 }
                 Ok(())
             }
@@ -467,7 +455,7 @@ impl IRExecutor {
             StringMethodKind::Find => {
                 if let Some(arg_id) = args.first() {
                     let arg = self.values.get(arg_id).cloned().unwrap_or_default();
-                    Ok(value.find(&arg).map(|i| i.to_string()).unwrap_or_else(|| "-1".to_string()))
+                    Ok(value.find(&arg).map_or_else(|| "-1".to_string(), |i| i.to_string()))
                 } else {
                     Err("find requires 1 argument".to_string())
                 }
@@ -476,7 +464,7 @@ impl IRExecutor {
             StringMethodKind::RFind => {
                 if let Some(arg_id) = args.first() {
                     let arg = self.values.get(arg_id).cloned().unwrap_or_default();
-                    Ok(value.rfind(&arg).map(|i| i.to_string()).unwrap_or_else(|| "-1".to_string()))
+                    Ok(value.rfind(&arg).map_or_else(|| "-1".to_string(), |i| i.to_string()))
                 } else {
                     Err("rfind requires 1 argument".to_string())
                 }

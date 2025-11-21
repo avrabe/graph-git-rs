@@ -29,28 +29,27 @@ fn atomic_write(path: &Path, data: &[u8]) -> ExecutionResult<()> {
         .truncate(true)
         .mode(0o644)
         .open(&temp_path)
-        .map_err(|e| ExecutionError::CacheError(format!("Failed to create temp file: {}", e)))?;
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to create temp file: {e}")))?;
 
     file.write_all(data)
-        .map_err(|e| ExecutionError::CacheError(format!("Failed to write data: {}", e)))?;
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to write data: {e}")))?;
 
     // CRITICAL: fsync the file data to disk before rename
     file.sync_all()
-        .map_err(|e| ExecutionError::CacheError(format!("Failed to fsync file: {}", e)))?;
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to fsync file: {e}")))?;
 
     // Close file before rename
     drop(file);
 
     // Atomic rename (POSIX guarantees atomicity)
     fs::rename(&temp_path, path)
-        .map_err(|e| ExecutionError::CacheError(format!("Failed to rename: {}", e)))?;
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to rename: {e}")))?;
 
     // CRITICAL: fsync parent directory to ensure directory entry is durable
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = File::open(parent) {
+    if let Some(parent) = path.parent()
+        && let Ok(dir) = File::open(parent) {
             let _ = dir.sync_all(); // Best effort - some filesystems don't support this
         }
-    }
 
     Ok(())
 }
@@ -72,11 +71,11 @@ fn acquire_lock(path: &Path) -> ExecutionResult<File> {
         .create(true)
         .write(true)
         .open(path)
-        .map_err(|e| ExecutionError::CacheError(format!("Failed to create lock file: {}", e)))?;
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to create lock file: {e}")))?;
 
     // Acquire exclusive lock (blocks if already locked)
     flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)
-        .map_err(|e| ExecutionError::CacheError(format!("Failed to acquire lock: {}", e)))?;
+        .map_err(|e| ExecutionError::CacheError(format!("Failed to acquire lock: {e}")))?;
 
     Ok(lock_file)
 }
@@ -193,7 +192,7 @@ impl ContentAddressableStore {
         }
 
         fs::read(&path).map_err(|e| {
-            ExecutionError::CacheError(format!("Failed to read {}: {}", hash, e))
+            ExecutionError::CacheError(format!("Failed to read {hash}: {e}"))
         })
     }
 
@@ -229,12 +228,9 @@ impl ContentAddressableStore {
         }
 
         // Try hard link first (fast), fall back to copy
-        match fs::hard_link(&source, dest) {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                fs::copy(&source, dest)?;
-                Ok(())
-            }
+        if let Ok(()) = fs::hard_link(&source, dest) { Ok(()) } else {
+            fs::copy(&source, dest)?;
+            Ok(())
         }
     }
 
@@ -260,7 +256,7 @@ impl ContentAddressableStore {
         for entry in walkdir::WalkDir::new(&sha256_dir)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if entry.file_type().is_file() {
                 let path = entry.path();
@@ -323,7 +319,7 @@ impl ContentAddressableStore {
 
             // Only do LRU eviction in automatic GC (no mark-and-sweep)
             let evicted = self.evict_lru(bytes_to_free)?;
-            eprintln!("Automatic GC: evicted {} oldest objects", evicted);
+            eprintln!("Automatic GC: evicted {evicted} oldest objects");
         }
 
         Ok(())
@@ -342,12 +338,11 @@ impl ContentAddressableStore {
         let initial_size = self.compute_total_size();
 
         eprintln!(
-            "Starting GC: {} objects, {} bytes",
-            initial_count, initial_size
+            "Starting GC: {initial_count} objects, {initial_size} bytes"
         );
 
         // Mark phase: identify objects to keep
-        let mut reachable: HashSet<ContentHash> = keep.iter().cloned().collect();
+        let reachable: HashSet<ContentHash> = keep.iter().cloned().collect();
 
         // Sweep phase: delete unreachable objects
         let mut deleted = 0;
@@ -357,7 +352,7 @@ impl ContentAddressableStore {
             if !reachable.contains(hash) {
                 // Delete from disk
                 if let Err(e) = fs::remove_file(&metadata.path) {
-                    eprintln!("Warning: Failed to delete {}: {}", hash, e);
+                    eprintln!("Warning: Failed to delete {hash}: {e}");
                 } else {
                     hashes_to_remove.push(hash.clone());
                     deleted += 1;
@@ -373,14 +368,13 @@ impl ContentAddressableStore {
         let size_after_sweep = self.compute_total_size();
 
         eprintln!(
-            "Sweep complete: deleted {} unreachable objects, size now {} bytes",
-            deleted, size_after_sweep
+            "Sweep complete: deleted {deleted} unreachable objects, size now {size_after_sweep} bytes"
         );
 
         // LRU eviction: if still over target, evict oldest objects
         if size_after_sweep > self.config.gc_target_bytes {
             let evicted = self.evict_lru(size_after_sweep - self.config.gc_target_bytes)?;
-            eprintln!("LRU eviction: removed {} objects", evicted);
+            eprintln!("LRU eviction: removed {evicted} objects");
             deleted += evicted;
         }
 
@@ -419,7 +413,7 @@ impl ContentAddressableStore {
             // Remove object
             if let Some(metadata) = self.index.remove(&hash) {
                 if let Err(e) = fs::remove_file(&metadata.path) {
-                    eprintln!("Warning: Failed to evict {}: {}", hash, e);
+                    eprintln!("Warning: Failed to evict {hash}: {e}");
                 } else {
                     freed += size;
                     evicted += 1;
@@ -535,7 +529,7 @@ impl ActionCache {
         let hex = signature.to_hex();
         self.root
             .join(&hex[0..2])
-            .join(format!("{}.json", hex))
+            .join(format!("{hex}.json"))
     }
 
     fn load_from_disk(&mut self) -> ExecutionResult<()> {
@@ -546,7 +540,7 @@ impl ActionCache {
         for entry in walkdir::WalkDir::new(&self.root)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if entry.file_type().is_file() && entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
                 let json = fs::read_to_string(entry.path())?;

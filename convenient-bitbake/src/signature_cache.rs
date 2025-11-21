@@ -9,7 +9,7 @@
 //!
 //! This ensures that changes propagate correctly through the dependency graph.
 
-use crate::{ContentHash, TaskGraph, TaskImplementation};
+use crate::{TaskGraph, TaskImplementation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -185,8 +185,7 @@ impl SignatureCache {
                 let task_code = task_impls
                     .get(&task.recipe_name)
                     .and_then(|impls| impls.get(&task.task_name))
-                    .map(|impl_| impl_.code.as_str())
-                    .unwrap_or("");
+                    .map_or("", |impl_| impl_.code.as_str());
 
                 // Collect dependency signatures
                 let mut dep_sigs = Vec::new();
@@ -233,7 +232,7 @@ impl SignatureCache {
 
     /// Get signature for a task
     pub fn get_signature(&self, recipe: &str, task: &str) -> Option<&str> {
-        let key = format!("{}:{}", recipe, task);
+        let key = format!("{recipe}:{task}");
         self.signatures.get(&key).and_then(|sig| sig.signature.as_deref())
     }
 
@@ -272,29 +271,26 @@ impl SignatureCache {
         task: &str,
         new_signature: &EnhancedTaskSignature,
     ) -> bool {
-        let key = format!("{}:{}", recipe, task);
+        let key = format!("{recipe}:{task}");
 
-        match self.signatures.get(&key) {
-            Some(cached_sig) => {
-                // Compare signatures
-                let cached = cached_sig.signature.as_ref().map(|s| s.as_str());
-                let new = new_signature.signature.as_ref().map(|s| s.as_str());
+        if let Some(cached_sig) = self.signatures.get(&key) {
+            // Compare signatures
+            let cached = cached_sig.signature.as_deref();
+            let new = new_signature.signature.as_deref();
 
-                match (cached, new) {
-                    (Some(c), Some(n)) if c == n => {
-                        debug!("  ✓ Task {}:{} unchanged", recipe, task);
-                        false
-                    }
-                    _ => {
-                        info!("  ↻ Task {}:{} needs rebuild", recipe, task);
-                        true
-                    }
+            match (cached, new) {
+                (Some(c), Some(n)) if c == n => {
+                    debug!("  ✓ Task {}:{} unchanged", recipe, task);
+                    false
+                }
+                _ => {
+                    info!("  ↻ Task {}:{} needs rebuild", recipe, task);
+                    true
                 }
             }
-            None => {
-                info!("  ↻ Task {}:{} not in cache", recipe, task);
-                true
-            }
+        } else {
+            info!("  ↻ Task {}:{} not in cache", recipe, task);
+            true
         }
     }
 }

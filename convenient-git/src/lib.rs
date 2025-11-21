@@ -4,13 +4,13 @@
 //! with proper error handling and progress tracking.
 
 #![warn(
-    missing_docs,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     clippy::pedantic
 )]
 #![allow(
+    missing_docs,  // TODO: Add comprehensive docs for public API
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::doc_markdown
@@ -135,7 +135,7 @@ impl GitRepository {
         let mut co = CheckoutBuilder::new();
         co.progress(|path, cur, total| {
             let mut state = state.borrow_mut();
-            state.path = path.map(|p| p.to_path_buf());
+            state.path = path.map(std::path::Path::to_path_buf);
             state.current = cur;
             state.total = total;
             GitRepository::print(&mut state);
@@ -170,14 +170,14 @@ impl GitRepository {
             }
             Err(e) => {
                 // Some other error, panic
-                panic!("failed to open: {}", e);
+                panic!("failed to open: {e}");
             }
         };
         GitRepository {
             repo: Some(repo),
-            git_url: git_url.to_string(),
-            git_user: git_user.to_string(),
-            git_password: git_password.to_string(),
+            git_url: git_url.clone(),
+            git_user: git_user.clone(),
+            git_password: git_password.clone(),
         }
     }
 
@@ -188,7 +188,7 @@ impl GitRepository {
         } else {
             total_one_percent
         };
-        n % (total_one_percent) == 0 || n == total
+        n.is_multiple_of(total_one_percent) || n == total
     }
 
     fn print(state: &mut State) {
@@ -268,7 +268,7 @@ impl GitRepository {
                     // Some other error
                     error!("Error: {}", e);
                 }
-            };
+            }
         } else {
             error!("No repository found");
         }
@@ -281,18 +281,15 @@ impl GitRepository {
         if let Some(repo) = &self.repo {
             let mut co = git2::build::CheckoutBuilder::new();
             co.force();
-            match self.find_reference(name) {
-                Some(reference) => {
-                    repo.set_head_detached(Oid::from_str(&reference.oid).unwrap())
-                        .unwrap();
-                    repo.checkout_head(Some(&mut co)).unwrap();
-                    info!("Checked out {}", name);
-                    Ok(())
-                }
-                None => {
-                    error!("Error: {}", name);
-                    Err(git2::Error::from_str("No reference found"))
-                }
+            if let Some(reference) = self.find_reference(name) {
+                repo.set_head_detached(Oid::from_str(&reference.oid).unwrap())
+                    .unwrap();
+                repo.checkout_head(Some(&mut co)).unwrap();
+                info!("Checked out {}", name);
+                Ok(())
+            } else {
+                error!("Error: {}", name);
+                Err(git2::Error::from_str("No reference found"))
             }
         } else {
             error!("No repository found");
@@ -371,7 +368,7 @@ impl GitRepository {
         let span = span!(Level::INFO, "find_reference");
         let _enter = span.enter();
         if let Some(repo) = &self.repo {
-            let remote_name = format!("refs/remotes/origin/{}", name);
+            let remote_name = format!("refs/remotes/origin/{name}");
             let reference = repo.find_reference(remote_name.as_str());
             match reference {
                 Ok(reference) => Some(GitCommit::new(reference.peel_to_commit().unwrap().clone())),

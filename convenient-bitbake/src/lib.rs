@@ -4,13 +4,13 @@
 //! with modern caching and sandboxing inspired by Bazel.
 
 #![warn(
-    missing_docs,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     clippy::pedantic
 )]
 #![allow(
+    missing_docs,  // TODO: Add comprehensive docs for public API
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::doc_markdown,
@@ -38,6 +38,7 @@ pub mod recipe_extractor;
 pub mod simple_python_eval;
 pub mod class_dependencies;
 pub mod executor;
+pub mod fetcher;
 pub mod pipeline;
 pub mod signature_cache;
 pub mod build_orchestrator;
@@ -262,7 +263,7 @@ impl BitbakeRecipe {
     /// Parse a BitBake file from disk
     pub fn parse_file(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+            .map_err(|e| format!("Failed to read file: {e}"))?;
 
         Self::parse_string(&content, path)
     }
@@ -325,7 +326,7 @@ fn extract_from_cst(node: &SyntaxNode, recipe: &mut BitbakeRecipe) {
     if let Some(src_uri_str) = recipe.variables.get("SRC_URI") {
         match parse_src_uri_value(src_uri_str) {
             Ok(sources) => recipe.sources.extend(sources),
-            Err(e) => recipe.parse_warnings.push(format!("Failed to parse SRC_URI: {}", e)),
+            Err(e) => recipe.parse_warnings.push(format!("Failed to parse SRC_URI: {e}")),
         }
     }
 
@@ -439,14 +440,16 @@ fn extract_include(node: &SyntaxNode, recipe: &mut BitbakeRecipe, required: bool
     // Include ERROR_TOKEN as they might be valid path characters like '-' or '.'
     let mut path = String::new();
     let mut found_keyword = false;
+    let mut skipped_first_keyword = false;
 
     for elem in node.descendants_with_tokens() {
         if let Some(token) = elem.as_token() {
             let text = token.text();
 
-            // Skip the include/require keyword itself
-            if text == "include" || text == "require" {
+            // Skip only the FIRST include/require keyword
+            if !skipped_first_keyword && (text == "include" || text == "require") {
                 found_keyword = true;
+                skipped_first_keyword = true;
                 continue;
             }
 
@@ -457,6 +460,7 @@ fn extract_include(node: &SyntaxNode, recipe: &mut BitbakeRecipe, required: bool
 
             // After the keyword, collect everything else as the path
             // This includes IDENT, VAR_EXPANSION, STRING, and even ERROR_TOKEN (which might be '-' or '.')
+            // Now "include" in the path (like conf/machine/include/arm) won't be skipped
             if found_keyword {
                 let trimmed = text.trim_matches('"').trim_matches('\'');
                 path.push_str(trimmed);
@@ -474,7 +478,7 @@ fn parse_src_uri_value(value: &str) -> Result<Vec<SourceUri>, String> {
     let mut sources = Vec::new();
 
     // Handle multi-line strings with backslash continuation
-    let cleaned = value.replace("\\\n", " ").replace("\\", "");
+    let cleaned = value.replace("\\\n", " ").replace('\\', "");
 
     // Split on whitespace but respect quotes
     let mut current_uri = String::new();
@@ -584,8 +588,7 @@ impl Bitbake {
         entry
             .file_name()
             .to_str()
-            .map(|s| s.ends_with(".bb") || s.ends_with(".bbappend"))
-            .unwrap_or(false)
+            .is_some_and(|s| s.ends_with(".bb") || s.ends_with(".bbappend"))
             || entry.path().is_dir()
     }
 

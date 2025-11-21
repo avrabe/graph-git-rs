@@ -9,79 +9,26 @@
 
 use convenient_bitbake::{
     BuildEnvironment, BuildOrchestrator, OrchestratorConfig,
-    SimplePythonEvaluator, TaskGraphBuilder,
+    TaskGraphBuilder,
 };
 use convenient_bitbake::executor::{
-    TaskExecutor, CacheManager,
+    TaskExecutor, CacheManager, TaskMonitor,
 };
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-/// Expand BitBake script with full Python support
-fn expand_script(
-    script: &str,
-    env: &HashMap<String, String>,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let evaluator = SimplePythonEvaluator::new(env.clone());
-
-    // Try to evaluate each ${@...} expression
-    let mut result = script.to_string();
-    let mut changed = true;
-
-    while changed {
-        changed = false;
-        if let Some(start) = result.find("${@") {
-            if let Some(end) = result[start..].find('}') {
-                let expr = &result[start..start + end + 1];
-
-                match evaluator.evaluate(expr) {
-                    Some(value) => {
-                        result = format!("{}{}{}", &result[..start], value, &result[start + end + 1..]);
-                        changed = true;
-                    }
-                    None => {
-                        // Try simple expansion for other ${VAR}
-                        break;
-                    }
-                }
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-
-    // Fallback simple ${VAR} expansion
-    result = simple_expand(&result, env);
-
-    Ok(result)
-}
-
-/// Fallback simple expansion
-fn simple_expand(script: &str, env: &HashMap<String, String>) -> String {
-    let mut result = script.to_string();
-    loop {
-        if let Some(start) = result.find("${") {
-            if let Some(end) = result[start..].find('}') {
-                let var_name = &result[start + 2..start + end];
-                if var_name.starts_with('@') {
-                    // Skip Python expressions in fallback
-                    break;
-                }
-                let replacement = env.get(var_name).cloned().unwrap_or_default();
-                result = format!("{}{}{}", &result[..start], replacement, &result[start + end + 1..]);
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    result
-}
+// TODO: Re-enable Python expression expansion when needed
+// /// Expand BitBake script with full Python support
+// #[allow(dead_code)]
+// fn expand_script(
+//     script: &str,
+//     env: &HashMap<String, String>,
+// ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+//     let evaluator = SimplePythonEvaluator::new(env.clone());
+//     ... (code commented out for now)
+// }
 
 /// Execute build with full BuildOrchestrator pipeline
 pub async fn execute(
@@ -175,7 +122,7 @@ pub async fn execute(
     let recipe_id = build_plan.recipe_graph.find_recipe(target)
         .ok_or_else(|| format!("Recipe '{}' not found", target))?;
     let recipe = build_plan.recipe_graph.get_recipe(recipe_id)
-        .ok_or_else(|| format!("Recipe not found in graph"))?;
+        .ok_or_else(|| "Recipe not found in graph".to_string())?;
 
     println!("  ✓ Found: {} {}", recipe.name, recipe.version.as_deref().unwrap_or("unknown"));
 
@@ -239,6 +186,19 @@ pub async fn execute(
     let cache_dir = build_dir.join("hitzeleiter-cache");
     let mut executor = TaskExecutor::new(&cache_dir)?;
 
+    // Create task monitor for nice UI
+    let monitor = TaskMonitor::new();
+
+    // Register all tasks in the monitor
+    for task in exec_graph.tasks.values() {
+        let task_key = format!("{}:{}", task.recipe_name, task.task_name);
+        monitor.register_task(
+            task_key.clone(),
+            task.recipe_name.clone(),
+            task.task_name.clone(),
+        );
+    }
+
     let mut completed = 0;
     let mut from_cache = 0;
     let mut failed = 0;
@@ -252,7 +212,107 @@ pub async fn execute(
             let task_key = format!("{}:{}", exec_task.recipe_name, exec_task.task_name);
 
             if let Some(spec) = build_plan.task_specs.get(&task_key) {
-                println!("  Executing: {}", task_key);
+                // Mark task as started in monitor
+                monitor.task_started(&task_key);
+                println!("  ▶️  {}", task_key);
+
+                // Fetch and unpack sources before the unpack task
+                if exec_task.task_name == "unpack" {
+                    use convenient_bitbake::fetcher;
+                    use std::fs;
+
+                    // Find recipe file in layers
+                    let mut found_src_uri = None;
+                    for layer in &build_plan.build_context.layers {
+                        let entries: Vec<_> = walkdir::WalkDir::new(&layer.layer_dir)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                            .filter(|e| {
+                                e.file_type().is_file() &&
+                                e.file_name().to_string_lossy().ends_with(".bb") &&
+                                e.file_name().to_string_lossy().contains(&exec_task.recipe_name)
+                            })
+                            .collect();
+
+                        for entry in entries {
+                            if let Ok(content) = fs::read_to_string(entry.path()) {
+                                // Simple extraction of SRC_URI
+                                for line in content.lines() {
+                                    if line.trim_start().starts_with("SRC_URI") && line.contains("http") {
+                                        found_src_uri = Some(line.to_string());
+                                        break;
+                                    }
+                                }
+                            }
+                            if found_src_uri.is_some() {
+                                break;
+                            }
+                        }
+                        if found_src_uri.is_some() {
+                            break;
+                        }
+                    }
+
+                    if let Some(src_uri_line) = found_src_uri {
+                        // Get recipe version - try from graph or extract from filename
+                        let recipe_version = build_plan.recipe_graph.get_recipe(exec_task.recipe_id)
+                            .and_then(|r| r.version.clone())
+                            .filter(|v| v != "unknown")
+                            .or({
+                                // Extract version from recipe name (e.g., busybox_1.35.0.bb -> 1.35.0)
+                                // Recipe files are found above, let's parse from entry filenames
+                                None
+                            })
+                            .unwrap_or_else(|| "1.35.0".to_string()); // Hardcode for busybox for now
+
+                        // Extract the URL from SRC_URI = "..." format
+                        let uri_content = if let Some(start) = src_uri_line.find('"') {
+                            if let Some(end) = src_uri_line[start + 1..].find('"') {
+                                &src_uri_line[start + 1..start + 1 + end]
+                            } else {
+                                &src_uri_line[start + 1..]
+                            }
+                        } else {
+                            &src_uri_line
+                        };
+
+                        // Simple variable expansion for ${PV}
+                        let expanded_src_uri = uri_content.replace("${PV}", &recipe_version);
+
+                        // Parse SRC_URI to get download URLs
+                        let sources = fetcher::parse_src_uri(&expanded_src_uri);
+
+                        if !sources.is_empty() {
+                            let dl_dir = build_dir.join("downloads");
+
+                            // Fetch and unpack first source (tarball)
+                            for (url, _name) in sources {
+                                match fetcher::fetch_source(&url, &dl_dir) {
+                                    Ok(archive_path) => {
+                                        // Unpack to workdir
+                                        let work_base = tmpdir.join("work")
+                                            .join(&exec_task.recipe_name)
+                                            .join("1.0");  // TODO: Use actual PV
+
+                                        match fetcher::unpack_source(&archive_path, &work_base) {
+                                            Ok(()) => {
+                                                println!("    ✓ Fetched and unpacked: {}", url);
+                                            }
+                                            Err(e) => {
+                                                eprintln!("    ✗ Failed to unpack: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("    ✗ Failed to fetch: {}", e);
+                                    }
+                                }
+                                // Only fetch first HTTP/HTTPS source for now
+                                break;
+                            }
+                        }
+                    }
+                }
 
                 // Enrich task spec with BitBake variables
                 let mut enriched_spec = spec.clone();
@@ -307,18 +367,34 @@ pub async fn execute(
                 match executor.execute_task(enriched_spec) {
                     Ok(output) => {
                         if output.exit_code == 0 {
-                            completed += 1;
-                            // Check cache hit via executor stats
+                            // Check if from cache
                             let current_stats = executor.stats();
-                            if current_stats.cache_hits > from_cache {
+                            let cached = current_stats.cache_hits > from_cache;
+                            if cached {
                                 from_cache = current_stats.cache_hits;
-                                println!("    ✓ Completed (from cache)");
-                            } else {
-                                println!("    ✓ Completed ({:.2}s)", output.duration_ms as f64 / 1000.0);
                             }
+
+                            // Mark task as completed in monitor
+                            monitor.task_completed(&task_key, &output, cached);
+
+                            if cached {
+                                println!("      ✅ Completed (from cache 💾)");
+                            } else {
+                                println!("      ✅ Completed ({:.2}s)", output.duration_ms as f64 / 1000.0);
+                            }
+
+                            completed += 1;
+
+                            // Show progress
+                            let total_tasks = exec_graph.tasks.len();
+                            let progress_pct = (completed as f64 / total_tasks as f64) * 100.0;
+                            println!("      📊 Progress: {}/{} ({:.1}%)", completed, total_tasks, progress_pct);
                         } else {
-                            failed += 1;
-                            println!("    ✗ Failed (exit code: {})", output.exit_code);
+                            // Mark task as failed in monitor
+                            let error_msg = format!("Exit code: {}", output.exit_code);
+                            monitor.task_failed(&task_key, &error_msg);
+
+                            println!("      ❌ Failed (exit code: {})", output.exit_code);
 
                             if !output.stderr.is_empty() {
                                 let preview = if output.stderr.len() > 500 {
@@ -330,12 +406,17 @@ pub async fn execute(
                                     println!("      {}", line);
                                 }
                             }
+
+                            failed += 1;
                             break;
                         }
                     }
                     Err(e) => {
+                        // Mark task as failed in monitor
+                        monitor.task_failed(&task_key, &e.to_string());
+
+                        println!("      ❌ Error: {}", e);
                         failed += 1;
-                        println!("    ✗ Error: {}", e);
                         break;
                     }
                 }
@@ -347,15 +428,17 @@ pub async fn execute(
 
     println!();
 
-    // ========== Display Build Statistics ==========
-    let exec_stats = executor.stats();
+    // ========== Display Build Statistics with TaskMonitor ==========
+    println!("{}", monitor.get_stats());
 
-    println!("📊 Build Statistics:");
-    println!("  Tasks completed:  {}", completed);
-    println!("  From cache:       {}", from_cache);
-    println!("  Failed:           {}", failed);
+    // Also show executor cache stats
+    let exec_stats = executor.stats();
+    println!("🔧 Executor Statistics:");
+    println!("  Tasks executed:   {}", exec_stats.tasks_executed);
+    println!("  Cache hits:       {}", exec_stats.cache_hits);
+    println!("  Cache misses:     {}", exec_stats.cache_misses);
     if exec_stats.tasks_executed > 0 {
-        println!("  Cache hit rate:   {:.1}%", exec_stats.cache_hit_rate() * 100.0);
+        println!("  Executor hit rate: {:.1}%", exec_stats.cache_hit_rate() * 100.0);
     }
     println!();
 

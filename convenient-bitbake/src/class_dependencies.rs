@@ -151,7 +151,7 @@ pub fn parse_inherit_statement(line: &str) -> Option<Vec<String>> {
     if let Some(rest) = trimmed.strip_prefix("inherit ") {
         let classes: Vec<String> = rest
             .split_whitespace()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         if !classes.is_empty() {
@@ -276,7 +276,7 @@ fn extract_depends_from_line(
     let deps: Vec<String> = value
         .split_whitespace()
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect();
 
     if deps.is_empty() {
@@ -368,7 +368,7 @@ fn clean_value(value: &str) -> String {
 
 /// Find .bbclass file in search paths
 pub fn find_class_file(class_name: &str, search_paths: &[PathBuf]) -> Option<PathBuf> {
-    let class_filename = format!("{}.bbclass", class_name);
+    let class_filename = format!("{class_name}.bbclass");
 
     for base_path in search_paths {
         // Try classes-recipe/ subdirectory (modern Yocto layout)

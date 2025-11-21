@@ -150,7 +150,7 @@ impl std::fmt::Display for BuildStats {
             self.avg_task_duration_ms / 1000.0
         )?;
         if let Some(ref slowest) = self.slowest_task {
-            writeln!(f, "Slowest task:    {}", slowest)?;
+            writeln!(f, "Slowest task:    {slowest}")?;
             if let Some(ms) = self.slowest_task_duration_ms {
                 writeln!(f, "  Duration:      {:.2}s", ms as f64 / 1000.0)?;
             }

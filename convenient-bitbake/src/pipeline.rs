@@ -10,7 +10,7 @@
 //! Each stage computes content hashes to enable incremental builds.
 
 use crate::{
-    BuildContext, ContentHash, ExtractionConfig, RecipeExtractor, RecipeGraph,
+    BuildContext, RecipeExtractor, RecipeGraph,
     TaskExtractor, TaskImplementation,
 };
 use serde::{Deserialize, Serialize};
@@ -150,7 +150,7 @@ impl Pipeline {
             match task.await {
                 Ok(Ok(recipes)) => all_recipes.extend(recipes),
                 Ok(Err(e)) => return Err(e),
-                Err(e) => return Err(format!("Task join error: {}", e).into()),
+                Err(e) => return Err(format!("Task join error: {e}").into()),
             }
         }
 
@@ -180,7 +180,7 @@ impl Pipeline {
         let entries = walkdir::WalkDir::new(layer_path)
             .max_depth(10)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("bb"));
 
         for entry in entries {
@@ -200,8 +200,7 @@ impl Pipeline {
                     .modified()
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                    .map_or(0, |d| d.as_secs());
 
                 recipes.push(RecipeFile {
                     path,
@@ -221,50 +220,71 @@ impl Pipeline {
         &self,
         recipes: Vec<RecipeFile>,
     ) -> Result<(Vec<ParsedRecipe>, StageHash), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Stage 2: Parsing {} recipes in parallel", recipes.len());
+        info!("Stage 2: Parsing {} recipes in parallel (max {} concurrent)",
+              recipes.len(), self.config.max_io_parallelism);
 
         let task_extractor = Arc::new(TaskExtractor::new());
 
-        // Process recipes in batches to limit parallelism
-        let chunk_size = self.config.max_io_parallelism;
-        let mut all_parsed = Vec::new();
+        // Use futures stream with buffer_unordered for true parallel processing
+        // This allows tasks to complete independently without batch blocking
+        use futures::stream::{self, StreamExt};
 
-        for chunk in recipes.chunks(chunk_size) {
-            let mut tasks = Vec::new();
+        let max_concurrent = self.config.max_io_parallelism;
 
-            for recipe_file in chunk {
-                let recipe_file = recipe_file.clone();
+        let total_recipes = recipes.len();
+        let progress_counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let last_report = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+
+        let all_parsed: Vec<ParsedRecipe> = stream::iter(recipes)
+            .map(|recipe_file| {
                 let task_extractor = Arc::clone(&task_extractor);
-
-                let task = tokio::spawn(async move {
+                async move {
                     Self::parse_single_recipe(recipe_file, task_extractor).await
-                });
-
-                tasks.push(task);
-            }
-
-            // Wait for this batch
-            for task in tasks {
-                if let Ok(Ok(Some(parsed))) = task.await {
-                    all_parsed.push(parsed);
                 }
-            }
-        }
+            })
+            .buffer_unordered(max_concurrent)  // Process up to N recipes concurrently
+            .filter_map(|result| async move {
+                match result {
+                    Ok(Some(parsed)) => Some(parsed),
+                    Ok(None) => None,
+                    Err(e) => {
+                        debug!("Failed to parse recipe: {}", e);
+                        None
+                    }
+                }
+            })
+            .inspect({
+                let progress_counter = Arc::clone(&progress_counter);
+                let last_report = Arc::clone(&last_report);
+                move |_| {
+                    let count = progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    // Report progress every 100 recipes or every 2 seconds
+                    let mut last = last_report.lock().unwrap();
+                    if count % 100 == 0 || last.elapsed().as_secs() >= 2 {
+                        let pct = (count as f64 / total_recipes as f64) * 100.0;
+                        info!("  Progress: {}/{} recipes parsed ({:.1}%)", count, total_recipes, pct);
+                        *last = std::time::Instant::now();
+                    }
+                }
+            })
+            .collect()
+            .await;
 
         // Sort for deterministic hashing
-        all_parsed.sort_by(|a, b| a.file.path.cmp(&b.file.path));
+        let mut sorted_parsed = all_parsed;
+        sorted_parsed.sort_by(|a, b| a.file.path.cmp(&b.file.path));
 
         // Compute stage hash
         let mut hash_input = String::new();
-        for parsed in &all_parsed {
+        for parsed in &sorted_parsed {
             hash_input.push_str(&format!("{}:{}\n", parsed.file.path.display(), parsed.hash));
         }
         let stage_hash = StageHash::from_string("parse", &hash_input);
 
-        info!("  Parsed {} recipes successfully", all_parsed.len());
+        info!("  ✓ Parsed {} recipes successfully", sorted_parsed.len());
         debug!("  Stage hash: {}", stage_hash.hash);
 
-        Ok((all_parsed, stage_hash))
+        Ok((sorted_parsed, stage_hash))
     }
 
     /// Parse a single recipe file
@@ -313,7 +333,7 @@ impl Pipeline {
         recipe_path: &Path,
         task_extractor: &TaskExtractor,
     ) -> (HashMap<String, TaskImplementation>, HashMap<String, TaskImplementation>) {
-        use crate::task_extractor::RecipeImplementations;
+        
 
         // Extract tasks and helpers from main recipe
         let main_impls = task_extractor.extract_all_from_content(content);
@@ -354,12 +374,10 @@ impl Pipeline {
                 } else {
                     info!("✗ Failed to read include file: {:?}", resolved_path);
                 }
-            } else {
-                if include_path.ends_with(".inc") {
-                    info!("✗ Include file not found: {} (recipe: {:?})",
-                          include_path,
-                          recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
-                }
+            } else if include_path.ends_with(".inc") {
+                info!("✗ Include file not found: {} (recipe: {:?})",
+                      include_path,
+                      recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
             }
         }
 
@@ -368,8 +386,8 @@ impl Pipeline {
         if total_tasks > main_task_count || total_helpers > main_helper_count {
             info!("Recipe {:?}: {} tasks total ({} from main, {} from includes), {} helpers total ({} from main, {} from includes)",
                   recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")),
-                  total_tasks, main_task_count, total_tasks - main_task_count,
-                  total_helpers, main_helper_count, total_helpers - main_helper_count);
+                  total_tasks, main_task_count, total_tasks.saturating_sub(main_task_count),
+                  total_helpers, main_helper_count, total_helpers.saturating_sub(main_helper_count));
         }
 
         (all_tasks, all_helpers)
@@ -383,36 +401,33 @@ impl Pipeline {
             let trimmed = line.trim();
 
             // Match: require filename.inc
-            if trimmed.starts_with("require ") {
-                if let Some(path) = trimmed.strip_prefix("require ") {
+            if trimmed.starts_with("require ")
+                && let Some(path) = trimmed.strip_prefix("require ") {
                     let path = path.trim();
                     if !path.is_empty() {
                         includes.push(path.to_string());
                     }
                 }
-            }
 
             // Match: include filename.inc
-            if trimmed.starts_with("include ") {
-                if let Some(path) = trimmed.strip_prefix("include ") {
+            if trimmed.starts_with("include ")
+                && let Some(path) = trimmed.strip_prefix("include ") {
                     let path = path.trim();
                     if !path.is_empty() {
                         includes.push(path.to_string());
                     }
                 }
-            }
 
             // Match: inherit class1 class2 class3
-            if trimmed.starts_with("inherit ") {
-                if let Some(classes) = trimmed.strip_prefix("inherit ") {
+            if trimmed.starts_with("inherit ")
+                && let Some(classes) = trimmed.strip_prefix("inherit ") {
                     // Split by whitespace and add .bbclass extension
                     for class_name in classes.split_whitespace() {
                         if !class_name.is_empty() {
-                            includes.push(format!("{}.bbclass", class_name));
+                            includes.push(format!("{class_name}.bbclass"));
                         }
                     }
                 }
-            }
         }
 
         includes
@@ -552,7 +567,7 @@ impl Pipeline {
 
     /// Get cache path for a stage
     fn cache_path(&self, stage: &str) -> PathBuf {
-        self.config.cache_dir.join(format!("{}.cache", stage))
+        self.config.cache_dir.join(format!("{stage}.cache"))
     }
 
     /// Save stage hash to cache
@@ -584,20 +599,17 @@ impl Pipeline {
 
     /// Check if stage needs to be recomputed
     pub async fn needs_recompute(&self, stage: &str, current_hash: &str) -> bool {
-        match self.load_stage_hash(stage).await {
-            Some(cached) => {
-                if cached.hash == current_hash {
-                    info!("  ✓ Stage '{}' unchanged (cache hit)", stage);
-                    false
-                } else {
-                    info!("  ↻ Stage '{}' changed (cache miss)", stage);
-                    true
-                }
-            }
-            None => {
-                info!("  ↻ Stage '{}' not cached", stage);
+        if let Some(cached) = self.load_stage_hash(stage).await {
+            if cached.hash == current_hash {
+                info!("  ✓ Stage '{}' unchanged (cache hit)", stage);
+                false
+            } else {
+                info!("  ↻ Stage '{}' changed (cache miss)", stage);
                 true
             }
+        } else {
+            info!("  ↻ Stage '{}' not cached", stage);
+            true
         }
     }
 }

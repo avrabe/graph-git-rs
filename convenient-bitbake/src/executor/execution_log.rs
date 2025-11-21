@@ -137,10 +137,10 @@ impl ExecutionLog {
             ExecutionOutcome::Failed
         };
 
-        let error = if !result.success() {
-            Some(Self::analyze_error(result))
-        } else {
+        let error = if result.success() {
             None
+        } else {
+            Some(Self::analyze_error(result))
         };
 
         Self {
@@ -211,7 +211,7 @@ impl ExecutionLog {
                     || lower.contains("warning")
             })
             .take(10)
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         ExecutionError {
@@ -226,40 +226,40 @@ impl ExecutionLog {
     pub fn format_display(&self) -> String {
         let mut output = String::new();
 
-        output.push_str(&format!("╔════════════════════════════════════════════════════════════════\n"));
+        output.push_str("╔════════════════════════════════════════════════════════════════\n");
         output.push_str(&format!("║ Task: {}\n", self.task_id));
         output.push_str(&format!("║ Outcome: {}\n", self.outcome));
         output.push_str(&format!("║ Exit Code: {}\n", self.exit_code));
         output.push_str(&format!("║ Duration: {}ms\n", self.duration_ms));
-        output.push_str(&format!("╚════════════════════════════════════════════════════════════════\n"));
+        output.push_str("╚════════════════════════════════════════════════════════════════\n");
 
         if !self.stdout.is_empty() {
             output.push_str("\n📋 STDOUT:\n");
             for line in self.stdout.lines() {
-                output.push_str(&format!("  | {}\n", line));
+                output.push_str(&format!("  | {line}\n"));
             }
         }
 
         if !self.stderr.is_empty() {
             output.push_str("\n⚠️  STDERR:\n");
             for line in self.stderr.lines() {
-                output.push_str(&format!("  ! {}\n", line));
+                output.push_str(&format!("  ! {line}\n"));
             }
         }
 
         if let Some(error) = &self.error {
-            output.push_str(&format!("\n❌ Error Details:\n"));
+            output.push_str("\n❌ Error Details:\n");
             output.push_str(&format!("  Category: {}\n", error.category));
             output.push_str(&format!("  Message:  {}\n", error.message));
 
             if let Some(suggestion) = &error.suggestion {
-                output.push_str(&format!("  💡 Suggestion: {}\n", suggestion));
+                output.push_str(&format!("  💡 Suggestion: {suggestion}\n"));
             }
 
             if !error.related_logs.is_empty() {
                 output.push_str("\n  Related log lines:\n");
                 for log in &error.related_logs {
-                    output.push_str(&format!("    • {}\n", log));
+                    output.push_str(&format!("    • {log}\n"));
                 }
             }
         }

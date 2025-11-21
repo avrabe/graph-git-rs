@@ -13,7 +13,6 @@
 use super::types::{TaskSpec, TaskOutput};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -243,7 +242,7 @@ impl ExecutorHandle {
                     request_id: resp_id,
                     result,
                 }) if resp_id == request_id => {
-                    return result.map_err(|e| ExecutorError::ExecutionFailed(e));
+                    return result.map_err(ExecutorError::ExecutionFailed);
                 }
                 Some(ExecutorResponse::Error {
                     request_id: resp_id,
