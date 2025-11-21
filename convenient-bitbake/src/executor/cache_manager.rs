@@ -139,7 +139,7 @@ fn count_files(dir: &Path) -> usize {
     walkdir::WalkDir::new(dir)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file())
         .count()
 }
@@ -148,7 +148,7 @@ fn count_dirs(dir: &Path) -> usize {
     std::fs::read_dir(dir)
         .map(|entries| {
             entries
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
                 .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
                 .count()
         })
@@ -159,7 +159,7 @@ fn dir_size(dir: &Path) -> u64 {
     walkdir::WalkDir::new(dir)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file())
         .filter_map(|e| e.metadata().ok())
         .map(|m| m.len())

@@ -56,7 +56,7 @@ impl ExecutorPool {
 
     /// Create a single executor instance
     async fn create_executor(config: &ExecutorConfig, index: usize) -> ExecutorResult<ExecutorHandle> {
-        let name = format!("executor-{}", index);
+        let name = format!("executor-{index}");
         info!("Creating executor: {}", name);
 
         match &config.backend {
@@ -85,8 +85,7 @@ impl ExecutorPool {
             super::external::ExecutorBackend::Remote { endpoint } => {
                 // Future: implement remote executor
                 Err(ExecutorError::ExecutionFailed(format!(
-                    "Remote executor not yet implemented (endpoint: {})",
-                    endpoint
+                    "Remote executor not yet implemented (endpoint: {endpoint})"
                 )))
             }
         }
@@ -117,11 +116,11 @@ impl ExecutorPool {
             executor.lock().await.name()
         );
 
-        let result = executor.lock().await.execute_task(spec).await;
+        
 
         // Permit is automatically released when dropped
 
-        result
+        executor.lock().await.execute_task(spec).await
     }
 
     /// Get the next executor in round-robin fashion

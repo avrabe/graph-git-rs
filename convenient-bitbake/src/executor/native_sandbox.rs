@@ -54,13 +54,13 @@ fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, E
     let bitzel_cgroup = cgroup_root.join("bitzel");
     if !bitzel_cgroup.exists() {
         fs::create_dir(&bitzel_cgroup)
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to create bitzel cgroup: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to create bitzel cgroup: {e}")))?;
 
         // Enable controllers in parent
         let subtree_control = bitzel_cgroup.join("cgroup.subtree_control");
         let controllers = "+cpu +memory +pids +io";
         fs::write(&subtree_control, controllers)
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to enable controllers: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to enable controllers: {e}")))?;
     }
 
     // Create task-specific cgroup
@@ -71,7 +71,7 @@ fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, E
     }
 
     fs::create_dir(&task_cgroup)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create task cgroup: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create task cgroup: {e}")))?;
 
     debug!("Created cgroup: {}", task_cgroup.display());
 
@@ -79,9 +79,9 @@ fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, E
     if let Some(cpu_quota_us) = limits.cpu_quota_us {
         let cpu_max = task_cgroup.join("cpu.max");
         // Format: "quota period" where period is 100000 (100ms)
-        let value = format!("{} 100000", cpu_quota_us);
+        let value = format!("{cpu_quota_us} 100000");
         fs::write(&cpu_max, value)
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set cpu.max: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set cpu.max: {e}")))?;
         debug!("Set CPU quota: {} µs per 100ms", cpu_quota_us);
     }
 
@@ -89,7 +89,7 @@ fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, E
     if let Some(memory_bytes) = limits.memory_bytes {
         let memory_max = task_cgroup.join("memory.max");
         fs::write(&memory_max, memory_bytes.to_string())
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set memory.max: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set memory.max: {e}")))?;
         debug!("Set memory limit: {} bytes ({} GB)", memory_bytes, memory_bytes / (1024 * 1024 * 1024));
     }
 
@@ -97,7 +97,7 @@ fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, E
     if let Some(pids_max) = limits.pids_max {
         let pids_max_file = task_cgroup.join("pids.max");
         fs::write(&pids_max_file, pids_max.to_string())
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set pids.max: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set pids.max: {e}")))?;
         debug!("Set PID limit: {}", pids_max);
     }
 
@@ -105,9 +105,9 @@ fn setup_cgroup(cgroup_name: &str, limits: &ResourceLimits) -> Result<PathBuf, E
     if let Some(io_weight) = limits.io_weight {
         let io_weight_file = task_cgroup.join("io.weight");
         // Format: "default <weight>" where weight is 1-10000
-        let value = format!("default {}", io_weight);
+        let value = format!("default {io_weight}");
         fs::write(&io_weight_file, value)
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set io.weight: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to set io.weight: {e}")))?;
         debug!("Set I/O weight: {}", io_weight);
     }
 
@@ -121,7 +121,7 @@ fn move_to_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
     let pid = std::process::id();
 
     fs::write(&procs_file, pid.to_string())
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to move to cgroup: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to move to cgroup: {e}")))?;
 
     debug!("Moved PID {} to cgroup: {}", pid, cgroup_path.display());
     Ok(())
@@ -146,7 +146,7 @@ fn cleanup_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
 
         // Remove cgroup directory
         fs::remove_dir(cgroup_path)
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to cleanup cgroup: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to cleanup cgroup: {e}")))?;
 
         debug!("Cleaned up cgroup: {}", cgroup_path.display());
     }
@@ -205,7 +205,7 @@ pub fn execute_in_namespace(
 
     // Create work directory
     fs::create_dir_all(work_dir)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create work dir: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create work dir: {e}")))?;
 
     // Setup cgroup for resource limits (before fork)
     let cgroup_name = format!("task-{}", std::process::id());
@@ -218,8 +218,10 @@ pub fn execute_in_namespace(
     };
 
     // Fork for namespace isolation
-    let result = match unsafe { fork() }
-        .map_err(|e| ExecutionError::SandboxError(format!("Fork failed: {}", e)))?
+    
+
+    match unsafe { fork() }
+        .map_err(|e| ExecutionError::SandboxError(format!("Fork failed: {e}")))?
     {
         ForkResult::Parent { child } => {
             debug!("Parent process: child PID = {}", child);
@@ -243,14 +245,12 @@ pub fn execute_in_namespace(
                     std::process::exit(exit_code);
                 }
                 Err(e) => {
-                    eprintln!("Sandbox execution failed: {}", e);
+                    eprintln!("Sandbox execution failed: {e}");
                     std::process::exit(1);
                 }
             }
         }
-    };
-
-    result
+    }
 }
 
 /// Setup UID/GID mapping for child process
@@ -262,29 +262,29 @@ fn setup_uid_gid_mapping(child: Pid, write_fd: OwnedFd) -> Result<(), ExecutionE
     debug!("Setting up UID/GID mapping for child {}: uid={}, gid={}", child, uid, gid);
 
     // Write uid_map (map root in container to current user outside)
-    let uid_map = format!("0 {} 1\n", uid);
-    let uid_map_path = format!("/proc/{}/uid_map", child);
+    let uid_map = format!("0 {uid} 1\n");
+    let uid_map_path = format!("/proc/{child}/uid_map");
     fs::write(&uid_map_path, &uid_map)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to write uid_map: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to write uid_map: {e}")))?;
     debug!("Wrote uid_map: {}", uid_map.trim());
 
     // Disable setgroups (required before writing gid_map)
-    let setgroups_path = format!("/proc/{}/setgroups", child);
+    let setgroups_path = format!("/proc/{child}/setgroups");
     fs::write(&setgroups_path, "deny\n")
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to write setgroups: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to write setgroups: {e}")))?;
     debug!("Disabled setgroups");
 
     // Write gid_map
-    let gid_map = format!("0 {} 1\n", gid);
-    let gid_map_path = format!("/proc/{}/gid_map", child);
+    let gid_map = format!("0 {gid} 1\n");
+    let gid_map_path = format!("/proc/{child}/gid_map");
     fs::write(&gid_map_path, &gid_map)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to write gid_map: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to write gid_map: {e}")))?;
     debug!("Wrote gid_map: {}", gid_map.trim());
 
     // Signal child that mapping is complete
     let signal = b"ok";
     write(write_fd, signal)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to signal child: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to signal child: {e}")))?;
     debug!("Signaled child that UID/GID mapping is complete");
 
     // write_fd will be automatically closed when it goes out of scope
@@ -307,7 +307,7 @@ fn execute_child_with_userns(
 
     // Step 1: Create user namespace FIRST
     unshare(CloneFlags::CLONE_NEWUSER)
-        .map_err(|e| ExecutionError::SandboxError(format!("unshare(CLONE_NEWUSER) failed: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("unshare(CLONE_NEWUSER) failed: {e}")))?;
 
     debug!("Child: user namespace created, waiting for UID/GID mapping");
 
@@ -319,12 +319,12 @@ fn execute_child_with_userns(
         }
         Ok(n) => {
             return Err(ExecutionError::SandboxError(format!(
-                "Unexpected signal from parent: {} bytes", n
+                "Unexpected signal from parent: {n} bytes"
             )));
         }
         Err(e) => {
             return Err(ExecutionError::SandboxError(format!(
-                "Failed to read from parent: {}", e
+                "Failed to read from parent: {e}"
             )));
         }
     }
@@ -334,19 +334,16 @@ fn execute_child_with_userns(
 
     // Step 3: Create mount, PID, and optionally network namespaces based on policy
     // NOTE: Temporarily disabling PID namespace to debug execution issues
-    let clone_flags = match network_policy {
-        NetworkPolicy::FullNetwork => {
-            debug!("Child: UID/GID mapping confirmed, creating mount namespace only (NO network/PID namespace for now)");
-            CloneFlags::CLONE_NEWNS
-        }
-        _ => {
-            debug!("Child: UID/GID mapping confirmed, creating mount+network namespaces (NO PID namespace for now)");
-            CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET
-        }
+    let clone_flags = if network_policy == NetworkPolicy::FullNetwork {
+        debug!("Child: UID/GID mapping confirmed, creating mount namespace only (NO network/PID namespace for now)");
+        CloneFlags::CLONE_NEWNS
+    } else {
+        debug!("Child: UID/GID mapping confirmed, creating mount+network namespaces (NO PID namespace for now)");
+        CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_NEWNET
     };
 
     unshare(clone_flags)
-        .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {e}")))?;
 
     debug!("Child: namespaces created successfully");
 
@@ -379,7 +376,7 @@ fn execute_child_with_userns(
         MsFlags::MS_PRIVATE | MsFlags::MS_REC,
         None::<&str>,
     )
-    .map_err(|e| ExecutionError::SandboxError(format!("Failed to make / private: {}", e)))?;
+    .map_err(|e| ExecutionError::SandboxError(format!("Failed to make / private: {e}")))?;
 
     debug!("Child: made / private");
 
@@ -400,7 +397,7 @@ fn execute_child_with_userns(
                 MsFlags::MS_BIND | MsFlags::MS_REC,
                 None::<&str>,
             )
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to bind mount essential directory {}: {}", dir_str, e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to bind mount essential directory {dir_str}: {e}")))?;
 
             // Step 2: Remount as read-only
             mount(
@@ -410,7 +407,7 @@ fn execute_child_with_userns(
                 MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC,
                 None::<&str>,
             )
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to remount essential directory {} as read-only: {}", dir_str, e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to remount essential directory {dir_str} as read-only: {e}")))?;
 
             debug!("Child: bind mounted {} (read-only)", dir_str);
         } else {
@@ -430,7 +427,7 @@ fn execute_child_with_userns(
                 MsFlags::MS_BIND,
                 None::<&str>,
             ) {
-                Ok(_) => {
+                Ok(()) => {
                     // Step 2: Remount as read-only
                     match mount(
                         None::<&str>,
@@ -439,7 +436,7 @@ fn execute_child_with_userns(
                         MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
                         None::<&str>,
                     ) {
-                        Ok(_) => debug!("Child: bind mounted {} (read-only)", file_str),
+                        Ok(()) => debug!("Child: bind mounted {} (read-only)", file_str),
                         Err(e) => warn!("Child: failed to remount optional file {} as read-only (skipping): {}", file_str, e),
                     }
                 }
@@ -455,13 +452,13 @@ fn execute_child_with_userns(
     let stderr_path = sandbox_root.join("stderr.log");
 
     let stdout_file = File::create(&stdout_path)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stdout.log: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stdout.log: {e}")))?;
     let stderr_file = File::create(&stderr_path)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stderr.log: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stderr.log: {e}")))?;
 
     // Step 7: Change to work directory
     chdir(work_dir)
-        .map_err(|e| ExecutionError::SandboxError(format!("chdir failed: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("chdir failed: {e}")))?;
 
     debug!("Child: changed to work directory: {}", work_dir.display());
 
@@ -489,7 +486,7 @@ fn execute_child_with_userns(
 
     // Execute and get status
     let status = cmd.status()
-        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed (check if /usr/bin/bash is mounted): {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Command execution failed (check if /usr/bin/bash is mounted): {e}")))?;
 
     let exit_code = status.code().unwrap_or(1);
     debug!("Child: command completed with exit code: {}", exit_code);
@@ -508,7 +505,7 @@ fn setup_loopback() -> Result<(), ExecutionError> {
     let mut last_error = String::new();
     for ip_path in &ip_paths {
         match Command::new(ip_path)
-            .args(&["link", "set", "lo", "up"])
+            .args(["link", "set", "lo", "up"])
             .output()
         {
             Ok(output) => {
@@ -517,19 +514,18 @@ fn setup_loopback() -> Result<(), ExecutionError> {
                     return Ok(());
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    last_error = format!("ip command failed: {}", stderr);
+                    last_error = format!("ip command failed: {stderr}");
                 }
             }
             Err(e) => {
-                last_error = format!("Failed to execute {}: {}", ip_path, e);
+                last_error = format!("Failed to execute {ip_path}: {e}");
                 continue;
             }
         }
     }
 
     Err(ExecutionError::SandboxError(format!(
-        "Failed to setup loopback: {}. Tried paths: {:?}",
-        last_error, ip_paths
+        "Failed to setup loopback: {last_error}. Tried paths: {ip_paths:?}"
     )))
 }
 
@@ -563,7 +559,7 @@ fn execute_with_bash(
 
     // Verify work_dir exists
     if !work_dir.exists() {
-        return Err(ExecutionError::SandboxError(format!("Work directory does not exist: {:?}", work_dir)));
+        return Err(ExecutionError::SandboxError(format!("Work directory does not exist: {work_dir:?}")));
     }
 
     // Verify /bin/bash exists
@@ -604,23 +600,20 @@ fn execute_child_without_userns(
     // Determine which namespaces to create based on network policy
     // NOTE: Temporarily disabling mount+PID namespaces to debug execution
     // We'll use network isolation and process isolation without filesystem isolation for now
-    let clone_flags = match network_policy {
-        NetworkPolicy::FullNetwork => {
-            debug!("Child: NO namespaces for debugging (full host access)");
-            // No namespace isolation for now
-            CloneFlags::empty()
-        }
-        _ => {
-            debug!("Child: creating network namespace only (NO mount/PID namespace for now)");
-            // Only network isolation
-            CloneFlags::CLONE_NEWNET
-        }
+    let clone_flags = if network_policy == NetworkPolicy::FullNetwork {
+        debug!("Child: NO namespaces for debugging (full host access)");
+        // No namespace isolation for now
+        CloneFlags::empty()
+    } else {
+        debug!("Child: creating network namespace only (NO mount/PID namespace for now)");
+        // Only network isolation
+        CloneFlags::CLONE_NEWNET
     };
 
     // Create namespaces (if any)
     if !clone_flags.is_empty() {
         unshare(clone_flags)
-            .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("unshare failed: {e}")))?;
     }
 
     debug!("Child: namespaces created successfully");
@@ -654,7 +647,7 @@ fn execute_child_without_userns(
 
     // Install BitBake prelude script
     install_prelude_script()
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to install prelude: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to install prelude: {e}")))?;
 
     // Setup stdout/stderr capture
     let sandbox_root = work_dir.parent()
@@ -663,13 +656,13 @@ fn execute_child_without_userns(
     let stderr_path = sandbox_root.join("stderr.log");
 
     let stdout_file = File::create(&stdout_path)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stdout.log: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stdout.log: {e}")))?;
     let stderr_file = File::create(&stderr_path)
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stderr.log: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to create stderr.log: {e}")))?;
 
     // Change to work directory
     chdir(work_dir)
-        .map_err(|e| ExecutionError::SandboxError(format!("chdir failed: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("chdir failed: {e}")))?;
 
     debug!("Child: changed to work directory: {}", work_dir.display());
 
@@ -689,7 +682,7 @@ fn execute_child_without_userns(
                     .create(true)
                     .truncate(true)
                     .open(&stdout_path)
-                    .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stdout: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stdout: {e}")))?;
                 stdout_f.write_all(result.stdout.as_bytes())?;
 
                 let mut stderr_f = fs::OpenOptions::new()
@@ -697,7 +690,7 @@ fn execute_child_without_userns(
                     .create(true)
                     .truncate(true)
                     .open(&stderr_path)
-                    .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stderr: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("Failed to write stderr: {e}")))?;
                 stderr_f.write_all(result.stderr.as_bytes())?;
 
                 debug!("Fast path completed in {} ms (exit code {})", result.duration_ms, result.exit_code);
@@ -729,7 +722,7 @@ fn wait_for_child(
     debug!("Parent: waiting for child {}", child);
 
     match waitpid(child, None)
-        .map_err(|e| ExecutionError::SandboxError(format!("waitpid failed: {}", e)))?
+        .map_err(|e| ExecutionError::SandboxError(format!("waitpid failed: {e}")))?
     {
         WaitStatus::Exited(_pid, code) => {
             debug!("Parent: child exited with code: {}", code);
@@ -747,14 +740,12 @@ fn wait_for_child(
         }
         WaitStatus::Signaled(_pid, signal, _) => {
             Err(ExecutionError::SandboxError(format!(
-                "Child process killed by signal: {:?}",
-                signal
+                "Child process killed by signal: {signal:?}"
             )))
         }
         status => {
             Err(ExecutionError::SandboxError(format!(
-                "Child process ended unexpectedly: {:?}",
-                status
+                "Child process ended unexpectedly: {status:?}"
             )))
         }
     }

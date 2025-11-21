@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 // Module containing bb.utils functions
 #[pymodule]
 mod bb_utils {
-    use super::*;
+    use super::{PyStrRef, PyObjectRef, VirtualMachine, PyResult, bitbake_internal, PyPayload};
     use rustpython::vm::builtins::PyList;
 
     #[pyfunction]
@@ -211,7 +211,7 @@ mod bb_utils {
 // Module containing bb
 #[pymodule]
 mod bb {
-    use super::*;
+    use super::{VirtualMachine, PyObjectRef, PyPayload};
 
     #[pyattr]
     fn utils(_vm: &VirtualMachine) -> PyObjectRef {
@@ -223,7 +223,7 @@ mod bb {
 // Module containing the DataStore class
 #[pymodule]
 mod bitbake_internal {
-    use super::*;
+    use super::{pyclass, PyPayload, Arc, Mutex, DataStoreInner, PyObjectRef, VirtualMachine, PyResult, PyStrRef};
 
     #[pyattr]
     #[pyclass(module = "bitbake_internal", name = "DataStore")]
@@ -283,7 +283,7 @@ mod bitbake_internal {
 // Each thread gets its own interpreter instance, dramatically reducing
 // the overhead of interpreter creation (from ~50-200ms to ~0.01ms per eval)
 thread_local! {
-    static CACHED_INTERPRETER: RefCell<Option<Arc<Interpreter>>> = RefCell::new(None);
+    static CACHED_INTERPRETER: RefCell<Option<Arc<Interpreter>>> = const { RefCell::new(None) };
 }
 
 // Performance tracking: count total interpreters created across all threads
@@ -443,7 +443,7 @@ impl DataStoreInner {
             if let Some(end) = result[start..].find('}') {
                 let var_name = &result[start + 2..start + end];
                 if let Some(value) = self.variables.get(var_name) {
-                    result.replace_range(start..start + end + 1, value);
+                    result.replace_range(start..=(start + end), value);
                 } else {
                     break; // Stop if we can't expand
                 }
@@ -465,7 +465,7 @@ impl DataStoreInner {
     pub fn append_var(&mut self, name: String, suffix: String) {
         let expanded_name = self.expand_vars(&name);
         let current = self.variables.get(&expanded_name).cloned().unwrap_or_default();
-        let new_value = format!("{}{}", current, suffix);
+        let new_value = format!("{current}{suffix}");
         self.set_var(expanded_name, new_value);
     }
 
@@ -473,7 +473,7 @@ impl DataStoreInner {
     pub fn prepend_var(&mut self, name: String, prefix: String) {
         let expanded_name = self.expand_vars(&name);
         let current = self.variables.get(&expanded_name).cloned().unwrap_or_default();
-        let new_value = format!("{}{}", prefix, current);
+        let new_value = format!("{prefix}{current}");
         self.set_var(expanded_name, new_value);
     }
 
@@ -578,7 +578,7 @@ impl PythonExecutor {
         // Execute in VM context
         let result = interp.enter(|vm| {
             self.eval_in_vm(vm, python_expr, initial_vars)
-        }).map_err(|e| format!("Evaluation error: {:?}", e));
+        }).map_err(|e| format!("Evaluation error: {e:?}"));
 
         // Record performance metrics
         let elapsed_us = start.elapsed().as_micros() as u64;
@@ -681,7 +681,7 @@ bb = _BB()
             Err(e) => {
                 return Err(vm.new_exception_msg(
                     vm.ctx.exceptions.syntax_error.to_owned(),
-                    format!("Compile error: {:?}", e),
+                    format!("Compile error: {e:?}"),
                 ));
             }
         };
@@ -715,7 +715,7 @@ bb = _BB()
             self.execute_in_vm(vm, python_code, initial_vars)
         }) {
             Ok(result) => result,
-            Err(e) => PythonExecutionResult::failure(format!("Execution error: {:?}", e)),
+            Err(e) => PythonExecutionResult::failure(format!("Execution error: {e:?}")),
         }
     }
 
@@ -799,7 +799,7 @@ bb = _BB()
         // Execute the Python code
         let code_obj = match vm.compile(&dedented_code, rustpython_vm::compiler::Mode::Exec, "<bitbake>".to_owned()) {
             Ok(code) => code,
-            Err(e) => return Ok(PythonExecutionResult::failure(format!("Compile error: {:?}", e))),
+            Err(e) => return Ok(PythonExecutionResult::failure(format!("Compile error: {e:?}"))),
         };
 
         match vm.run_code_obj(code_obj, scope.clone()) {
@@ -814,7 +814,7 @@ bb = _BB()
             }
             Err(e) => {
                 // Format the error as a string using Debug
-                let error_msg = format!("{:?}", e);
+                let error_msg = format!("{e:?}");
                 Ok(PythonExecutionResult::failure(error_msg))
             }
         }

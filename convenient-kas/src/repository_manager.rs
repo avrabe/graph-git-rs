@@ -61,9 +61,8 @@ impl RepositoryManager {
             if tokio::fs::try_exists(&repo_path).await.unwrap_or(false) {
                 info!("Using local repository: {} at {}", name, repo_path.display());
                 return Ok(repo_path);
-            } else {
-                return Err(RepoError::LocalRepoNotFound(repo_path));
             }
+            return Err(RepoError::LocalRepoNotFound(repo_path));
         }
 
         // Otherwise clone from URL
@@ -133,12 +132,12 @@ impl RepositoryManager {
                 .output()
         })
         .await
-        .map_err(|e| RepoError::PatchError(format!("Task join error: {}", e)))?
-        .map_err(|e| RepoError::PatchError(format!("Failed to run git apply: {}", e)))?;
+        .map_err(|e| RepoError::PatchError(format!("Task join error: {e}")))?
+        .map_err(|e| RepoError::PatchError(format!("Failed to run git apply: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(RepoError::PatchError(format!("Patch failed: {}", stderr)));
+            return Err(RepoError::PatchError(format!("Patch failed: {stderr}")));
         }
 
         Ok(())

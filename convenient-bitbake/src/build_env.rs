@@ -54,32 +54,31 @@ impl BuildEnvironment {
     /// A fully initialized BuildEnvironment with expanded paths
     pub fn from_build_dir<P: AsRef<Path>>(topdir: P) -> Result<Self, String> {
         let topdir = topdir.as_ref().canonicalize()
-            .map_err(|e| format!("Failed to canonicalize TOPDIR: {}", e))?;
+            .map_err(|e| format!("Failed to canonicalize TOPDIR: {e}"))?;
 
         info!("Loading build environment from: {:?}", topdir);
 
         // Check that topdir exists and is a directory
         if !topdir.is_dir() {
-            return Err(format!("TOPDIR is not a directory: {:?}", topdir));
+            return Err(format!("TOPDIR is not a directory: {topdir:?}"));
         }
 
         let confdir = topdir.join("conf");
         if !confdir.is_dir() {
-            return Err(format!("conf/ directory not found in {:?}", topdir));
+            return Err(format!("conf/ directory not found in {topdir:?}"));
         }
 
         // Parse configuration files
         let bblayers_conf = confdir.join("bblayers.conf");
         if !bblayers_conf.exists() {
             return Err(format!(
-                "bblayers.conf not found: {:?}",
-                bblayers_conf
+                "bblayers.conf not found: {bblayers_conf:?}"
             ));
         }
 
         let local_conf = confdir.join("local.conf");
         if !local_conf.exists() {
-            return Err(format!("local.conf not found: {:?}", local_conf));
+            return Err(format!("local.conf not found: {local_conf:?}"));
         }
 
         let bblayers_config = BbLayersConfig::parse(&bblayers_conf)?;
@@ -273,7 +272,7 @@ impl BuildEnvironment {
         }
 
         // Check expander
-        self.expander.get(key).map(|s| s.clone())
+        self.expander.get(key).cloned()
     }
 
     /// Set a variable value

@@ -150,7 +150,7 @@ impl Pipeline {
             match task.await {
                 Ok(Ok(recipes)) => all_recipes.extend(recipes),
                 Ok(Err(e)) => return Err(e),
-                Err(e) => return Err(format!("Task join error: {}", e).into()),
+                Err(e) => return Err(format!("Task join error: {e}").into()),
             }
         }
 
@@ -180,7 +180,7 @@ impl Pipeline {
         let entries = walkdir::WalkDir::new(layer_path)
             .max_depth(10)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("bb"));
 
         for entry in entries {
@@ -200,8 +200,7 @@ impl Pipeline {
                     .modified()
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+                    .map_or(0, |d| d.as_secs());
 
                 recipes.push(RecipeFile {
                     path,
@@ -354,12 +353,10 @@ impl Pipeline {
                 } else {
                     info!("✗ Failed to read include file: {:?}", resolved_path);
                 }
-            } else {
-                if include_path.ends_with(".inc") {
-                    info!("✗ Include file not found: {} (recipe: {:?})",
-                          include_path,
-                          recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
-                }
+            } else if include_path.ends_with(".inc") {
+                info!("✗ Include file not found: {} (recipe: {:?})",
+                      include_path,
+                      recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
             }
         }
 
@@ -383,36 +380,33 @@ impl Pipeline {
             let trimmed = line.trim();
 
             // Match: require filename.inc
-            if trimmed.starts_with("require ") {
-                if let Some(path) = trimmed.strip_prefix("require ") {
+            if trimmed.starts_with("require ")
+                && let Some(path) = trimmed.strip_prefix("require ") {
                     let path = path.trim();
                     if !path.is_empty() {
                         includes.push(path.to_string());
                     }
                 }
-            }
 
             // Match: include filename.inc
-            if trimmed.starts_with("include ") {
-                if let Some(path) = trimmed.strip_prefix("include ") {
+            if trimmed.starts_with("include ")
+                && let Some(path) = trimmed.strip_prefix("include ") {
                     let path = path.trim();
                     if !path.is_empty() {
                         includes.push(path.to_string());
                     }
                 }
-            }
 
             // Match: inherit class1 class2 class3
-            if trimmed.starts_with("inherit ") {
-                if let Some(classes) = trimmed.strip_prefix("inherit ") {
+            if trimmed.starts_with("inherit ")
+                && let Some(classes) = trimmed.strip_prefix("inherit ") {
                     // Split by whitespace and add .bbclass extension
                     for class_name in classes.split_whitespace() {
                         if !class_name.is_empty() {
-                            includes.push(format!("{}.bbclass", class_name));
+                            includes.push(format!("{class_name}.bbclass"));
                         }
                     }
                 }
-            }
         }
 
         includes
@@ -552,7 +546,7 @@ impl Pipeline {
 
     /// Get cache path for a stage
     fn cache_path(&self, stage: &str) -> PathBuf {
-        self.config.cache_dir.join(format!("{}.cache", stage))
+        self.config.cache_dir.join(format!("{stage}.cache"))
     }
 
     /// Save stage hash to cache
@@ -584,20 +578,17 @@ impl Pipeline {
 
     /// Check if stage needs to be recomputed
     pub async fn needs_recompute(&self, stage: &str, current_hash: &str) -> bool {
-        match self.load_stage_hash(stage).await {
-            Some(cached) => {
-                if cached.hash == current_hash {
-                    info!("  ✓ Stage '{}' unchanged (cache hit)", stage);
-                    false
-                } else {
-                    info!("  ↻ Stage '{}' changed (cache miss)", stage);
-                    true
-                }
-            }
-            None => {
-                info!("  ↻ Stage '{}' not cached", stage);
+        if let Some(cached) = self.load_stage_hash(stage).await {
+            if cached.hash == current_hash {
+                info!("  ✓ Stage '{}' unchanged (cache hit)", stage);
+                false
+            } else {
+                info!("  ↻ Stage '{}' changed (cache miss)", stage);
                 true
             }
+        } else {
+            info!("  ↻ Stage '{}' not cached", stage);
+            true
         }
     }
 }

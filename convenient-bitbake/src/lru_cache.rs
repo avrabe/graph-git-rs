@@ -34,11 +34,10 @@ impl<K: Eq + Hash + Clone, V> LruCache<K, V> {
             Some(old)
         } else {
             self.order.push_back(key.clone());
-            if self.order.len() > self.capacity {
-                if let Some(evicted) = self.order.pop_front() {
+            if self.order.len() > self.capacity
+                && let Some(evicted) = self.order.pop_front() {
                     return self.map.remove(&evicted);
                 }
-            }
             None
         }
     }

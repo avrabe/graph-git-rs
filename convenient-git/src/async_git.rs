@@ -167,7 +167,7 @@ impl AsyncGitRepository {
             }
         })
         .await
-        .map_err(|e| GitError::CloneFailed(format!("Task join error: {}", e)))?;
+        .map_err(|e| GitError::CloneFailed(format!("Task join error: {e}")))?;
 
         // Check if libgit2 succeeded
         match libgit2_result {
@@ -210,13 +210,12 @@ impl AsyncGitRepository {
             .arg(&self.path)
             .output()
             .await
-            .map_err(|e| GitError::CloneFailed(format!("Failed to execute git command: {}", e)))?;
+            .map_err(|e| GitError::CloneFailed(format!("Failed to execute git command: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(GitError::CloneFailed(format!(
-                "System git clone failed: {}",
-                stderr
+                "System git clone failed: {stderr}"
             )));
         }
 
@@ -287,9 +286,9 @@ impl AsyncGitRepository {
             } else {
                 // Try as branch or tag
                 let reference = repo
-                    .find_reference(&format!("refs/remotes/origin/{}", refspec))
-                    .or_else(|_| repo.find_reference(&format!("refs/tags/{}", refspec)))
-                    .or_else(|_| repo.find_reference(&format!("refs/heads/{}", refspec)))
+                    .find_reference(&format!("refs/remotes/origin/{refspec}"))
+                    .or_else(|_| repo.find_reference(&format!("refs/tags/{refspec}")))
+                    .or_else(|_| repo.find_reference(&format!("refs/heads/{refspec}")))
                     .map_err(|_| GitError::InvalidReference(refspec.clone()))?;
 
                 reference.peel_to_commit()?.id()

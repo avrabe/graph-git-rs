@@ -25,7 +25,7 @@ impl SimplePythonEvaluator {
         // Strip ${@ and } if present
         let inner = if trimmed.starts_with("${@") && trimmed.ends_with('}') {
             &trimmed[3..trimmed.len() - 1]
-        } else if trimmed.starts_with("@") {
+        } else if trimmed.starts_with('@') {
             &trimmed[1..]
         } else {
             trimmed
@@ -103,14 +103,13 @@ impl SimplePythonEvaluator {
 
         // Handle array indexing: ['val1', 'val2'][condition]
         if inner.contains('[') && inner.contains(']') &&
-           (inner.contains("d.getVar") || inner.contains("==") || inner.contains("!=")) {
-            if let Some(result) = self.eval_array_indexing(inner) {
+           (inner.contains("d.getVar") || inner.contains("==") || inner.contains("!="))
+            && let Some(result) = self.eval_array_indexing(inner) {
                 return Some(result);
             }
-        }
 
         // Phase 9d: Handle string literals with methods: 'string'.method()
-        if (inner.contains("'") || inner.contains("\"")) && inner.contains('.') {
+        if (inner.contains('\'') || inner.contains('"')) && inner.contains('.') {
             return self.eval_string_literal_with_methods(inner);
         }
 
@@ -733,7 +732,7 @@ impl SimplePythonEvaluator {
             // Check condition if present
             if let Some(condition) = condition_expr {
                 // Replace variable references in condition
-                let condition_with_var = condition.replace(var_name, &format!("'{}'", item));
+                let condition_with_var = condition.replace(var_name, &format!("'{item}'"));
                 debug!("  Evaluating condition: {}", condition_with_var);
 
                 if let Some(cond_result) = temp_eval.eval_condition(&condition_with_var) {
@@ -754,7 +753,7 @@ impl SimplePythonEvaluator {
                 item.to_string()
             } else if output_expr.contains(var_name) {
                 // Complex case with methods: [x.strip() for x in list]
-                let expr_to_eval = output_expr.replace(var_name, &format!("'{}'", item));
+                let expr_to_eval = output_expr.replace(var_name, &format!("'{item}'"));
                 debug!("  Evaluating output: {}", expr_to_eval);
 
                 if let Some(result) = temp_eval.evaluate(&expr_to_eval) {
@@ -911,7 +910,7 @@ impl SimplePythonEvaluator {
 
                 // Otherwise, replace and continue evaluating
                 let result_str = if inner_result { "True" } else { "False" };
-                let new_expr = format!("{}{}", result_str, after);
+                let new_expr = format!("{result_str}{after}");
                 return self.eval_logical_expression(&new_expr);
             }
         }
@@ -1459,11 +1458,11 @@ impl SimplePythonEvaluator {
         // Check if item is in path
         let found = path_items.iter().any(|&p| {
             // Check for exact match or if path ends with item
-            p == item || p.ends_with(&format!("/{}", item))
+            p == item || p.ends_with(&format!("/{item}"))
         });
 
         let result = if found {
-            item.to_string()
+            item.clone()
         } else {
             String::new()
         };
@@ -1803,7 +1802,7 @@ impl SimplePythonEvaluator {
 
         // Evaluate the condition as a boolean
         let cond_result = self.eval_simple_condition(condition)?;
-        let index = if cond_result { 1 } else { 0 };
+        let index = usize::from(cond_result);
 
         debug!("  Condition result: {}, index: {}", cond_result, index);
 

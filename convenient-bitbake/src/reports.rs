@@ -92,7 +92,7 @@ impl BuildReport {
     }
 
     pub fn to_markdown(&self) -> String {
-        format!(r#"# Build Report
+        format!(r"# Build Report
 
 ## Status: {:?}
 
@@ -111,7 +111,7 @@ impl BuildReport {
 - CPU Time: {:.2}s
 - I/O Read: {} MB
 - I/O Write: {} MB
-"#,
+",
             self.status,
             self.duration_s,
             self.cache_stats.hit_rate,

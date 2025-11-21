@@ -192,10 +192,9 @@ impl VariableExpander {
                         changed = true;
                         // Don't update pos - start over from beginning after substitution
                         break;
-                    } else {
-                        // Unknown variable, leave as-is and continue
-                        pos = abs_end + 1;
                     }
+                    // Unknown variable, leave as-is and continue
+                    pos = abs_end + 1;
                 } else {
                     // No closing }, move past this ${
                     pos = abs_start + 2;

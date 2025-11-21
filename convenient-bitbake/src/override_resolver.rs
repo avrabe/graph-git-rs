@@ -60,7 +60,7 @@ impl OverrideAssignment {
                 "append" => actual_op = OverrideOp::Append,
                 "prepend" => actual_op = OverrideOp::Prepend,
                 "remove" => actual_op = OverrideOp::Remove,
-                _ => overrides.push(part.to_string()),
+                _ => overrides.push((*part).to_string()),
             }
         }
 
@@ -179,11 +179,11 @@ impl OverrideResolver {
         // Get all assignments for this variable
         let assignments = match self.assignments.get(var_name) {
             Some(a) => a,
-            None => return self.resolver.get(var_name).map(|s| s.to_string()),
+            None => return self.resolver.get(var_name).map(std::string::ToString::to_string),
         };
 
         // Start with base value from resolver
-        let mut result = self.resolver.get(var_name).map(|s| s.to_string());
+        let mut result = self.resolver.get(var_name).map(std::string::ToString::to_string);
         let mut has_value = result.is_some();
 
         // Apply assignments in order

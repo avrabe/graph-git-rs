@@ -23,9 +23,9 @@ impl From<io::Error> for FetchError {
 impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            FetchError::Io(e) => write!(f, "IO error: {}", e),
-            FetchError::Http(e) => write!(f, "HTTP error: {}", e),
-            FetchError::Unsupported(s) => write!(f, "Unsupported: {}", s),
+            FetchError::Io(e) => write!(f, "IO error: {e}"),
+            FetchError::Http(e) => write!(f, "HTTP error: {e}"),
+            FetchError::Unsupported(s) => write!(f, "Unsupported: {s}"),
         }
     }
 }
@@ -92,7 +92,7 @@ pub fn fetch_source(url: &str, download_dir: &Path) -> Result<PathBuf, FetchErro
     let response = ureq::get(url)
         .timeout(std::time::Duration::from_secs(300))
         .call()
-        .map_err(|e| FetchError::Http(format!("Failed to fetch {}: {}", url, e)))?;
+        .map_err(|e| FetchError::Http(format!("Failed to fetch {url}: {e}")))?;
 
     // Write to temp file first
     let temp_path = dest_path.with_extension("tmp");
@@ -126,8 +126,7 @@ pub fn unpack_source(archive_path: &Path, dest_dir: &Path) -> Result<(), FetchEr
         unpack_tar(archive_path, dest_dir)?;
     } else {
         return Err(FetchError::Unsupported(format!(
-            "Unsupported archive format: {}",
-            archive_name
+            "Unsupported archive format: {archive_name}"
         )));
     }
 

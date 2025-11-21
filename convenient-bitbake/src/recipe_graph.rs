@@ -260,8 +260,7 @@ impl RecipeGraph {
             tasks.iter()
                 .find(|&&task_id| {
                     self.tasks.get(&task_id)
-                        .map(|t| t.name == task_name)
-                        .unwrap_or(false)
+                        .is_some_and(|t| t.name == task_name)
                 })
                 .copied()
         })
@@ -447,7 +446,7 @@ impl RecipeGraph {
         sorted: &mut Vec<RecipeId>,
     ) -> Result<(), String> {
         if rec_stack.contains(&recipe_id) {
-            return Err(format!("Circular dependency detected at recipe: {:?}", recipe_id));
+            return Err(format!("Circular dependency detected at recipe: {recipe_id:?}"));
         }
         if visited.contains(&recipe_id) {
             return Ok(());

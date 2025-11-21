@@ -335,7 +335,7 @@ impl BuildOrchestrator {
         let mut need_rebuild = 0;
         let mut new_tasks = 0;
 
-        for (_task_id, task) in &task_graph.tasks {
+        for task in task_graph.tasks.values() {
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
             if let Some(current_sig) = sig_cache.get_signature(&task.recipe_name, &task.task_name) {
@@ -383,7 +383,7 @@ impl BuildOrchestrator {
         let mut preprocess_total_time = Duration::ZERO;
         let mut processed = 0;
 
-        for (_task_id, task) in &task_graph.tasks {
+        for task in task_graph.tasks.values() {
             processed += 1;
             if processed % 1000 == 0 {
                 info!("    Processed {}/{} tasks", processed, task_graph.tasks.len());
@@ -405,7 +405,7 @@ impl BuildOrchestrator {
                     // Don't include Python functions in shell scripts
                     if task_fn_name != &task.task_name
                         && task_fn_impl.impl_type == crate::task_extractor::TaskImplementationType::Shell {
-                        all_helpers.insert(format!("do_{}", task_fn_name), task_fn_impl.clone());
+                        all_helpers.insert(format!("do_{task_fn_name}"), task_fn_impl.clone());
                     }
                 }
             }
@@ -583,7 +583,7 @@ impl BuildOrchestrator {
         script.push_str(". /hitzeleiter/prelude.sh\n\n");
 
         // Set recipe-specific variables
-        script.push_str(&format!("export PN=\"{}\"\n", recipe_name));
+        script.push_str(&format!("export PN=\"{recipe_name}\"\n"));
 
         // Set up work directories - use variables that will be set by executor
         script.push_str("# Set up work directories (paths will be set by executor)\n");
@@ -619,7 +619,7 @@ impl BuildOrchestrator {
         if !helpers.is_empty() {
             script.push_str("# Helper functions from recipe\n");
             for (helper_name, helper_impl) in helpers {
-                script.push_str(&format!("{}() {{\n", helper_name));
+                script.push_str(&format!("{helper_name}() {{\n"));
                 script.push_str(&helper_impl.code);
                 script.push_str("\n}\n\n");
             }
@@ -632,30 +632,29 @@ impl BuildOrchestrator {
 
         // Explicitly create completion marker (don't rely solely on trap)
         // Output will be collected from work/outputs/<task>.done by the executor
-        let output_filename = format!("{}.done", task_name);
+        let output_filename = format!("{task_name}.done");
         script.push_str("# Mark task as complete\n");
         script.push_str("mkdir -p outputs\n");
-        script.push_str(&format!("touch \"outputs/{}\"\n", output_filename));
+        script.push_str(&format!("touch \"outputs/{output_filename}\"\n"));
 
         script
     }
 
     /// Create a placeholder script for tasks without implementation
     fn create_placeholder_script(&self, recipe_name: &str, task_name: &str) -> String {
-        let output_filename = format!("{}.done", task_name);
+        let output_filename = format!("{task_name}.done");
         format!(
             "#!/bin/bash\n\
 . /hitzeleiter/prelude.sh\n\
 \n\
-export PN=\"{}\"\n\
+export PN=\"{recipe_name}\"\n\
 export WORKDIR=\"${{WORKDIR:-/work}}\"\n\
 # Note: The executor already changes to WORKDIR before executing the script,\n\
 # so we don't need to cd here. This avoids path duplication issues.\n\
 \n\
-bb_note '[PLACEHOLDER] {}'\n\
+bb_note '[PLACEHOLDER] {task_name}'\n\
 mkdir -p outputs\n\
-touch \"outputs/{}\"\n",
-            recipe_name, task_name, output_filename
+touch \"outputs/{output_filename}\"\n"
         )
     }
 }

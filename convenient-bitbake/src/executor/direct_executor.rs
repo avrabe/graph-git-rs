@@ -52,17 +52,17 @@ pub fn execute_direct(
     // Ensure work directory exists
     if !work_dir.exists() {
         fs::create_dir_all(work_dir)
-            .map_err(|e| ExecutionError::SandboxError(format!("Failed to create work_dir: {}", e)))?;
+            .map_err(|e| ExecutionError::SandboxError(format!("Failed to create work_dir: {e}")))?;
     }
 
     // Execute each action
     for (i, action) in analysis.actions.iter().enumerate() {
         match execute_action(action, work_dir, &full_env, &mut stdout, &mut stderr) {
-            Ok(_) => {
+            Ok(()) => {
                 debug!("Action {} completed: {:?}", i, action);
             }
             Err(e) => {
-                stderr.push_str(&format!("ERROR: Action {} failed: {}\n", i, e));
+                stderr.push_str(&format!("ERROR: Action {i} failed: {e}\n"));
                 exit_code = 1;
                 warn!("Direct execution failed at action {}: {}", i, e);
                 break;
@@ -92,7 +92,7 @@ fn execute_action(
         DirectAction::MakeDir { path } => {
             let full_path = resolve_path(path, work_dir, env)?;
             fs::create_dir_all(&full_path)
-                .map_err(|e| ExecutionError::SandboxError(format!("mkdir failed: {}", e)))?;
+                .map_err(|e| ExecutionError::SandboxError(format!("mkdir failed: {e}")))?;
             debug!("Created directory: {}", full_path.display());
         }
 
@@ -102,7 +102,7 @@ fn execute_action(
             // Create parent directory if needed
             if let Some(parent) = full_path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {e}")))?;
             }
 
             // Touch file (create or update mtime)
@@ -114,7 +114,7 @@ fn execute_action(
             } else {
                 // Create empty file
                 fs::write(&full_path, "")
-                    .map_err(|e| ExecutionError::SandboxError(format!("touch failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("touch failed: {e}")))?;
             }
             debug!("Touched file: {}", full_path.display());
         }
@@ -125,11 +125,11 @@ fn execute_action(
             // Create parent directory if needed
             if let Some(parent) = full_path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {e}")))?;
             }
 
             fs::write(&full_path, content)
-                .map_err(|e| ExecutionError::SandboxError(format!("write failed: {}", e)))?;
+                .map_err(|e| ExecutionError::SandboxError(format!("write failed: {e}")))?;
             debug!("Wrote file: {} ({} bytes)", full_path.display(), content.len());
         }
 
@@ -139,7 +139,7 @@ fn execute_action(
             // Create parent directory if needed
             if let Some(parent) = full_path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {e}")))?;
             }
 
             use std::io::Write;
@@ -147,10 +147,10 @@ fn execute_action(
                 .create(true)
                 .append(true)
                 .open(&full_path)
-                .map_err(|e| ExecutionError::SandboxError(format!("append failed: {}", e)))?;
+                .map_err(|e| ExecutionError::SandboxError(format!("append failed: {e}")))?;
 
             file.write_all(content.as_bytes())
-                .map_err(|e| ExecutionError::SandboxError(format!("append write failed: {}", e)))?;
+                .map_err(|e| ExecutionError::SandboxError(format!("append write failed: {e}")))?;
 
             debug!("Appended to file: {} ({} bytes)", full_path.display(), content.len());
         }
@@ -162,7 +162,7 @@ fn execute_action(
             // Create parent directory if needed
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {e}")))?;
             }
 
             if *recursive && src_path.is_dir() {
@@ -171,7 +171,7 @@ fn execute_action(
             } else {
                 // Single file copy
                 fs::copy(&src_path, &dest_path)
-                    .map_err(|e| ExecutionError::SandboxError(format!("copy failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("copy failed: {e}")))?;
             }
 
             // Set permissions if specified
@@ -180,7 +180,7 @@ fn execute_action(
                 use std::os::unix::fs::PermissionsExt;
                 let perms = fs::Permissions::from_mode(*mode_val);
                 fs::set_permissions(&dest_path, perms)
-                    .map_err(|e| ExecutionError::SandboxError(format!("chmod failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("chmod failed: {e}")))?;
             }
 
             debug!("Copied: {} -> {}", src_path.display(), dest_path.display());
@@ -193,11 +193,11 @@ fn execute_action(
             // Create parent directory if needed
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {e}")))?;
             }
 
             fs::rename(&src_path, &dest_path)
-                .map_err(|e| ExecutionError::SandboxError(format!("move failed: {}", e)))?;
+                .map_err(|e| ExecutionError::SandboxError(format!("move failed: {e}")))?;
             debug!("Moved: {} -> {}", src_path.display(), dest_path.display());
         }
 
@@ -208,18 +208,17 @@ fn execute_action(
                 if *force {
                     // -f flag: ignore non-existent files
                     return Ok(());
-                } else {
-                    return Err(ExecutionError::SandboxError(format!(
-                        "rm: {} does not exist",
-                        full_path.display()
-                    )));
                 }
+                return Err(ExecutionError::SandboxError(format!(
+                    "rm: {} does not exist",
+                    full_path.display()
+                )));
             }
 
             if full_path.is_dir() {
                 if *recursive {
                     fs::remove_dir_all(&full_path)
-                        .map_err(|e| ExecutionError::SandboxError(format!("rm -r failed: {}", e)))?;
+                        .map_err(|e| ExecutionError::SandboxError(format!("rm -r failed: {e}")))?;
                 } else {
                     return Err(ExecutionError::SandboxError(format!(
                         "rm: {} is a directory (use -r flag)",
@@ -228,7 +227,7 @@ fn execute_action(
                 }
             } else {
                 fs::remove_file(&full_path)
-                    .map_err(|e| ExecutionError::SandboxError(format!("rm failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("rm failed: {e}")))?;
             }
             debug!("Removed: {}", full_path.display());
         }
@@ -240,13 +239,13 @@ fn execute_action(
             // Create parent directory if needed
             if let Some(parent) = link_path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("mkdir parent failed: {e}")))?;
             }
 
             #[cfg(unix)]
             {
                 std::os::unix::fs::symlink(&target_path, &link_path)
-                    .map_err(|e| ExecutionError::SandboxError(format!("symlink failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("symlink failed: {e}")))?;
             }
 
             #[cfg(windows)]
@@ -271,7 +270,7 @@ fn execute_action(
                 use std::os::unix::fs::PermissionsExt;
                 let perms = fs::Permissions::from_mode(*mode);
                 fs::set_permissions(&full_path, perms)
-                    .map_err(|e| ExecutionError::SandboxError(format!("chmod failed: {}", e)))?;
+                    .map_err(|e| ExecutionError::SandboxError(format!("chmod failed: {e}")))?;
                 debug!("Changed permissions: {} to {:o}", full_path.display(), mode);
             }
 
@@ -284,10 +283,10 @@ fn execute_action(
         DirectAction::Log { level, message } => {
             let expanded = expand_env_in_message(message, env);
             let log_line = match level {
-                LogLevel::Note => format!("NOTE: {}\n", expanded),
-                LogLevel::Warn => format!("WARNING: {}\n", expanded),
-                LogLevel::Error => format!("ERROR: {}\n", expanded),
-                LogLevel::Debug => format!("DEBUG: {}\n", expanded),
+                LogLevel::Note => format!("NOTE: {expanded}\n"),
+                LogLevel::Warn => format!("WARNING: {expanded}\n"),
+                LogLevel::Error => format!("ERROR: {expanded}\n"),
+                LogLevel::Debug => format!("DEBUG: {expanded}\n"),
             };
 
             // Note and Debug go to stdout, Warn and Error to stderr
@@ -310,10 +309,10 @@ fn execute_action(
 /// Recursively copy a directory
 fn copy_dir_all(src: &Path, dest: &Path) -> Result<(), ExecutionError> {
     fs::create_dir_all(dest)
-        .map_err(|e| ExecutionError::SandboxError(format!("create dest dir failed: {}", e)))?;
+        .map_err(|e| ExecutionError::SandboxError(format!("create dest dir failed: {e}")))?;
 
     for entry in fs::read_dir(src)
-        .map_err(|e| ExecutionError::SandboxError(format!("read source dir failed: {}", e)))?
+        .map_err(|e| ExecutionError::SandboxError(format!("read source dir failed: {e}")))?
     {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -324,7 +323,7 @@ fn copy_dir_all(src: &Path, dest: &Path) -> Result<(), ExecutionError> {
             copy_dir_all(&src_path, &dest_path)?;
         } else {
             fs::copy(&src_path, &dest_path)
-                .map_err(|e| ExecutionError::SandboxError(format!("copy file failed: {}", e)))?;
+                .map_err(|e| ExecutionError::SandboxError(format!("copy file failed: {e}")))?;
         }
     }
 
@@ -355,8 +354,8 @@ fn expand_env_in_message(msg: &str, env: &HashMap<String, String>) -> String {
 
     // Replace ${VAR} and $VAR
     for (key, value) in env {
-        result = result.replace(&format!("${{{}}}", key), value);
-        result = result.replace(&format!("${}", key), value);
+        result = result.replace(&format!("${{{key}}}"), value);
+        result = result.replace(&format!("${key}"), value);
     }
 
     // Common BitBake defaults (already applied in analyzer, but ensure consistency)
@@ -366,12 +365,12 @@ fn expand_env_in_message(msg: &str, env: &HashMap<String, String>) -> String {
         ("S", "/work/src"),
         ("B", "/work/build"),
         ("D", "/work/image"),
-    ].iter().cloned().collect();
+    ].iter().copied().collect();
 
     for (key, default_value) in defaults {
         if !env.contains_key(key) {
-            result = result.replace(&format!("${{{}}}", key), default_value);
-            result = result.replace(&format!("${}", key), default_value);
+            result = result.replace(&format!("${{{key}}}"), default_value);
+            result = result.replace(&format!("${key}"), default_value);
         }
     }
 

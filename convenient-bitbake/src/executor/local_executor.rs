@@ -77,19 +77,16 @@ impl LocalExecutor {
 
                 // Handle executor messages
                 msg = msg_rx.recv() => {
-                    match msg {
-                        Some(msg) => {
-                            Self::handle_message(
-                                executor.clone(),
-                                msg,
-                                &resp_tx,
-                                start_time,
-                            ).await;
-                        }
-                        None => {
-                            info!("Message channel closed, shutting down");
-                            break;
-                        }
+                    if let Some(msg) = msg {
+                        Self::handle_message(
+                            executor.clone(),
+                            msg,
+                            &resp_tx,
+                            start_time,
+                        ).await;
+                    } else {
+                        info!("Message channel closed, shutting down");
+                        break;
                     }
                 }
             }
@@ -124,11 +121,11 @@ impl LocalExecutor {
                     },
                     Ok(Err(e)) => ExecutorResponse::TaskResult {
                         request_id,
-                        result: Err(format!("Task execution failed: {}", e)),
+                        result: Err(format!("Task execution failed: {e}")),
                     },
                     Err(e) => ExecutorResponse::Error {
                         request_id,
-                        error: format!("Task execution panicked: {}", e),
+                        error: format!("Task execution panicked: {e}"),
                     },
                 };
 

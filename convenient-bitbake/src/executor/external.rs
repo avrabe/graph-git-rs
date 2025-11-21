@@ -242,7 +242,7 @@ impl ExecutorHandle {
                     request_id: resp_id,
                     result,
                 }) if resp_id == request_id => {
-                    return result.map_err(|e| ExecutorError::ExecutionFailed(e));
+                    return result.map_err(ExecutorError::ExecutionFailed);
                 }
                 Some(ExecutorResponse::Error {
                     request_id: resp_id,

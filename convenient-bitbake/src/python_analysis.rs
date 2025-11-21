@@ -271,7 +271,7 @@ impl PythonAnalysisSummary {
 
     /// Get the literal value if available
     pub fn get_literal_value(&self, var_name: &str) -> Option<&str> {
-        self.literal_assignments.get(var_name).map(|s| s.as_str())
+        self.literal_assignments.get(var_name).map(std::string::String::as_str)
     }
 }
 

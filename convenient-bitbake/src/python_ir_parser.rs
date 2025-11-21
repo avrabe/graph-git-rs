@@ -54,12 +54,12 @@ impl PythonIRParser {
 
             // String methods: var.startswith('prefix'), var.endswith('suffix'), etc.
             string_method_pattern: Regex::new(
-                r#"(\w+)\.(startswith|endswith|find|rfind|upper|lower|strip|replace)\s*\(([^)]*)\)"#
+                r"(\w+)\.(startswith|endswith|find|rfind|upper|lower|strip|replace)\s*\(([^)]*)\)"
             ).unwrap(),
 
             // if condition: (simple single-line if detection)
             if_statement: Regex::new(
-                r#"^\s*if\s+(.+):\s*$"#
+                r"^\s*if\s+(.+):\s*$"
             ).unwrap(),
         }
     }
@@ -172,7 +172,7 @@ impl PythonIRParser {
                 let body_line = lines[body_lines_consumed];
 
                 // Check if line is indented (part of if body)
-                if body_line.starts_with("    ") || body_line.starts_with("\t") {
+                if body_line.starts_with("    ") || body_line.starts_with('\t') {
                     let trimmed = body_line.trim();
                     if !trimmed.is_empty() && !trimmed.starts_with('#') {
                         // Try to parse the body line
@@ -199,7 +199,7 @@ impl PythonIRParser {
                     // Skip all indented lines in the else body
                     while body_lines_consumed < lines.len() {
                         let else_line = lines[body_lines_consumed];
-                        if else_line.starts_with("    ") || else_line.starts_with("\t") {
+                        if else_line.starts_with("    ") || else_line.starts_with('\t') {
                             body_lines_consumed += 1;
                         } else {
                             break;
@@ -261,14 +261,12 @@ impl PythonIRParser {
             // True value can be a string literal (group 3) or identifier (group 4)
             let true_str = cap.get(3)
                 .or_else(|| cap.get(4))
-                .map(|m| m.as_str())
-                .unwrap_or("True");
+                .map_or("True", |m| m.as_str());
 
             // False value can be a string literal (group 5) or identifier (group 6)
             let false_str = cap.get(5)
                 .or_else(|| cap.get(6))
-                .map(|m| m.as_str())
-                .unwrap_or("False");
+                .map_or("False", |m| m.as_str());
 
             let true_val = builder.string_literal(true_str);
             let false_val = builder.string_literal(false_str);
@@ -280,7 +278,7 @@ impl PythonIRParser {
         }
 
         // 5. var = d.getVar('VAR') or var = d.getVar('VAR', True)
-        if line.contains("=") && line.contains("d.getVar") {
+        if line.contains('=') && line.contains("d.getVar") {
             // Extract variable name being assigned to
             if let Some(eq_pos) = line.find('=') {
                 let lhs = line[..eq_pos].trim();
@@ -304,7 +302,7 @@ impl PythonIRParser {
         }
 
         // 6. Check for assignment with bb.utils.contains
-        if line.contains("=") && line.contains("bb.utils.contains")
+        if line.contains('=') && line.contains("bb.utils.contains")
             && let Some(eq_pos) = line.find('=') {
                 let lhs = line[..eq_pos].trim();
                 let rhs = line[eq_pos + 1..].trim();
@@ -384,14 +382,12 @@ impl PythonIRParser {
             // True value can be a string literal (group 3) or identifier (group 4)
             let true_str = cap.get(3)
                 .or_else(|| cap.get(4))
-                .map(|m| m.as_str())
-                .unwrap_or("True");
+                .map_or("True", |m| m.as_str());
 
             // False value can be a string literal (group 5) or identifier (group 6)
             let false_str = cap.get(5)
                 .or_else(|| cap.get(6))
-                .map(|m| m.as_str())
-                .unwrap_or("False");
+                .map_or("False", |m| m.as_str());
 
             let true_val = builder.string_literal(true_str);
             let false_val = builder.string_literal(false_str);

@@ -499,7 +499,7 @@ fn parse_ln(line: &str, env_vars: &HashMap<String, String>) -> Option<DirectActi
         line.strip_prefix("ln -s ")?
     };
 
-    let parts: Vec<&str> = rest.trim().split_whitespace().collect();
+    let parts: Vec<&str> = rest.split_whitespace().collect();
     if parts.len() != 2 {
         return None;
     }
@@ -563,24 +563,24 @@ fn expand_variables(s: &str, env_vars: &HashMap<String, String>) -> String {
         ("B", "/work/build"),
         ("D", "/work/image"),
         ("TMPDIR", "/tmp"),
-    ].iter().cloned().collect();
+    ].iter().copied().collect();
 
     // Replace ${VAR}
     for (key, value) in env_vars {
-        result = result.replace(&format!("${{{}}}", key), value);
+        result = result.replace(&format!("${{{key}}}"), value);
     }
 
     // Replace $VAR (simple form)
     for (key, value) in env_vars {
         // Only replace if followed by space, /, or end of string
-        result = result.replace(&format!("${}", key), value);
+        result = result.replace(&format!("${key}"), value);
     }
 
     // Apply defaults for BitBake variables
     for (key, default_value) in defaults {
         if !env_vars.contains_key(key) {
-            result = result.replace(&format!("${{{}}}", key), default_value);
-            result = result.replace(&format!("${}", key), default_value);
+            result = result.replace(&format!("${{{key}}}"), default_value);
+            result = result.replace(&format!("${key}"), default_value);
         }
     }
 

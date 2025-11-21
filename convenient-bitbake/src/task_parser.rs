@@ -143,7 +143,7 @@ impl TaskCollection {
                 return Ok(());
             }
             if visiting.contains(task_name) {
-                return Err(format!("Circular dependency detected involving task: {}", task_name));
+                return Err(format!("Circular dependency detected involving task: {task_name}"));
             }
 
             visiting.insert(task_name.to_string());

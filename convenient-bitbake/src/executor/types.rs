@@ -8,6 +8,7 @@ use sha2::{Sha256, Digest};
 
 /// Execution mode for task - determines sandboxing requirements
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ExecutionMode {
     /// Direct Rust execution - no sandbox, no shell, no host contamination
     /// Only for simple operations: file ops, env vars, logging
@@ -16,6 +17,7 @@ pub enum ExecutionMode {
 
     /// Shell script execution - requires full sandboxing
     /// Used when script contains complex bash operations
+    #[default]
     Shell,
 
     /// Python script execution - requires full sandboxing
@@ -28,11 +30,6 @@ pub enum ExecutionMode {
     RustShell,
 }
 
-impl Default for ExecutionMode {
-    fn default() -> Self {
-        ExecutionMode::Shell  // Conservative default
-    }
-}
 
 impl ExecutionMode {
     /// Whether this mode requires sandboxing
@@ -51,9 +48,11 @@ impl ExecutionMode {
 
 /// Network isolation policy for sandbox
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum NetworkPolicy {
     /// No network access (default, most hermetic)
     /// Creates new network namespace with no interfaces
+    #[default]
     Isolated,
 
     /// Loopback only (127.0.0.1 accessible)
@@ -69,11 +68,6 @@ pub enum NetworkPolicy {
     Controlled,
 }
 
-impl Default for NetworkPolicy {
-    fn default() -> Self {
-        NetworkPolicy::Isolated  // Safe by default
-    }
-}
 
 /// Resource limits for cgroup v2
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
