@@ -18,7 +18,7 @@ use nix::mount::{mount, MsFlags};
 #[cfg(target_os = "linux")]
 use nix::sched::{unshare, CloneFlags};
 #[cfg(target_os = "linux")]
-use nix::unistd::{chdir, fork, ForkResult, Pid, getuid, getgid, pipe, read, write};
+use nix::unistd::{chdir, fork, ForkResult, Pid, getuid, getgid, read, write};
 #[cfg(target_os = "linux")]
 use std::os::fd::{OwnedFd, AsRawFd};
 #[cfg(target_os = "linux")]

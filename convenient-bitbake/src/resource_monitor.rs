@@ -1,6 +1,6 @@
 //! System resource monitoring
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Resource usage snapshot
 #[derive(Debug, Clone, Copy, Default)]

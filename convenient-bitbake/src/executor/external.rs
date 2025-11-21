@@ -13,7 +13,6 @@
 use super::types::{TaskSpec, TaskOutput};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
 

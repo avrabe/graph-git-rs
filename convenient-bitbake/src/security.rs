@@ -106,7 +106,7 @@ pub struct SecurityProfile {
 impl SecurityProfile {
     /// Create strict profile
     pub fn strict() -> Self {
-        let mut seccomp = SeccompFilter::new();
+        let seccomp = SeccompFilter::new();
         // Minimal syscalls only
 
         let mut landlock = LandlockRestrictions::new();

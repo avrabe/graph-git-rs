@@ -4,8 +4,8 @@
 //! layer discovery through task graph generation.
 
 use crate::{
-    BuildContext, ExtractionConfig, LayerConfig, Pipeline, PipelineConfig,
-    RecipeExtractor, RecipeGraph, SignatureCache, TaskExtractor, TaskGraph,
+    BuildContext, ExtractionConfig, Pipeline, PipelineConfig,
+    RecipeExtractor, RecipeGraph, SignatureCache, TaskGraph,
     TaskGraphBuilder, TaskImplementation, TaskSpec,
 };
 use crate::executor::types::{NetworkPolicy, ResourceLimits};

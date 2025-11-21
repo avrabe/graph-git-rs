@@ -5,7 +5,7 @@ use super::direct_executor;
 use super::sandbox::SandboxManager;
 use super::script_analyzer;
 use super::types::{
-    ContentHash, ExecutionError, ExecutionMode, ExecutionResult, NetworkPolicy, ResourceLimits,
+    ContentHash, ExecutionError, ExecutionMode, ExecutionResult,
     SandboxSpec, TaskOutput, TaskSignature, TaskSpec,
 };
 use std::collections::HashMap;

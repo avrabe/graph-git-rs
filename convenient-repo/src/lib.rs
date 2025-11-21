@@ -349,7 +349,7 @@ impl<'a> Iterator for ProjectsIterator<'a> {
 }
 
 impl Manifest {
-    pub fn iter(&self) -> ProjectsIterator {
+    pub fn iter(&self) -> ProjectsIterator<'_> {
         ProjectsIterator {
             manifest: self,
             index: 0,

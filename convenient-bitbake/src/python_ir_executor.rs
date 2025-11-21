@@ -4,7 +4,6 @@
 use crate::python_ir::{OpKind, Operation, PythonIR, ValueId, ExecutionStrategy};
 use std::collections::HashMap;
 
-#[cfg(feature = "python-execution")]
 use crate::python_executor::PythonExecutor;
 
 /// Result of IR execution
@@ -145,42 +144,31 @@ impl IRExecutor {
 
     /// Execute using RustPython fallback
     fn execute_rustpython(&self, ir: &PythonIR) -> IRExecutionResult {
-        #[cfg(feature = "python-execution")]
-        {
-            // Find ComplexPython operation and extract code
-            for operation in ir.operations() {
-                if let OpKind::ComplexPython { code } = &operation.kind {
-                    let executor = PythonExecutor::new();
-                    let result = executor.execute(&code, &self.initial_vars);
+        // Find ComplexPython operation and extract code
+        for operation in ir.operations() {
+            if let OpKind::ComplexPython { code } = &operation.kind {
+                let executor = PythonExecutor::new();
+                let result = executor.execute(&code, &self.initial_vars);
 
-                    return if result.success {
-                        IRExecutionResult::success(
-                            result.variables_set,
-                            result.variables_read,
-                            ExecutionStrategy::RustPython,
-                        )
-                    } else {
-                        IRExecutionResult::failure(
-                            result.error.unwrap_or_else(|| "Unknown error".to_string()),
-                            ExecutionStrategy::RustPython,
-                        )
-                    };
-                }
+                return if result.success {
+                    IRExecutionResult::success(
+                        result.variables_set,
+                        result.variables_read,
+                        ExecutionStrategy::RustPython,
+                    )
+                } else {
+                    IRExecutionResult::failure(
+                        result.error.unwrap_or_else(|| "Unknown error".to_string()),
+                        ExecutionStrategy::RustPython,
+                    )
+                };
             }
-
-            IRExecutionResult::failure(
-                "No ComplexPython operation found for RustPython execution".to_string(),
-                ExecutionStrategy::RustPython,
-            )
         }
 
-        #[cfg(not(feature = "python-execution"))]
-        {
-            IRExecutionResult::failure(
-                "RustPython execution requested but python-execution feature not enabled".to_string(),
-                ExecutionStrategy::RustPython,
-            )
-        }
+        IRExecutionResult::failure(
+            "No ComplexPython operation found for RustPython execution".to_string(),
+            ExecutionStrategy::RustPython,
+        )
     }
 
     /// Execute single operation (static mode)

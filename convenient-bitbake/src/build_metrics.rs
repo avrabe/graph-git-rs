@@ -1,7 +1,7 @@
 //! Build metrics collection and analysis
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
 /// Build metrics collector

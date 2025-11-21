@@ -1,8 +1,6 @@
 //! Build report generation (JSON, HTML, Markdown)
 
 use serde::{Serialize, Deserialize};
-use std::time::Duration;
-use std::collections::HashMap;
 
 /// Build report
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -347,7 +347,7 @@ impl ContentAddressableStore {
         );
 
         // Mark phase: identify objects to keep
-        let mut reachable: HashSet<ContentHash> = keep.iter().cloned().collect();
+        let reachable: HashSet<ContentHash> = keep.iter().cloned().collect();
 
         // Sweep phase: delete unreachable objects
         let mut deleted = 0;

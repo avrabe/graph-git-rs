@@ -11,9 +11,8 @@ use crate::class_dependencies;
 use std::collections::HashMap;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::debug;
 
-#[cfg(feature = "python-execution")]
 use crate::python_executor::PythonExecutor;
 
 /// Build context for override resolution
@@ -132,13 +131,11 @@ struct PythonBlockInfo {
 /// Extracts dependencies from BitBake recipe content
 pub struct RecipeExtractor {
     config: ExtractionConfig,
-    #[cfg(feature = "python-execution")]
     executor: Option<PythonExecutor>,
 }
 
 impl RecipeExtractor {
     pub fn new(config: ExtractionConfig) -> Self {
-        #[cfg(feature = "python-execution")]
         let executor = if config.use_python_executor {
             Some(PythonExecutor::new())
         } else {
@@ -147,7 +144,6 @@ impl RecipeExtractor {
 
         Self {
             config,
-            #[cfg(feature = "python-execution")]
             executor,
         }
     }
@@ -643,7 +639,6 @@ impl RecipeExtractor {
     }
 
     /// Dedent Python code by removing common leading whitespace
-    #[cfg(feature = "python-execution")]
     fn dedent_python(&self, code: &str) -> String {
         let lines: Vec<&str> = code.lines().collect();
 
@@ -704,16 +699,13 @@ impl RecipeExtractor {
                         }
                         ExecutionStrategy::RustPython => {
                             // For complex blocks, use RustPython executor if enabled
-                            #[cfg(feature = "python-execution")]
-                            {
-                                if let Some(ref executor) = self.executor {
-                                    let dedented_code = self.dedent_python(&python_block.code);
-                                    let result = executor.execute(&dedented_code, &eval_vars);
-                                    if result.success {
-                                        for (var_name, value) in result.variables_set {
-                                            vars.insert(var_name.clone(), value.clone());
-                                            eval_vars.insert(var_name, value);
-                                        }
+                            if let Some(ref executor) = self.executor {
+                                let dedented_code = self.dedent_python(&python_block.code);
+                                let result = executor.execute(&dedented_code, &eval_vars);
+                                if result.success {
+                                    for (var_name, value) in result.variables_set {
+                                        vars.insert(var_name.clone(), value.clone());
+                                        eval_vars.insert(var_name, value);
                                     }
                                 }
                             }
@@ -721,16 +713,13 @@ impl RecipeExtractor {
                     }
                 } else {
                     // IR parser failed - fall back to RustPython if available
-                    #[cfg(feature = "python-execution")]
-                    {
-                        if let Some(ref executor) = self.executor {
-                            let dedented_code = self.dedent_python(&python_block.code);
-                            let result = executor.execute(&dedented_code, &eval_vars);
-                            if result.success {
-                                for (var_name, value) in result.variables_set {
-                                    vars.insert(var_name.clone(), value.clone());
-                                    eval_vars.insert(var_name, value);
-                                }
+                    if let Some(ref executor) = self.executor {
+                        let dedented_code = self.dedent_python(&python_block.code);
+                        let result = executor.execute(&dedented_code, &eval_vars);
+                        if result.success {
+                            for (var_name, value) in result.variables_set {
+                                vars.insert(var_name.clone(), value.clone());
+                                eval_vars.insert(var_name, value);
                             }
                         }
                     }
