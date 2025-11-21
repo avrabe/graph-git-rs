@@ -1344,8 +1344,14 @@ impl RecipeExtractor {
         let mut task_flags = Vec::new();
         let mut disabled_tasks = std::collections::HashSet::new();
 
-        // Add base tasks that all BitBake recipes inherit from base.bbclass
-        // These are standard tasks defined in meta/classes-global/base.bbclass
+        // Add base tasks that all BitBake recipes inherit from base.bbclass and its inherited classes
+        // Base tasks from base.bbclass: fetch, unpack, configure, compile, install, build, cleansstate, cleanall
+        // Base tasks from patch.bbclass: patch (inherited by base.bbclass)
+        // Base tasks from staging.bbclass: populate_sysroot, prepare_recipe_sysroot (inherited by base.bbclass)
+        // Base tasks from package.bbclass: package, packagedata
+        //
+        // Note: Utility tasks (clean, listtasks, checkuri) from utility-tasks.bbclass are deliberately
+        // excluded as they are debugging/maintenance tools, not part of the normal build flow
         let base_tasks = vec![
             "fetch",
             "unpack",
@@ -1354,11 +1360,12 @@ impl RecipeExtractor {
             "compile",
             "install",
             "populate_sysroot",
+            "prepare_recipe_sysroot",
             "package",
+            "packagedata",
             "build",
-            "clean",
+            "cleansstate",
             "cleanall",
-            "listtasks",
         ];
 
         for task_name in base_tasks {
