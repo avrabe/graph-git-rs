@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tracing::{debug, warn};
 
 // Module containing bb.utils functions
 #[pymodule]
@@ -309,7 +310,7 @@ fn get_cached_interpreter() -> Arc<Interpreter> {
                         Box::new(bitbake_internal::make_module),
                     );
 
-                    // Register bb.utils module
+                    // Register bb.utils module with helper functions
                     vm.add_native_module(
                         "bb.utils".to_owned(),
                         Box::new(bb_utils::make_module),
@@ -321,11 +322,9 @@ fn get_cached_interpreter() -> Arc<Interpreter> {
                         Box::new(crate::python_bridge::bb_fetch2::make_module),
                     );
 
-                    // Register top-level bb module
-                    vm.add_native_module(
-                        "bb".to_owned(),
-                        Box::new(crate::python_bridge::bb::make_module),
-                    );
+                    // NOTE: Don't register top-level bb module - it conflicts with bb.utils submodule
+                    // RustPython doesn't properly support parent/child module registration
+                    // Instead, we'll create a bb namespace in Python code when needed
                 }))
                 .interpreter();
 
@@ -628,15 +627,19 @@ impl PythonExecutor {
 
         // Import native bb.utils module and make functions available in global scope
         let bb_utils_code = r#"
-import bb.utils as _bb_utils_module
-
-# Make bb.utils functions available in global scope for easy access
-meson_array = _bb_utils_module.meson_array
-meson_cpu_family = _bb_utils_module.meson_cpu_family
-meson_operating_system = _bb_utils_module.meson_operating_system
-meson_endian = _bb_utils_module.meson_endian
-rust_tool = _bb_utils_module.rust_tool
-use_updatercd = _bb_utils_module.use_updatercd
+# Import the native bb.utils module
+try:
+    import bb.utils
+    # Make bb.utils functions available in global scope for direct access
+    meson_array = bb.utils.meson_array
+    meson_cpu_family = bb.utils.meson_cpu_family
+    meson_operating_system = bb.utils.meson_operating_system
+    meson_endian = bb.utils.meson_endian
+    rust_tool = bb.utils.rust_tool
+    use_updatercd = bb.utils.use_updatercd
+except Exception as e:
+    print(f"ERROR importing bb.utils: {type(e).__name__}: {e}")
+    raise
 
 # Helper function used by os-release recipe
 def sanitise_value(value):
@@ -645,14 +648,21 @@ def sanitise_value(value):
     value = value.replace('"', '').replace("'", '').replace('`', '')
     return value.strip()
 
-# Also create bb object for bb.utils.contains() style calls
+# Create bb namespace object (since we don't register top-level bb module)
+# This allows code like: bb.utils.contains()
+import sys
 class _BB:
     pass
-
 bb = _BB()
-bb.utils = _bb_utils_module  # Reference to the imported module
+bb.utils = sys.modules['bb.utils']  # Reference to the bb.utils module
 "#;
-        vm.run_block_expr(scope.clone(), bb_utils_code)?;
+        match vm.run_block_expr(scope.clone(), bb_utils_code) {
+            Ok(_) => {},
+            Err(e) => {
+                warn!("Failed to setup bb.utils: {:?}", e);
+                return Err(e);
+            }
+        }
 
         // Compile the expression in Eval mode
         let code_obj = match vm.compile(
@@ -731,15 +741,19 @@ bb.utils = _bb_utils_module  # Reference to the imported module
 
         // Import native bb.utils module and make functions available in global scope
         let bb_utils_code = r#"
-import bb.utils as _bb_utils_module
-
-# Make bb.utils functions available in global scope for easy access
-meson_array = _bb_utils_module.meson_array
-meson_cpu_family = _bb_utils_module.meson_cpu_family
-meson_operating_system = _bb_utils_module.meson_operating_system
-meson_endian = _bb_utils_module.meson_endian
-rust_tool = _bb_utils_module.rust_tool
-use_updatercd = _bb_utils_module.use_updatercd
+# Import the native bb.utils module
+try:
+    import bb.utils
+    # Make bb.utils functions available in global scope for direct access
+    meson_array = bb.utils.meson_array
+    meson_cpu_family = bb.utils.meson_cpu_family
+    meson_operating_system = bb.utils.meson_operating_system
+    meson_endian = bb.utils.meson_endian
+    rust_tool = bb.utils.rust_tool
+    use_updatercd = bb.utils.use_updatercd
+except Exception as e:
+    print(f"ERROR importing bb.utils: {type(e).__name__}: {e}")
+    raise
 
 # Helper function used by os-release recipe
 def sanitise_value(value):
@@ -748,14 +762,21 @@ def sanitise_value(value):
     value = value.replace('"', '').replace("'", '').replace('`', '')
     return value.strip()
 
-# Also create bb object for bb.utils.contains() style calls
+# Create bb namespace object (since we don't register top-level bb module)
+# This allows code like: bb.utils.contains()
+import sys
 class _BB:
     pass
-
 bb = _BB()
-bb.utils = _bb_utils_module  # Reference to the imported module
+bb.utils = sys.modules['bb.utils']  # Reference to the bb.utils module
 "#;
-        vm.run_block_expr(scope.clone(), bb_utils_code)?;
+        match vm.run_block_expr(scope.clone(), bb_utils_code) {
+            Ok(_) => {},
+            Err(e) => {
+                warn!("Failed to setup bb.utils: {:?}", e);
+                return Err(e);
+            }
+        }
 
         // Dedent the Python code to remove common leading whitespace
         let dedented_code = Self::dedent(python_code);
