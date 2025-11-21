@@ -4,7 +4,7 @@
 use crate::{BitbakeRecipe, IncludeResolver, SimpleResolver};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Layer configuration from layer.conf
 #[derive(Debug, Clone)]
@@ -199,6 +199,64 @@ impl BuildContext {
         for (key, value) in variables {
             self.global_variables.insert(key.clone(), value.clone());
         }
+    }
+
+    /// Find machine configuration file in layers
+    fn find_machine_conf(&self, machine: &str) -> Option<PathBuf> {
+        for layer in &self.layers {
+            let machine_conf = layer.layer_dir.join(format!("conf/machine/{}.conf", machine));
+            if machine_conf.exists() {
+                info!("Found machine config: {:?}", machine_conf);
+                return Some(machine_conf);
+            }
+        }
+        None
+    }
+
+    /// Find distro configuration file in layers
+    fn find_distro_conf(&self, distro: &str) -> Option<PathBuf> {
+        for layer in &self.layers {
+            let distro_conf = layer.layer_dir.join(format!("conf/distro/{}.conf", distro));
+            if distro_conf.exists() {
+                info!("Found distro config: {:?}", distro_conf);
+                return Some(distro_conf);
+            }
+        }
+        None
+    }
+
+    /// Load machine configuration
+    ///
+    /// Finds and loads the machine.conf file for the configured machine,
+    /// merging variables into the global context.
+    pub fn load_machine_config(&mut self) -> Result<(), String> {
+        if let Some(ref machine) = self.machine.clone() {
+            if let Some(machine_conf) = self.find_machine_conf(machine) {
+                info!("Loading machine configuration for: {}", machine);
+                self.load_conf_file(&machine_conf)?;
+                return Ok(());
+            } else {
+                warn!("Machine configuration not found for: {}", machine);
+            }
+        }
+        Ok(())
+    }
+
+    /// Load distro configuration
+    ///
+    /// Finds and loads the distro.conf file for the configured distro,
+    /// merging variables into the global context.
+    pub fn load_distro_config(&mut self) -> Result<(), String> {
+        if let Some(ref distro) = self.distro.clone() {
+            if let Some(distro_conf) = self.find_distro_conf(distro) {
+                info!("Loading distro configuration for: {}", distro);
+                self.load_conf_file(&distro_conf)?;
+                return Ok(());
+            } else {
+                warn!("Distro configuration not found for: {}", distro);
+            }
+        }
+        Ok(())
     }
 
     /// Find all recipes in all layers
