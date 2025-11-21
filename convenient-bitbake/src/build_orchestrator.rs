@@ -172,6 +172,11 @@ impl BuildOrchestrator {
             build_context.add_layer_from_conf(&layer_conf)?;
         }
 
+        // Load machine and distro configuration files
+        info!("Loading machine and distro configurations");
+        build_context.load_machine_config()?;
+        build_context.load_distro_config()?;
+
         // Extract task implementations and helper functions
         let mut task_implementations = HashMap::new();
         let mut helper_implementations = HashMap::new();
@@ -281,6 +286,7 @@ impl BuildOrchestrator {
             &task_implementations,
             &helper_implementations,
             &recipe_variables,
+            &build_context,
             &self.config.build_dir,
         )?;
         info!("✓ Step 7 completed in {:?} ({} task specs created)", stage_start.elapsed(), task_specs.len());
@@ -364,6 +370,7 @@ impl BuildOrchestrator {
         task_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
         helper_implementations: &HashMap<String, HashMap<String, TaskImplementation>>,
         recipe_variables: &HashMap<String, HashMap<String, String>>,
+        build_context: &BuildContext,
         build_dir: &Path,
     ) -> Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> {
         let mut specs = HashMap::new();
@@ -425,12 +432,18 @@ impl BuildOrchestrator {
                     .cloned()
                     .unwrap_or_else(HashMap::new);
 
+                // Merge global variables from build context (machine.conf, distro.conf, etc.)
+                // These should be added BEFORE recipe-specific variables and hardcoded defaults
+                for (key, value) in &build_context.global_variables {
+                    recipe_vars.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+
                 // Add runtime variables that may not be in recipe
                 recipe_vars.entry("PN".to_string()).or_insert_with(|| task.recipe_name.clone());
                 let workdir = build_dir.join("tmp").join(&task.recipe_name);
                 recipe_vars.entry("WORKDIR".to_string()).or_insert_with(|| workdir.to_string_lossy().to_string());
 
-                // Add common missing variables with sensible defaults
+                // Add common missing variables with sensible defaults (only if not already set)
                 recipe_vars.entry("LLVMVERSION".to_string()).or_insert_with(|| "15".to_string());
                 recipe_vars.entry("TARGET_ARCH".to_string()).or_insert_with(|| "aarch64".to_string());
                 recipe_vars.entry("HOST_ARCH".to_string()).or_insert_with(|| "aarch64".to_string());
