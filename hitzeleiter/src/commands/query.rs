@@ -1,7 +1,7 @@
 //! Query command for dependency exploration
 
 use convenient_bitbake::{BuildEnvironment, BuildOrchestrator, OrchestratorConfig};
-use convenient_bitbake::query::{RecipeQueryEngine, OutputFormat};
+use convenient_bitbake::query::RecipeQueryEngine;
 use std::collections::HashMap;
 use std::path::Path;
 
