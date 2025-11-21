@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 #[pymodule]
 mod bb_utils {
     use super::*;
+    use rustpython::vm::builtins::PyList;
 
     #[pyfunction]
     fn contains(
@@ -42,6 +43,164 @@ mod bb_utils {
             } else {
                 // Variable not found, return false_val
                 Ok(false_val)
+            }
+        } else {
+            Err(vm.new_type_error("Expected DataStore as 'd' parameter".to_string()))
+        }
+    }
+
+    /// Convert space-separated variable to meson array format
+    /// Used by meson.bbclass for cross-compilation configuration
+    #[pyfunction]
+    fn meson_array(var: PyStrRef, d: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
+            if let Some(value) = datastore.inner.lock().unwrap().get_var(var.as_str(), true) {
+                // Split value by whitespace and create a Python list
+                let items: Vec<PyObjectRef> = value
+                    .split_whitespace()
+                    .map(|s| vm.ctx.new_str(s).into())
+                    .collect();
+                Ok(PyList::new_ref(items, &vm.ctx).into())
+            } else {
+                // Return empty list if variable not found
+                Ok(PyList::new_ref(vec![], &vm.ctx).into())
+            }
+        } else {
+            Err(vm.new_type_error("Expected DataStore as 'd' parameter".to_string()))
+        }
+    }
+
+    /// Get Rust toolchain component path
+    /// Used by rust-common.bbclass for Rust builds
+    #[pyfunction]
+    fn rust_tool(d: PyObjectRef, tool_sys: PyStrRef, vm: &VirtualMachine) -> PyResult<String> {
+        // For now, return a placeholder path based on the system
+        // In real BitBake, this would resolve actual Rust toolchain paths
+        let sys_name = tool_sys.as_str();
+        Ok(format!("/usr/bin/rust-{}", sys_name.to_lowercase()))
+    }
+
+    /// Get CPU family name for meson cross-compilation
+    /// Maps BitBake ARCH to meson CPU family names
+    #[pyfunction]
+    fn meson_cpu_family(arch_var: PyStrRef, d: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
+        if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
+            let arch = datastore
+                .inner
+                .lock()
+                .unwrap()
+                .get_var(arch_var.as_str(), true)
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // Map BitBake architecture to meson CPU family
+            let family = match arch.as_str() {
+                "x86_64" | "amd64" => "x86_64",
+                "i386" | "i486" | "i586" | "i686" => "x86",
+                "aarch64" => "aarch64",
+                "arm" | "armv7" | "armv7a" | "armv7ve" => "arm",
+                "mips" | "mipsel" => "mips",
+                "mips64" | "mips64el" => "mips64",
+                "powerpc" | "ppc" => "ppc",
+                "powerpc64" | "ppc64" => "ppc64",
+                "riscv32" => "riscv32",
+                "riscv64" => "riscv64",
+                _ => &arch,
+            };
+
+            Ok(family.to_string())
+        } else {
+            Err(vm.new_type_error("Expected DataStore as 'd' parameter".to_string()))
+        }
+    }
+
+    /// Get operating system name for meson cross-compilation
+    /// Maps BitBake OS to meson OS names
+    #[pyfunction]
+    fn meson_operating_system(os_var: PyStrRef, d: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
+        if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
+            let os = datastore
+                .inner
+                .lock()
+                .unwrap()
+                .get_var(os_var.as_str(), true)
+                .unwrap_or_else(|| "linux".to_string());
+
+            // Map BitBake OS to meson OS
+            let meson_os = match os.to_lowercase().as_str() {
+                s if s.contains("linux") => "linux",
+                s if s.contains("darwin") || s.contains("macos") => "darwin",
+                s if s.contains("mingw") || s.contains("windows") => "windows",
+                s if s.contains("freebsd") => "freebsd",
+                s if s.contains("netbsd") => "netbsd",
+                s if s.contains("openbsd") => "openbsd",
+                _ => "linux", // Default to linux
+            };
+
+            Ok(meson_os.to_string())
+        } else {
+            Err(vm.new_type_error("Expected DataStore as 'd' parameter".to_string()))
+        }
+    }
+
+    /// Get endianness for meson cross-compilation
+    /// Returns "little" or "big"
+    #[pyfunction]
+    fn meson_endian(prefix: PyStrRef, d: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
+        if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
+            // Try to get endianness from {prefix}_ARCH or default based on known architectures
+            let arch_var = format!("{}_ARCH", prefix.as_str());
+            let arch = datastore
+                .inner
+                .lock()
+                .unwrap()
+                .get_var(&arch_var, true)
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // Determine endianness based on architecture
+            let endian = match arch.as_str() {
+                // Little endian architectures
+                a if a.contains("x86") || a.contains("amd64") || a.contains("i386")
+                    || a.contains("aarch64") || a.contains("arm")
+                    || a.contains("riscv") || a.contains("mipsel") => "little",
+                // Big endian architectures
+                a if a.contains("mips") && !a.contains("mipsel") => "big",
+                a if a.contains("powerpc") || a.contains("ppc") => "big",
+                // Default to little endian (most common)
+                _ => "little",
+            };
+
+            Ok(endian.to_string())
+        } else {
+            Err(vm.new_type_error("Expected DataStore as 'd' parameter".to_string()))
+        }
+    }
+
+    /// Check if update-rc.d should be used for init scripts
+    /// Returns "1" if enabled, empty string otherwise
+    #[pyfunction]
+    fn use_updatercd(d: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
+        if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
+            // Check INIT_SYSTEM or DISTRO_FEATURES for init system type
+            let init_system = datastore
+                .inner
+                .lock()
+                .unwrap()
+                .get_var("INIT_SYSTEM", true)
+                .unwrap_or_else(|| "sysvinit".to_string());
+
+            let distro_features = datastore
+                .inner
+                .lock()
+                .unwrap()
+                .get_var("DISTRO_FEATURES", true)
+                .unwrap_or_default();
+
+            // Use update-rc.d if using sysvinit and not using systemd
+            if init_system.contains("sysvinit") ||
+               (!distro_features.contains("systemd") && distro_features.contains("sysvinit")) {
+                Ok("1".to_string())
+            } else {
+                Ok(String::new())
             }
         } else {
             Err(vm.new_type_error("Expected DataStore as 'd' parameter".to_string()))
@@ -467,26 +626,17 @@ impl PythonExecutor {
         // Add 'd' as a global
         scope.globals.set_item("d", d_obj.clone(), vm)?;
 
-        // Create bb.utils module with contains function and helper functions
+        // Import native bb.utils module and make functions available in global scope
         let bb_utils_code = r#"
-class _BBUtils:
-    def __init__(self, d_obj):
-        self._d = d_obj
+import bb.utils as _bb_utils_module
 
-    def contains(self, var, item, true_val, false_val, d):
-        # Get variable value from datastore
-        value = d.getVar(var, True)
-        if value is None:
-            return false_val
-        # Check if item is in the space-separated value
-        items = value.split()
-        return true_val if item in items else false_val
-
-class _BB:
-    def __init__(self, d_obj):
-        self.utils = _BBUtils(d_obj)
-
-bb = _BB(d)
+# Make bb.utils functions available in global scope for easy access
+meson_array = _bb_utils_module.meson_array
+meson_cpu_family = _bb_utils_module.meson_cpu_family
+meson_operating_system = _bb_utils_module.meson_operating_system
+meson_endian = _bb_utils_module.meson_endian
+rust_tool = _bb_utils_module.rust_tool
+use_updatercd = _bb_utils_module.use_updatercd
 
 # Helper function used by os-release recipe
 def sanitise_value(value):
@@ -494,6 +644,13 @@ def sanitise_value(value):
     # Simple sanitisation: remove quotes and dangerous characters
     value = value.replace('"', '').replace("'", '').replace('`', '')
     return value.strip()
+
+# Also create bb object for bb.utils.contains() style calls
+class _BB:
+    pass
+
+bb = _BB()
+bb.utils = _bb_utils_module  # Reference to the imported module
 "#;
         vm.run_block_expr(scope.clone(), bb_utils_code)?;
 
@@ -572,26 +729,17 @@ def sanitise_value(value):
         // Add 'd' as a global
         scope.globals.set_item("d", d_obj.clone(), vm)?;
 
-        // Create bb.utils module with contains function and helper functions
+        // Import native bb.utils module and make functions available in global scope
         let bb_utils_code = r#"
-class _BBUtils:
-    def __init__(self, d_obj):
-        self._d = d_obj
+import bb.utils as _bb_utils_module
 
-    def contains(self, var, item, true_val, false_val, d):
-        # Get variable value from datastore
-        value = d.getVar(var, True)
-        if value is None:
-            return false_val
-        # Check if item is in the space-separated value
-        items = value.split()
-        return true_val if item in items else false_val
-
-class _BB:
-    def __init__(self, d_obj):
-        self.utils = _BBUtils(d_obj)
-
-bb = _BB(d)
+# Make bb.utils functions available in global scope for easy access
+meson_array = _bb_utils_module.meson_array
+meson_cpu_family = _bb_utils_module.meson_cpu_family
+meson_operating_system = _bb_utils_module.meson_operating_system
+meson_endian = _bb_utils_module.meson_endian
+rust_tool = _bb_utils_module.rust_tool
+use_updatercd = _bb_utils_module.use_updatercd
 
 # Helper function used by os-release recipe
 def sanitise_value(value):
@@ -599,6 +747,13 @@ def sanitise_value(value):
     # Simple sanitisation: remove quotes and dangerous characters
     value = value.replace('"', '').replace("'", '').replace('`', '')
     return value.strip()
+
+# Also create bb object for bb.utils.contains() style calls
+class _BB:
+    pass
+
+bb = _BB()
+bb.utils = _bb_utils_module  # Reference to the imported module
 "#;
         vm.run_block_expr(scope.clone(), bb_utils_code)?;
 
