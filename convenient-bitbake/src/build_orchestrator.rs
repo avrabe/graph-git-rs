@@ -10,9 +10,12 @@ use crate::{
 };
 use crate::executor::types::{NetworkPolicy, ResourceLimits};
 use crate::executor::ScriptPreprocessor;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -373,21 +376,35 @@ impl BuildOrchestrator {
         build_context: &BuildContext,
         build_dir: &Path,
     ) -> Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut specs = HashMap::new();
         let tmp_dir = build_dir.join("tmp");
         fs::create_dir_all(&tmp_dir)?;
 
-        info!("  Processing {} tasks...", task_graph.tasks.len());
+        let total_tasks = task_graph.tasks.len();
+        info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
-        let mut preprocess_count = 0;
-        let mut preprocess_total_time = Duration::ZERO;
-        let mut processed = 0;
+        // Progress tracking with atomics
+        let processed = Arc::new(AtomicUsize::new(0));
+        let preprocess_total_time = Arc::new(AtomicU64::new(0));
+        let last_report = Arc::new(Mutex::new(Instant::now()));
 
-        for task in task_graph.tasks.values() {
-            processed += 1;
-            if processed % 1000 == 0 {
-                info!("    Processed {}/{} tasks", processed, task_graph.tasks.len());
-            }
+        // Use rayon for CPU-bound parallel processing
+        // Note: Rayon uses default thread pool (which is num_cpus by default)
+        let specs: Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> =
+            task_graph.tasks.values()
+            .collect::<Vec<_>>()
+            .par_iter()
+            .map(|task| {
+                let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
+
+                // Report progress every 500 tasks or every 2 seconds
+                if count % 500 == 0 {
+                    let mut last = last_report.lock().unwrap();
+                    if last.elapsed().as_secs() >= 2 {
+                        let pct = (count as f64 / total_tasks as f64) * 100.0;
+                        info!("  Progress: {}/{} tasks ({:.1}%)", count, total_tasks, pct);
+                        *last = Instant::now();
+                    }
+                }
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
             // Get helper functions for this recipe (both explicit helpers and other task functions)
@@ -492,14 +509,14 @@ impl BuildOrchestrator {
                 };
 
                 let elapsed = preprocess_start.elapsed();
-                preprocess_total_time += elapsed;
-                preprocess_count += 1;
+                preprocess_total_time.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
 
                 (result, env_vars)
             };
 
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
-            fs::create_dir_all(&task_workdir)?;
+            fs::create_dir_all(&task_workdir)
+                .map_err(|e| format!("Failed to create workdir: {}", e))?;
 
             // Output file - executor will prepend /work/outputs/ for relative paths
             let output_file = format!("{}.done", task.task_name);
@@ -527,14 +544,19 @@ impl BuildOrchestrator {
                 resource_limits: ResourceLimits::default(),
             };
 
-            specs.insert(task_key, spec);
-        }
+            Ok((task_key, spec))
+        })
+        .collect::<Result<HashMap<_, _>, _>>();
 
-        if preprocess_count > 0 {
-            let avg_time = preprocess_total_time / preprocess_count as u32;
+        let specs = specs?;
+
+        let total_preprocess_micros = preprocess_total_time.load(Ordering::Relaxed);
+        if total_preprocess_micros > 0 {
+            let total_time = Duration::from_micros(total_preprocess_micros);
+            let avg_micros = total_preprocess_micros / total_tasks as u64;
             info!(
-                "  Preprocessing: {} tasks in {:?} (avg {:?}/task)",
-                preprocess_count, preprocess_total_time, avg_time
+                "  ✓ Preprocessing: {} tasks in {:?} (avg {:?}/task)",
+                total_tasks, total_time, Duration::from_micros(avg_micros)
             );
         }
 
