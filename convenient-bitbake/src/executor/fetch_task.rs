@@ -189,9 +189,9 @@ fn parse_single_uri(uri_str: &str) -> FetchResult<SourceUri> {
     } else if url.starts_with("file://") || !url.contains("://") {
         UriScheme::File
     } else if url.starts_with("ftp://") {
-        UriScheme::Ftp
+        UriScheme::Other("ftp".to_string())
     } else if url.starts_with("svn://") {
-        UriScheme::Svn
+        UriScheme::Other("svn".to_string())
     } else {
         // Default to HTTPS for unknown schemes
         UriScheme::Https
@@ -205,17 +205,15 @@ fn parse_single_uri(uri_str: &str) -> FetchResult<SourceUri> {
     };
 
     Ok(SourceUri {
+        raw: uri_str.to_string(),
         scheme,
         url,
+        protocol: params.get("protocol").cloned(),
         branch: params.get("branch").cloned(),
         tag: params.get("tag").cloned(),
         srcrev: params.get("rev").or_else(|| params.get("srcrev")).cloned(),
-        subdir: params.get("subdir").cloned(),
-        subpath: params.get("subpath").cloned(),
         destsuffix: params.get("destsuffix").cloned(),
-        name: params.get("name").cloned(),
         nobranch: params.contains_key("nobranch"),
-        ..Default::default()
     })
 }
 

@@ -262,7 +262,7 @@ fn clone_git_repo(src_uri: &SourceUri, dest_dir: &Path, config: &FetchConfig) ->
 
         // Try username/password or token
         if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-            if let (Some(ref user), Some(ref pass)) = (&git_user, &git_password) {
+            if let (Some(user), Some(pass)) = (&git_user, &git_password) {
                 debug!("Trying username/password auth");
                 return Cred::userpass_plaintext(user, pass);
             }
@@ -418,7 +418,7 @@ fn update_git_repo(
 
         // Try username/password
         if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-            if let (Some(ref user), Some(ref pass)) = (&git_user, &git_password) {
+            if let (Some(user), Some(pass)) = (&git_user, &git_password) {
                 return Cred::userpass_plaintext(user, pass);
             }
             if let Some(ref token) = git_password {
