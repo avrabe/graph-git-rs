@@ -8,15 +8,19 @@
 
 ## Immediate Priority: Source Preparation
 
-### Fetch (Phase 1.1) - IMPLEMENTED
+### Fetch (Phase 1.1) - IMPLEMENTED & WIRED
 - [x] Pure Rust HTTP fetcher (ureq + rustls) - no wget/curl
 - [x] Pure Rust Git fetcher (git2/libgit2) - no git CLI
-- [x] Proxy support (HTTP_PROXY, HTTPS_PROXY, NO_PROXY)
+- [x] Proxy support (HTTP_PROXY, HTTPS_PROXY, NO_PROXY, ALL_PROXY)
+- [x] SOCKS proxy support (socks5://, socks5h://)
+- [x] Proxy authentication support
 - [x] SRC_URI variable expansion (`${PV}`, `${PN}`)
 - [x] Checksum verification (SHA256, MD5)
 - [x] SRC_URI parameter parsing (;branch=, ;protocol=, etc.)
+- [x] Wire to build orchestrator (executor.rs calls fetch_task for do_fetch)
+- [x] Enhanced SSH key support (ssh-agent, explicit key paths, default keys)
+- [x] GitHub token authentication (x-access-token)
 - [ ] **Test:** Download busybox tarball to DL_DIR
-- [ ] Wire to build orchestrator (call from do_fetch task)
 
 ### Unpack (Phase 1.2)
 - [ ] Connect `fetcher.rs:unpack_source()` to `do_unpack` task
@@ -63,7 +67,7 @@
 
 ## Current Blockers
 
-1. **Fetch is a stub** - No source code = no build
+1. ~~**Fetch is a stub**~~ - **RESOLVED**: Pure Rust fetcher now wired to executor
 2. **Patch is empty** - Busybox needs patches
 3. **No toolchain setup** - Can't cross-compile
 4. **Sysroot not wired** - Dependencies not available
@@ -74,14 +78,14 @@
 
 | Component | File | Status |
 |-----------|------|--------|
-| **Rust fetcher** | `convenient-bitbake/src/executor/rust_fetcher.rs` | **NEW - Pure Rust** |
-| **Fetch task** | `convenient-bitbake/src/executor/fetch_task.rs` | **NEW - SRC_URI parsing** |
-| Fetch stub | `convenient-bitbake/src/executor/bbhelpers.rs:206` | STUB (to be replaced) |
+| **Rust fetcher** | `convenient-bitbake/src/executor/rust_fetcher.rs` | **DONE - Pure Rust** |
+| **Fetch task** | `convenient-bitbake/src/executor/fetch_task.rs` | **DONE - SRC_URI parsing** |
+| **Task executor** | `convenient-bitbake/src/executor/executor.rs` | **WIRED to fetch_task** |
+| Fetch stub | `convenient-bitbake/src/executor/bbhelpers.rs:206` | STUB (bypassed for fetch) |
 | Unpack | `convenient-bitbake/src/fetcher.rs:111` | Works, not wired |
 | Patch | None | NOT IMPLEMENTED |
 | Sysroot | `convenient-bitbake/src/sysroot.rs` | Exists, not wired |
 | Build cmd | `hitzeleiter/src/commands/build.rs` | Ad-hoc, needs rewrite |
-| Task exec | `convenient-bitbake/src/executor/executor.rs` | Works |
 | Prelude | `convenient-bitbake/src/executor/prelude.sh` | Needs toolchain vars |
 
 ---
@@ -94,8 +98,10 @@
 - [x] Caching infrastructure
 - [x] Sandbox infrastructure
 - [x] **Fetch** - Pure Rust implementation (ureq, git2)
-- [ ] **Fetch wiring** ← NEXT: Connect to build orchestrator
-- [ ] Unpack
+- [x] **Fetch wiring** - Connected to executor.rs for do_fetch tasks
+- [x] **Proxy support** - HTTP, HTTPS, SOCKS5, with authentication
+- [x] **SSH support** - ssh-agent, explicit keys, default keys
+- [ ] **Unpack** ← NEXT: Wire unpack_source to do_unpack
 - [ ] Patch
 - [ ] Toolchain
 - [ ] Sysroot

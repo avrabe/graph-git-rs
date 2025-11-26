@@ -75,11 +75,26 @@ pub struct FetchConfig {
     /// Git password/token for authenticated repos
     pub git_password: Option<String>,
     /// Custom proxy URL (overrides environment)
+    /// Supports: http://, https://, socks5://, socks5h://
     pub proxy_url: Option<String>,
+    /// Proxy username (for authenticated proxies)
+    pub proxy_user: Option<String>,
+    /// Proxy password (for authenticated proxies)
+    pub proxy_password: Option<String>,
     /// Progress callback
     pub progress: Option<ProgressCallback>,
     /// Allow insecure TLS (not recommended)
     pub insecure: bool,
+    /// SSH private key path for git (alternative to ssh-agent)
+    pub ssh_key_path: Option<PathBuf>,
+    /// SSH known hosts file (for strict host checking)
+    pub ssh_known_hosts: Option<PathBuf>,
+    /// Git protocol preference: "https", "ssh", "git"
+    pub git_protocol: Option<String>,
+    /// Retry count for network operations
+    pub retry_count: Option<u32>,
+    /// Timeout for operations in seconds
+    pub timeout_secs: Option<u64>,
 }
 
 /// Download source from SRC_URI to downloads directory (pure Rust)
@@ -209,24 +224,68 @@ fn clone_git_repo(src_uri: &SourceUri, dest_dir: &Path, config: &FetchConfig) ->
     // Setup callbacks
     let mut callbacks = RemoteCallbacks::new();
 
-    // Credential handling
+    // Credential handling with enhanced SSH support
     let git_user = config.git_user.clone();
     let git_password = config.git_password.clone();
+    let ssh_key_path = config.ssh_key_path.clone();
 
-    callbacks.credentials(move |_url, username_from_url, allowed_types| {
-        // Try SSH agent first
+    callbacks.credentials(move |url, username_from_url, allowed_types| {
+        debug!(
+            "Git credentials requested: url={}, username_from_url={:?}, allowed={:?}",
+            url, username_from_url, allowed_types
+        );
+
+        // Try SSH key from explicit path first (for custom deployment keys)
         if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-            if let Some(username) = username_from_url {
-                if let Ok(cred) = Cred::ssh_key_from_agent(username) {
+            if let Some(ref key_path) = ssh_key_path {
+                let username = username_from_url.unwrap_or("git");
+                debug!("Trying SSH key from: {}", key_path.display());
+                if let Ok(cred) = Cred::ssh_key(username, None, key_path, None) {
                     return Ok(cred);
                 }
             }
         }
 
-        // Try username/password
+        // Try SSH agent (most common for development)
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            if let Some(username) = username_from_url {
+                debug!("Trying SSH agent for user: {}", username);
+                if let Ok(cred) = Cred::ssh_key_from_agent(username) {
+                    return Ok(cred);
+                }
+            }
+            // Also try with "git" username (common for GitHub, GitLab, etc.)
+            if let Ok(cred) = Cred::ssh_key_from_agent("git") {
+                return Ok(cred);
+            }
+        }
+
+        // Try username/password or token
         if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
             if let (Some(ref user), Some(ref pass)) = (&git_user, &git_password) {
+                debug!("Trying username/password auth");
                 return Cred::userpass_plaintext(user, pass);
+            }
+            // Try token-based auth (GitHub style: x-access-token:<token>)
+            if let Some(ref token) = git_password {
+                debug!("Trying token-based auth");
+                return Cred::userpass_plaintext("x-access-token", token);
+            }
+        }
+
+        // Try SSH key from default locations (~/.ssh/id_rsa, ~/.ssh/id_ed25519)
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            let username = username_from_url.unwrap_or("git");
+            if let Some(home) = dirs_home() {
+                for key_name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
+                    let key_path = home.join(".ssh").join(key_name);
+                    if key_path.exists() {
+                        debug!("Trying SSH key: {}", key_path.display());
+                        if let Ok(cred) = Cred::ssh_key(username, None, &key_path, None) {
+                            return Ok(cred);
+                        }
+                    }
+                }
             }
         }
 
@@ -265,12 +324,24 @@ fn clone_git_repo(src_uri: &SourceUri, dest_dir: &Path, config: &FetchConfig) ->
     let mut fetch_opts = FetchOptions::new();
     fetch_opts.remote_callbacks(callbacks);
 
-    // Proxy configuration
+    // Enhanced proxy configuration with SOCKS and auth support
     let mut proxy_opts = ProxyOptions::new();
     if let Some(ref proxy_url) = config.proxy_url {
-        proxy_opts.url(proxy_url);
+        // Use explicit proxy with optional authentication
+        let full_proxy = build_proxy_url(
+            proxy_url,
+            config.proxy_user.as_deref(),
+            config.proxy_password.as_deref(),
+        );
+        debug!("Using explicit proxy: {}", mask_proxy_password(&full_proxy));
+        proxy_opts.url(&full_proxy);
+    } else if let Some(env_proxy) = get_git_proxy_from_env() {
+        // Use environment proxy (supports SOCKS via ALL_PROXY)
+        debug!("Using environment proxy: {}", mask_proxy_password(&env_proxy));
+        proxy_opts.url(&env_proxy);
     } else {
-        proxy_opts.auto(); // Use HTTP_PROXY, HTTPS_PROXY environment variables
+        // Fall back to auto-detection
+        proxy_opts.auto();
     }
     fetch_opts.proxy_options(proxy_opts);
 
@@ -311,33 +382,82 @@ fn update_git_repo(
 ) -> FetchResult<PathBuf> {
     let repo = Repository::open(repo_dir)?;
 
-    // Setup callbacks for fetch
+    // Setup callbacks for fetch with enhanced SSH support
     let mut callbacks = RemoteCallbacks::new();
     let git_user = config.git_user.clone();
     let git_password = config.git_password.clone();
+    let ssh_key_path = config.ssh_key_path.clone();
 
-    callbacks.credentials(move |_url, username_from_url, allowed_types| {
+    callbacks.credentials(move |url, username_from_url, allowed_types| {
+        debug!(
+            "Git credentials requested (update): url={}, username_from_url={:?}",
+            url, username_from_url
+        );
+
+        // Try SSH key from explicit path first
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            if let Some(ref key_path) = ssh_key_path {
+                let username = username_from_url.unwrap_or("git");
+                if let Ok(cred) = Cred::ssh_key(username, None, key_path, None) {
+                    return Ok(cred);
+                }
+            }
+        }
+
+        // Try SSH agent
         if allowed_types.contains(git2::CredentialType::SSH_KEY) {
             if let Some(username) = username_from_url {
                 if let Ok(cred) = Cred::ssh_key_from_agent(username) {
                     return Ok(cred);
                 }
             }
+            if let Ok(cred) = Cred::ssh_key_from_agent("git") {
+                return Ok(cred);
+            }
         }
+
+        // Try username/password
         if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
             if let (Some(ref user), Some(ref pass)) = (&git_user, &git_password) {
                 return Cred::userpass_plaintext(user, pass);
             }
+            if let Some(ref token) = git_password {
+                return Cred::userpass_plaintext("x-access-token", token);
+            }
         }
+
+        // Try default SSH keys
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            let username = username_from_url.unwrap_or("git");
+            if let Some(home) = dirs_home() {
+                for key_name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
+                    let key_path = home.join(".ssh").join(key_name);
+                    if key_path.exists() {
+                        if let Ok(cred) = Cred::ssh_key(username, None, &key_path, None) {
+                            return Ok(cred);
+                        }
+                    }
+                }
+            }
+        }
+
         Cred::default()
     });
 
     let mut fetch_opts = FetchOptions::new();
     fetch_opts.remote_callbacks(callbacks);
 
+    // Enhanced proxy configuration
     let mut proxy_opts = ProxyOptions::new();
     if let Some(ref proxy_url) = config.proxy_url {
-        proxy_opts.url(proxy_url);
+        let full_proxy = build_proxy_url(
+            proxy_url,
+            config.proxy_user.as_deref(),
+            config.proxy_password.as_deref(),
+        );
+        proxy_opts.url(&full_proxy);
+    } else if let Some(env_proxy) = get_git_proxy_from_env() {
+        proxy_opts.url(&env_proxy);
     } else {
         proxy_opts.auto();
     }
@@ -567,6 +687,71 @@ fn fetch_file(src_uri: &SourceUri, downloads_dir: &Path) -> FetchResult<PathBuf>
 // Utilities
 // ============================================================================
 
+/// Get home directory
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("USERPROFILE").ok().map(PathBuf::from))
+}
+
+/// Build proxy URL with authentication if provided
+fn build_proxy_url(base_url: &str, user: Option<&str>, password: Option<&str>) -> String {
+    if let (Some(u), Some(p)) = (user, password) {
+        // Insert credentials into proxy URL: http://user:pass@host:port
+        if let Some(scheme_end) = base_url.find("://") {
+            let scheme = &base_url[..scheme_end + 3];
+            let rest = &base_url[scheme_end + 3..];
+            format!("{}{}:{}@{}", scheme, u, p, rest)
+        } else {
+            base_url.to_string()
+        }
+    } else {
+        base_url.to_string()
+    }
+}
+
+/// Get git proxy from environment with SOCKS support
+fn get_git_proxy_from_env() -> Option<String> {
+    // Check GIT_PROXY_COMMAND for SOCKS proxy (common in corporate environments)
+    // Check git-specific proxy settings first
+    if let Ok(proxy) = std::env::var("GIT_PROXY") {
+        return Some(proxy);
+    }
+
+    // Check ALL_PROXY for SOCKS (often used for git)
+    if let Ok(proxy) = std::env::var("ALL_PROXY").or_else(|_| std::env::var("all_proxy")) {
+        return Some(proxy);
+    }
+
+    // Fall back to HTTPS_PROXY (git typically uses HTTPS)
+    if let Ok(proxy) = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")) {
+        return Some(proxy);
+    }
+
+    // Finally try HTTP_PROXY
+    std::env::var("HTTP_PROXY")
+        .or_else(|_| std::env::var("http_proxy"))
+        .ok()
+}
+
+/// Mask password in proxy URL for logging
+fn mask_proxy_password(url: &str) -> String {
+    // Match patterns like http://user:password@host
+    if let Some(at_pos) = url.find('@') {
+        if let Some(scheme_end) = url.find("://") {
+            let after_scheme = &url[scheme_end + 3..at_pos];
+            if let Some(colon_pos) = after_scheme.find(':') {
+                let scheme = &url[..scheme_end + 3];
+                let user = &after_scheme[..colon_pos];
+                let rest = &url[at_pos..];
+                return format!("{}{}:***{}", scheme, user, rest);
+            }
+        }
+    }
+    url.to_string()
+}
+
 fn extract_repo_name(url: &str) -> FetchResult<String> {
     let url_clean = url.trim_end_matches('/');
 
@@ -648,5 +833,54 @@ mod tests {
             extract_host("http://example.com:8080/path"),
             Some("example.com".to_string())
         );
+    }
+
+    #[test]
+    fn test_build_proxy_url_with_auth() {
+        // No auth
+        assert_eq!(
+            build_proxy_url("http://proxy.example.com:8080", None, None),
+            "http://proxy.example.com:8080"
+        );
+
+        // With auth
+        assert_eq!(
+            build_proxy_url("http://proxy.example.com:8080", Some("user"), Some("pass")),
+            "http://user:pass@proxy.example.com:8080"
+        );
+
+        // SOCKS proxy with auth
+        assert_eq!(
+            build_proxy_url("socks5://proxy.example.com:1080", Some("user"), Some("secret")),
+            "socks5://user:secret@proxy.example.com:1080"
+        );
+    }
+
+    #[test]
+    fn test_mask_proxy_password() {
+        // No password
+        assert_eq!(
+            mask_proxy_password("http://proxy.example.com:8080"),
+            "http://proxy.example.com:8080"
+        );
+
+        // With password - should be masked
+        assert_eq!(
+            mask_proxy_password("http://user:secretpass@proxy.example.com:8080"),
+            "http://user:***@proxy.example.com:8080"
+        );
+
+        // SOCKS with password
+        assert_eq!(
+            mask_proxy_password("socks5://admin:hunter2@socks.example.com:1080"),
+            "socks5://admin:***@socks.example.com:1080"
+        );
+    }
+
+    #[test]
+    fn test_dirs_home() {
+        // This depends on environment but should return Some on most systems
+        // Just verify it doesn't panic
+        let _ = dirs_home();
     }
 }
