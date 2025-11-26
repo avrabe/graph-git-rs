@@ -39,15 +39,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!();
             commands::kas::execute(&config, &builddir, target).await?;
         }
-        Commands::Build { builddir, target } => {
-            println!("\n╔════════════════════════════════════════════════════════╗");
-            println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
-            println!("║  Task Graph Execution with Dependency Resolution      ║");
-            println!("╚════════════════════════════════════════════════════════╝\n");
-            println!("Build directory: {:?}", builddir);
-            println!("Target: {}", target);
-            println!();
-            commands::build::execute(&builddir, &target).await?;
+        Commands::Build { builddir, target, runall } => {
+            if let Some(ref task) = runall {
+                println!("\n╔════════════════════════════════════════════════════════╗");
+                println!("║              BITZEL RUNALL ORCHESTRATOR                ║");
+                println!("║  Run task for target and ALL dependencies             ║");
+                println!("╚════════════════════════════════════════════════════════╝\n");
+                println!("Build directory: {:?}", builddir);
+                println!("Target: {}", target);
+                println!("Task: {} (for all dependencies)", task);
+                println!();
+                commands::build::execute_runall(&builddir, &target, task).await?;
+            } else {
+                println!("\n╔════════════════════════════════════════════════════════╗");
+                println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
+                println!("║  Task Graph Execution with Dependency Resolution      ║");
+                println!("╚════════════════════════════════════════════════════════╝\n");
+                println!("Build directory: {:?}", builddir);
+                println!("Target: {}", target);
+                println!();
+                commands::build::execute(&builddir, &target).await?;
+            }
         }
         Commands::Clean { builddir, all } => {
             if all {
