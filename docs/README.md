@@ -46,6 +46,7 @@ Technical specifications and reference material.
 Implementation progress, roadmaps, and phase summaries.
 
 ### Roadmaps
+- [BitBake Replacement Roadmap](development/roadmaps/bitbake-replacement-roadmap.md) - **Path to working build system**
 - [Executive Summary](development/roadmaps/executive-summary.md) - High-level roadmap overview
 - [Accuracy Roadmap](development/roadmaps/accuracy-roadmap.md) - Path to 95% accuracy
 - [BitBake Implementation](development/roadmaps/bitbake-implementation.md) - Parser implementation plan
