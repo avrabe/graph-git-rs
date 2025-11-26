@@ -27,6 +27,7 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[allow(unused_imports)]
 use std::os::unix::process::ExitStatusExt;
 
 use super::types::{ExecutionError, NetworkPolicy, ResourceLimits};
