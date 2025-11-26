@@ -36,12 +36,14 @@
 //! let results = query.execute(&graph)?;
 //! ```
 
+pub mod lexer;
 pub mod parser;
 pub mod expr;
 pub mod recipe_query;
 pub mod task_query;
 pub mod output;
 
+pub use lexer::{TokenKind, Token, QueryLexer, ParseError};
 pub use parser::QueryParser;
 pub use expr::{QueryExpr, TargetPattern};
 pub use recipe_query::RecipeQueryEngine;
