@@ -6,6 +6,7 @@ use super::fetch_task;
 use super::rust_fetcher::{FetchConfig, FetchError as RustFetchError};
 use super::sandbox::SandboxManager;
 use super::script_analyzer;
+use crate::fetcher;
 use super::types::{
     ContentHash, ExecutionError, ExecutionMode, ExecutionResult,
     SandboxSpec, TaskOutput, TaskSignature, TaskSpec,
@@ -77,6 +78,9 @@ impl TaskExecutor {
             if spec.name == "do_fetch" || spec.name == "fetch" {
                 info!("Using pure Rust fetcher for fetch task (no host tools)");
                 self.execute_fetch_task(&spec)?
+            } else if spec.name == "do_unpack" || spec.name == "unpack" {
+                info!("Using pure Rust unpacker for unpack task (no host tools)");
+                self.execute_unpack_task(&spec)?
             } else {
                 match spec.execution_mode {
                     ExecutionMode::DirectRust => {
@@ -351,6 +355,143 @@ impl TaskExecutor {
         }
     }
 
+    /// Execute unpack task using pure Rust unpacker (no host tools)
+    ///
+    /// This uses the `fetcher::unpack_source` function to extract archives directly in Rust,
+    /// without requiring tar, gzip, bzip2, or xz CLI tools on the host.
+    fn execute_unpack_task(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
+        let start = Instant::now();
+
+        info!("Executing unpack task with pure Rust unpacker");
+        debug!("Recipe: {}", spec.recipe);
+        debug!("Environment vars: {:?}", spec.env.keys().collect::<Vec<_>>());
+
+        // Get DL_DIR (where fetched archives are)
+        let dl_dir = spec
+            .env
+            .get("DL_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("downloads"));
+
+        // Get S (source directory) - destination for unpacking
+        let s_dir = spec
+            .env
+            .get("S")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("src"));
+
+        std::fs::create_dir_all(&s_dir)?;
+
+        info!("DL_DIR: {}", dl_dir.display());
+        info!("S: {}", s_dir.display());
+
+        // Check if DL_DIR exists and has archives
+        if !dl_dir.exists() {
+            warn!("DL_DIR does not exist: {}", dl_dir.display());
+            let duration = start.elapsed().as_millis() as u64;
+            return Ok((
+                "[NOTE] No archives to unpack (DL_DIR does not exist)\n".to_string(),
+                String::new(),
+                0,
+                HashMap::new(),
+                duration,
+            ));
+        }
+
+        // Find archives in DL_DIR
+        let mut archives_found = Vec::new();
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut unpacked_count = 0;
+
+        for entry in std::fs::read_dir(&dl_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Check if it's an archive we can unpack
+            if is_archive(&path) {
+                archives_found.push(path.clone());
+
+                // Unpack the archive
+                match fetcher::unpack_source(&path, &s_dir) {
+                    Ok(()) => {
+                        stdout.push_str(&format!(
+                            "[NOTE] Unpacked: {} -> {}\n",
+                            path.display(),
+                            s_dir.display()
+                        ));
+                        unpacked_count += 1;
+                    }
+                    Err(e) => {
+                        stderr.push_str(&format!(
+                            "[ERROR] Failed to unpack {}: {}\n",
+                            path.display(),
+                            e
+                        ));
+                        warn!("Failed to unpack {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+
+        if archives_found.is_empty() {
+            stdout.push_str("[NOTE] No archives found to unpack\n");
+            info!("No archives found in DL_DIR");
+        } else {
+            stdout.push_str(&format!(
+                "[NOTE] Unpack completed: {} of {} archives unpacked\n",
+                unpacked_count,
+                archives_found.len()
+            ));
+        }
+
+        // Hash unpacked files and store in CAS
+        let mut output_files = HashMap::new();
+        if s_dir.exists() {
+            for entry in walkdir::WalkDir::new(&s_dir)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+            {
+                if entry.file_type().is_file() {
+                    let path = entry.path();
+                    let content = std::fs::read(path)?;
+                    let hash = self.cas.put(&content)?;
+                    let rel_path = path
+                        .strip_prefix(&s_dir)
+                        .unwrap_or(path)
+                        .to_path_buf();
+                    output_files.insert(rel_path, hash);
+                }
+            }
+        }
+
+        // Create completion marker
+        let outputs_dir = spec.workdir.join("outputs");
+        std::fs::create_dir_all(&outputs_dir)?;
+        let marker_path = outputs_dir.join("do_unpack.done");
+        std::fs::write(
+            &marker_path,
+            format!("Unpacked {} archives, {} files in S\n", unpacked_count, output_files.len()),
+        )?;
+
+        let duration = start.elapsed().as_millis() as u64;
+
+        info!(
+            "Unpack task completed: {} archives, {} files in {}ms",
+            unpacked_count,
+            output_files.len(),
+            duration
+        );
+
+        let exit_code = if stderr.is_empty() { 0 } else { 0 }; // Warn but don't fail
+
+        Ok((stdout, stderr, exit_code, output_files, duration))
+    }
+
     /// Build fetch configuration from environment variables
     fn build_fetch_config(&self, env: &HashMap<String, String>) -> FetchConfig {
         let mut config = FetchConfig::default();
@@ -617,6 +758,18 @@ impl TaskExecutor {
     pub fn action_cache_stats(&self) -> super::cache::ActionCacheStats {
         self.action_cache.stats()
     }
+}
+
+/// Check if a file is an archive that we can unpack
+fn is_archive(path: &Path) -> bool {
+    let name = path.to_string_lossy();
+    name.ends_with(".tar.gz")
+        || name.ends_with(".tgz")
+        || name.ends_with(".tar.bz2")
+        || name.ends_with(".tbz2")
+        || name.ends_with(".tar.xz")
+        || name.ends_with(".txz")
+        || name.ends_with(".tar")
 }
 
 /// Execution statistics
