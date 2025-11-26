@@ -81,6 +81,9 @@ impl TaskExecutor {
             } else if spec.name == "do_unpack" || spec.name == "unpack" {
                 info!("Using pure Rust unpacker for unpack task (no host tools)");
                 self.execute_unpack_task(&spec)?
+            } else if spec.name == "do_patch" || spec.name == "patch" {
+                info!("Using patch task handler");
+                self.execute_patch_task(&spec)?
             } else {
                 match spec.execution_mode {
                     ExecutionMode::DirectRust => {
@@ -492,6 +495,164 @@ impl TaskExecutor {
         Ok((stdout, stderr, exit_code, output_files, duration))
     }
 
+    /// Execute patch task - applies patches to source directory
+    ///
+    /// This finds patch files in the workdir and applies them to S directory
+    /// using git apply or a fallback patch command.
+    fn execute_patch_task(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
+        let start = Instant::now();
+
+        info!("Executing patch task");
+        debug!("Recipe: {}", spec.recipe);
+
+        // Get S (source directory) - where patches should be applied
+        let s_dir = spec
+            .env
+            .get("S")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("src"));
+
+        // Get patch directory - typically where file:// patches are copied
+        let patch_dir = spec
+            .env
+            .get("PATCHDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.clone());
+
+        info!("S: {}", s_dir.display());
+        info!("PATCHDIR: {}", patch_dir.display());
+
+        // Check if S exists
+        if !s_dir.exists() {
+            warn!("Source directory does not exist: {}", s_dir.display());
+            let duration = start.elapsed().as_millis() as u64;
+            return Ok((
+                "[NOTE] Source directory does not exist, skipping patch\n".to_string(),
+                String::new(),
+                0,
+                HashMap::new(),
+                duration,
+            ));
+        }
+
+        // Find patch files
+        let mut patches = Vec::new();
+
+        // Look in workdir for patches
+        if spec.workdir.exists() {
+            for entry in std::fs::read_dir(&spec.workdir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if is_patch_file(&path) {
+                    patches.push(path);
+                }
+            }
+        }
+
+        // Also look in patch_dir if different
+        if patch_dir != spec.workdir && patch_dir.exists() {
+            for entry in std::fs::read_dir(&patch_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if is_patch_file(&path) && !patches.iter().any(|p| p.file_name() == path.file_name()) {
+                    patches.push(path);
+                }
+            }
+        }
+
+        // Sort patches by name (allows 0001-*, 0002-* ordering)
+        patches.sort();
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut patches_applied = 0;
+        let mut exit_code = 0;
+
+        if patches.is_empty() {
+            stdout.push_str("[NOTE] No patches found to apply\n");
+            info!("No patches found");
+        } else {
+            stdout.push_str(&format!("[NOTE] Found {} patches to apply\n", patches.len()));
+
+            for patch_path in &patches {
+                info!("Applying patch: {}", patch_path.display());
+                stdout.push_str(&format!("Applying: {}\n", patch_path.display()));
+
+                // Try git apply first, fall back to patch command
+                let result = apply_patch(&s_dir, patch_path);
+
+                match result {
+                    Ok(output) => {
+                        stdout.push_str(&output);
+                        patches_applied += 1;
+                    }
+                    Err(e) => {
+                        let err_msg = format!("[ERROR] Failed to apply {}: {}\n", patch_path.display(), e);
+                        stderr.push_str(&err_msg);
+                        warn!("{}", err_msg);
+                        exit_code = 1;
+                    }
+                }
+            }
+
+            stdout.push_str(&format!(
+                "[NOTE] Applied {} of {} patches\n",
+                patches_applied,
+                patches.len()
+            ));
+        }
+
+        // Hash patched files in S
+        let mut output_files = HashMap::new();
+        if s_dir.exists() {
+            for entry in walkdir::WalkDir::new(&s_dir)
+                .follow_links(false)
+                .max_depth(10) // Limit depth to avoid huge trees
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+            {
+                if entry.file_type().is_file() {
+                    let path = entry.path();
+                    // Only hash smaller files to avoid memory issues
+                    if let Ok(metadata) = path.metadata()
+                        && metadata.len() < 10 * 1024 * 1024 {
+                            if let Ok(content) = std::fs::read(path) {
+                                if let Ok(hash) = self.cas.put(&content) {
+                                    let rel_path = path
+                                        .strip_prefix(&s_dir)
+                                        .unwrap_or(path)
+                                        .to_path_buf();
+                                    output_files.insert(rel_path, hash);
+                                }
+                            }
+                        }
+                }
+            }
+        }
+
+        // Create completion marker
+        let outputs_dir = spec.workdir.join("outputs");
+        std::fs::create_dir_all(&outputs_dir)?;
+        let marker_path = outputs_dir.join("do_patch.done");
+        std::fs::write(
+            &marker_path,
+            format!("Applied {} patches\n", patches_applied),
+        )?;
+
+        let duration = start.elapsed().as_millis() as u64;
+
+        info!(
+            "Patch task completed: {} patches applied in {}ms",
+            patches_applied,
+            duration
+        );
+
+        Ok((stdout, stderr, exit_code, output_files, duration))
+    }
+
     /// Build fetch configuration from environment variables
     fn build_fetch_config(&self, env: &HashMap<String, String>) -> FetchConfig {
         let mut config = FetchConfig::default();
@@ -770,6 +931,64 @@ fn is_archive(path: &Path) -> bool {
         || name.ends_with(".tar.xz")
         || name.ends_with(".txz")
         || name.ends_with(".tar")
+}
+
+/// Check if a file is a patch file
+fn is_patch_file(path: &Path) -> bool {
+    let name = path.to_string_lossy();
+    path.is_file() && (name.ends_with(".patch") || name.ends_with(".diff"))
+}
+
+/// Apply a patch file to a directory
+///
+/// Tries git apply first, then falls back to the system patch command.
+fn apply_patch(target_dir: &Path, patch_path: &Path) -> Result<String, String> {
+    use std::process::Command;
+
+    // First try: git apply (works in any directory, even non-git)
+    let git_result = Command::new("git")
+        .args(["apply", "--verbose", "-p1"])
+        .arg(patch_path)
+        .current_dir(target_dir)
+        .output();
+
+    match git_result {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Ok(format!("  Applied via git apply\n  {}{}", stdout, stderr));
+        }
+        Ok(output) => {
+            debug!(
+                "git apply failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Err(e) => {
+            debug!("git command not available: {}", e);
+        }
+    }
+
+    // Second try: patch command
+    let patch_result = Command::new("patch")
+        .args(["-p1", "-i"])
+        .arg(patch_path)
+        .current_dir(target_dir)
+        .output();
+
+    match patch_result {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(format!("  Applied via patch command\n  {}", stdout))
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("patch command failed: {}", stderr))
+        }
+        Err(e) => {
+            Err(format!("Neither git apply nor patch command available: {}", e))
+        }
+    }
 }
 
 /// Execution statistics
