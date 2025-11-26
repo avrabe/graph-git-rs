@@ -21,6 +21,8 @@ pub mod script_analyzer;
 pub mod script_preprocessor;
 pub mod direct_executor;
 pub mod fetch_handler;
+pub mod rust_fetcher;
+pub mod fetch_task;
 pub mod retry;
 pub mod bbhelpers;
 pub mod rust_shell_executor;
@@ -49,6 +51,12 @@ pub use script_analyzer::{ScriptAnalysis, DirectAction, analyze_script, determin
 pub use script_preprocessor::ScriptPreprocessor;
 pub use direct_executor::{execute_direct, DirectExecutionResult};
 pub use fetch_handler::{fetch_source, FetchError, FetchResult};
+pub use rust_fetcher::{
+    fetch_source as rust_fetch_source,
+    verify_checksum, verify_md5,
+    FetchConfig, FetchError as RustFetchError, FetchResult as RustFetchResult,
+};
+pub use fetch_task::{execute_fetch_task, FetchTaskResult};
 pub use retry::{RetryPolicy, execute_with_retry, execute_with_retry_sync};
 pub use rust_shell_executor::{RustShellExecutor, RustShellResult, execute_with_bitbake_env, create_bitbake_prelude};
 
