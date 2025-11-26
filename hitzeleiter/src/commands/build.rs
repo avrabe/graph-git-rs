@@ -470,6 +470,12 @@ pub async fn execute_runall(
     target: &str,
     task_name: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use convenient_bitbake::executor::fetch_task;
+    use convenient_bitbake::executor::rust_fetcher::FetchConfig;
+    use std::collections::HashSet;
+
+    let start_time = Instant::now();
+
     // Normalize task name (add do_ prefix if not present)
     let normalized_task = if task_name.starts_with("do_") {
         task_name.to_string()
@@ -480,12 +486,6 @@ pub async fn execute_runall(
     println!("🎯 Task: {} (normalized: {})", task_name, normalized_task);
     println!();
 
-    // For fetch task, use lightweight approach (no full task spec generation)
-    if normalized_task == "do_fetch" || task_name == "fetch" {
-        return execute_fetch_light(build_dir, target).await;
-    }
-
-    // For other tasks, use full orchestrator
     // ========== Load Build Environment ==========
     println!("🏗️  Loading build environment...");
     let env = BuildEnvironment::from_build_dir(build_dir)?;
@@ -494,62 +494,18 @@ pub async fn execute_runall(
     println!("  ✓ Layers:  {}", env.layers.len());
     println!();
 
-    // For non-fetch tasks, we need the full executor (not yet implemented)
-    println!("⚠️  Task '{}' not yet implemented in runall mode", normalized_task);
-    println!("   Currently only 'fetch' is supported");
-    Err(format!("Task '{}' not supported in runall mode yet", task_name).into())
-}
+    // ========== Build Orchestration ==========
+    println!("🎼 Building recipe graph...");
 
-/// Lightweight fetch implementation that bypasses full task spec generation
-/// This is much faster and avoids memory issues with large recipe sets
-async fn execute_fetch_light(
-    build_dir: &Path,
-    target: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use convenient_bitbake::executor::rust_fetcher::{self, FetchConfig};
-    use convenient_bitbake::{BuildContext, Pipeline, PipelineConfig, RecipeExtractor, ExtractionConfig};
-    use std::collections::HashSet;
-
-    let start_time = Instant::now();
-
-    // ========== Load Build Environment ==========
-    println!("🏗️  Loading build environment...");
-    let env = BuildEnvironment::from_build_dir(build_dir)?;
-    println!("  ✓ MACHINE: {}", env.get_machine().unwrap_or("unknown"));
-    println!("  ✓ DISTRO:  {}", env.get_distro().unwrap_or("unknown"));
-    println!("  ✓ Layers:  {}", env.layers.len());
-    println!();
-
-    // ========== Build Context ==========
-    let mut build_context = BuildContext::new();
-    if let Some(machine) = env.get_machine() {
-        build_context.set_machine(machine.to_string());
-    }
-    if let Some(distro) = env.get_distro() {
-        build_context.set_distro(distro.to_string());
-    }
-
-    // Add layers
-    for layer_path in &env.layers {
-        let layer_conf = layer_path.join("conf/layer.conf");
-        if layer_conf.exists() {
-            if let Err(e) = build_context.add_layer_from_conf(&layer_conf) {
-                tracing::warn!("Failed to parse layer.conf: {}", e);
-            }
-        }
-    }
-
-    // ========== Use Pipeline for Lightweight Parsing ==========
-    println!("📋 Parsing recipes with lightweight pipeline...");
-
-    let pipeline_config = PipelineConfig {
+    let config = OrchestratorConfig {
+        build_dir: build_dir.to_path_buf(),
+        machine: env.get_machine().map(|s| s.to_string()),
+        distro: env.get_distro().map(|s| s.to_string()),
         max_io_parallelism: 32,
         max_cpu_parallelism: num_cpus::get(),
-        enable_cache: true,
-        cache_dir: build_dir.join("hitzeleiter-cache/pipeline"),
     };
 
-    let pipeline = Pipeline::new(pipeline_config, build_context);
+    let orchestrator = BuildOrchestrator::new(config);
 
     // Create layer paths map
     let mut layer_paths: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
@@ -558,26 +514,14 @@ async fn execute_fetch_light(
         layer_paths.insert(layer_name, vec![layer.clone()]);
     }
 
-    // Discover and parse recipes
-    let (recipe_files, _) = pipeline.discover_recipes(&layer_paths).await?;
-    let (parsed_recipes, _) = pipeline.parse_recipes(recipe_files).await?;
+    let build_plan = orchestrator.build_plan(layer_paths).await?;
 
-    println!("  ✓ Parsed {} recipes", parsed_recipes.len());
-
-    // Build recipe graph for dependency resolution
-    let mut extraction_config = ExtractionConfig::default();
-    extraction_config.extract_tasks = false;  // Don't need task extraction for fetch
-    extraction_config.resolve_providers = true;
-
-    let extractor = RecipeExtractor::new(extraction_config);
-    let (recipe_graph, _) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
-
-    println!("  ✓ Built dependency graph");
+    println!("  ✓ Recipes parsed: {}", build_plan.recipe_graph.recipe_count());
     println!();
 
-    // ========== Find Target and Dependencies ==========
+    // ========== Find Target and All Dependencies ==========
     println!("🔍 Finding target recipe: {}", target);
-    let recipe_id = recipe_graph.find_recipe(target)
+    let recipe_id = build_plan.recipe_graph.find_recipe(target)
         .ok_or_else(|| format!("Recipe '{}' not found", target))?;
 
     println!("  ✓ Found target recipe");
@@ -589,7 +533,8 @@ async fn execute_fetch_light(
 
     while let Some(rid) = to_visit.pop() {
         if all_recipe_ids.insert(rid) {
-            let deps = recipe_graph.get_dependencies(rid);
+            // Get dependencies of this recipe
+            let deps = build_plan.recipe_graph.get_dependencies(rid);
             for dep_id in deps {
                 if !all_recipe_ids.contains(&dep_id) {
                     to_visit.push(dep_id);
@@ -601,40 +546,8 @@ async fn execute_fetch_light(
     println!("  ✓ Found {} recipes in dependency tree", all_recipe_ids.len());
     println!();
 
-    // ========== Create SRC_URI Map from Parsed Recipes ==========
-    // Build a map of recipe name -> SRC_URI from parsed recipes
-    // Extract variables from the content field by simple text parsing
-    let mut src_uri_map: HashMap<String, String> = HashMap::new();
-    let mut pv_map: HashMap<String, String> = HashMap::new();
-
-    for parsed in &parsed_recipes {
-        let recipe_name = &parsed.file.name;
-
-        // Extract SRC_URI from content
-        if let Some(src_uri) = extract_variable(&parsed.content, "SRC_URI") {
-            src_uri_map.insert(recipe_name.clone(), src_uri);
-        }
-
-        // Extract PV from content, or from filename
-        if let Some(pv) = extract_variable(&parsed.content, "PV") {
-            pv_map.insert(recipe_name.clone(), pv);
-        } else {
-            // Try to extract version from filename (e.g., "busybox_1.35.0.bb" -> "1.35.0")
-            let filename = parsed.file.path.file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("");
-            if let Some(version) = extract_version_from_filename(filename) {
-                pv_map.insert(recipe_name.clone(), version);
-            }
-        }
-    }
-
-    println!("📦 Using pure Rust fetcher (lightweight mode)");
-    println!("  Found SRC_URI for {} recipes", src_uri_map.len());
-    println!();
-
-    // ========== Execute Fetch for All Recipes ==========
-    println!("🚀 Fetching sources for {} recipes...", all_recipe_ids.len());
+    // ========== Execute Task for All Recipes ==========
+    println!("🚀 Running {} for {} recipes...", normalized_task, all_recipe_ids.len());
     println!();
 
     let dl_dir = build_dir.join("downloads");
@@ -643,73 +556,63 @@ async fn execute_fetch_light(
     let mut success_count = 0;
     let mut skip_count = 0;
     let mut fail_count = 0;
-    let mut total_bytes: u64 = 0;
     let total = all_recipe_ids.len();
 
-    for (idx, rid) in all_recipe_ids.iter().enumerate() {
-        if let Some(recipe) = recipe_graph.get_recipe(*rid) {
-            print!("  [{}/{}] {}... ", idx + 1, total, recipe.name);
+    // For fetch task, use pure Rust fetcher
+    if normalized_task == "do_fetch" || task_name == "fetch" {
+        println!("📦 Using pure Rust fetcher (no host tools required)");
+        println!();
 
-            if let Some(src_uri_raw) = src_uri_map.get(&recipe.name) {
-                // Get version for variable expansion
-                let pv = pv_map.get(&recipe.name)
-                    .or(recipe.version.as_ref())
-                    .map(|s| s.as_str())
-                    .unwrap_or("1.0");
+        for (idx, rid) in all_recipe_ids.iter().enumerate() {
+            if let Some(recipe) = build_plan.recipe_graph.get_recipe(*rid) {
+                print!("  [{}/{}] {}... ", idx + 1, total, recipe.name);
 
-                // Expand ${PV} in SRC_URI
-                let src_uri_expanded = src_uri_raw.replace("${PV}", pv);
+                // Look for fetch task spec for this recipe
+                // Task specs are keyed as "recipe_name:task_name" (without do_ prefix)
+                let fetch_task_key = format!("{}:fetch", recipe.name);
+                let do_fetch_task_key = format!("{}:do_fetch", recipe.name);
 
-                // Parse and fetch each source
-                let sources = parse_src_uri_entries(&src_uri_expanded);
+                let task_spec = build_plan.task_specs.get(&fetch_task_key)
+                    .or_else(|| build_plan.task_specs.get(&do_fetch_task_key));
 
-                if sources.is_empty() {
-                    println!("⏭️  skipped (no fetchable sources)");
-                    skip_count += 1;
-                    continue;
-                }
+                if let Some(spec) = task_spec {
+                    // Use the environment from the task spec
+                    if spec.env.contains_key("SRC_URI") {
+                        let fetch_config = FetchConfig::default();
 
-                let mut recipe_success = true;
-                let mut recipe_bytes: u64 = 0;
-                let mut files_fetched = 0;
-
-                for src in sources {
-                    let fetch_config = FetchConfig::default();
-
-                    match rust_fetcher::fetch_source(&src, &dl_dir, Some(&fetch_config)) {
-                        Ok(path) => {
-                            if let Ok(meta) = std::fs::metadata(&path) {
-                                recipe_bytes += meta.len();
+                        match fetch_task::execute_fetch_task(&spec.env, &dl_dir, Some(&fetch_config)) {
+                            Ok(result) => {
+                                if result.downloaded_files.is_empty() && result.warnings.is_empty() {
+                                    println!("⏭️  skipped (no sources)");
+                                    skip_count += 1;
+                                } else {
+                                    println!("✅ {} files ({} bytes)",
+                                        result.downloaded_files.len(),
+                                        result.total_bytes
+                                    );
+                                    success_count += 1;
+                                }
                             }
-                            files_fetched += 1;
-                        }
-                        Err(e) => {
-                            // Only fail on non-optional sources
-                            let err_str = e.to_string();
-                            if !err_str.contains("already exists") && !err_str.contains("up to date") {
-                                tracing::warn!("Failed to fetch {}: {}", src.url, e);
-                                // Don't fail entire recipe for individual source failures
+                            Err(e) => {
+                                println!("❌ {}", e);
+                                fail_count += 1;
                             }
                         }
+                    } else {
+                        println!("⏭️  skipped (no SRC_URI in task spec)");
+                        skip_count += 1;
                     }
-                }
-
-                if files_fetched > 0 {
-                    println!("✅ {} files ({} bytes)", files_fetched, recipe_bytes);
-                    success_count += 1;
-                    total_bytes += recipe_bytes;
-                } else if recipe_success {
-                    println!("⏭️  skipped (sources already exist)");
-                    skip_count += 1;
                 } else {
-                    println!("❌ failed");
-                    fail_count += 1;
+                    println!("⏭️  skipped (no fetch task spec)");
+                    skip_count += 1;
                 }
-            } else {
-                println!("⏭️  skipped (no SRC_URI)");
-                skip_count += 1;
             }
         }
+    } else {
+        // For other tasks, we'd need the full executor
+        println!("⚠️  Task '{}' not yet implemented in runall mode", normalized_task);
+        println!("   Currently only 'fetch' is supported");
+        return Err(format!("Task '{}' not supported in runall mode yet", task_name).into());
     }
 
     println!();
@@ -719,173 +622,25 @@ async fn execute_fetch_light(
 
     println!("╔════════════════════════════════════════════════════════╗");
     if fail_count == 0 {
-        println!("║               FETCH COMPLETED! ✅                      ║");
+        println!("║               RUNALL COMPLETED! ✅                     ║");
     } else {
-        println!("║            FETCH COMPLETED WITH ERRORS ⚠️              ║");
+        println!("║            RUNALL COMPLETED WITH ERRORS ⚠️             ║");
     }
     println!("╚════════════════════════════════════════════════════════╝");
     println!();
     println!("📊 Summary:");
-    println!("  Target:      {}", target);
-    println!("  Recipes:     {}", total);
-    println!("  Success:     {}", success_count);
-    println!("  Skipped:     {}", skip_count);
-    println!("  Failed:      {}", fail_count);
-    println!("  Total bytes: {} ({:.2} MB)", total_bytes, total_bytes as f64 / 1_000_000.0);
-    println!("  Duration:    {:.2}s", total_duration.as_secs_f64());
+    println!("  Task:      {}", normalized_task);
+    println!("  Target:    {}", target);
+    println!("  Recipes:   {}", total);
+    println!("  Success:   {}", success_count);
+    println!("  Skipped:   {}", skip_count);
+    println!("  Failed:    {}", fail_count);
+    println!("  Duration:  {:.2}s", total_duration.as_secs_f64());
     println!();
 
     if fail_count > 0 {
         Err(format!("{} recipes failed", fail_count).into())
     } else {
         Ok(())
-    }
-}
-
-/// Parse SRC_URI string into individual SourceUri entries
-fn parse_src_uri_entries(src_uri: &str) -> Vec<convenient_bitbake::SourceUri> {
-    use convenient_bitbake::{SourceUri, UriScheme};
-
-    let mut sources = Vec::new();
-
-    // Split by whitespace and backslash continuations
-    let entries: Vec<&str> = src_uri
-        .split(|c| c == ' ' || c == '\n' || c == '\t')
-        .map(|s| s.trim().trim_matches('\\'))
-        .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .collect();
-
-    for entry in entries {
-        // Skip variable references that weren't expanded
-        if entry.contains("${") && !entry.starts_with("http") && !entry.starts_with("git") {
-            continue;
-        }
-
-        // Parse the URI
-        let (base_uri, params) = if let Some(idx) = entry.find(';') {
-            (&entry[..idx], Some(&entry[idx + 1..]))
-        } else {
-            (entry, None)
-        };
-
-        // Determine scheme
-        let scheme = if base_uri.starts_with("git://") || base_uri.starts_with("gitsm://") {
-            UriScheme::Git
-        } else if base_uri.starts_with("http://") || base_uri.starts_with("https://") {
-            UriScheme::Http
-        } else if base_uri.starts_with("file://") {
-            UriScheme::File
-        } else if base_uri.starts_with("ftp://") {
-            UriScheme::Other("ftp".to_string())
-        } else if base_uri.starts_with("svn://") {
-            UriScheme::Other("svn".to_string())
-        } else {
-            // Skip unknown schemes
-            continue;
-        };
-
-        // Parse parameters
-        let mut branch = None;
-        let mut tag = None;
-        let mut srcrev = None;
-        let mut nobranch = false;
-        let mut destsuffix = None;
-        let mut protocol = None;
-
-        if let Some(params_str) = params {
-            for param in params_str.split(';') {
-                if let Some((key, value)) = param.split_once('=') {
-                    match key {
-                        "branch" => branch = Some(value.to_string()),
-                        "tag" => tag = Some(value.to_string()),
-                        "rev" | "srcrev" => srcrev = Some(value.to_string()),
-                        "nobranch" => nobranch = value == "1",
-                        "destsuffix" => destsuffix = Some(value.to_string()),
-                        "protocol" => protocol = Some(value.to_string()),
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        sources.push(SourceUri {
-            raw: entry.to_string(),
-            scheme,
-            url: base_uri.to_string(),
-            protocol,
-            branch,
-            tag,
-            srcrev,
-            nobranch,
-            destsuffix,
-        });
-    }
-
-    sources
-}
-
-/// Extract a variable value from BitBake recipe content
-/// Handles simple cases like: VAR = "value" or VAR ?= "value"
-fn extract_variable(content: &str, var_name: &str) -> Option<String> {
-    // Look for patterns like: VAR = "value" or VAR ?= "value" or VAR := "value"
-    let patterns = [
-        format!(r#"{} = ""#, var_name),
-        format!(r#"{} ?= ""#, var_name),
-        format!(r#"{} := ""#, var_name),
-        format!(r#"{} ??= ""#, var_name),
-    ];
-
-    for pattern in &patterns {
-        if let Some(start_idx) = content.find(pattern) {
-            let value_start = start_idx + pattern.len();
-            // Find the closing quote, handling multi-line values
-            let remaining = &content[value_start..];
-
-            // Handle multi-line strings with backslash continuations
-            let mut value = String::new();
-            let mut in_quote = true;
-            let mut chars = remaining.chars().peekable();
-
-            while let Some(ch) = chars.next() {
-                if ch == '"' && in_quote {
-                    // Check if this is an escaped quote
-                    break;
-                } else if ch == '\\' {
-                    // Handle line continuation
-                    if chars.peek() == Some(&'\n') {
-                        chars.next(); // consume newline
-                        continue;
-                    }
-                    value.push(ch);
-                } else {
-                    value.push(ch);
-                }
-            }
-
-            if !value.is_empty() {
-                return Some(value.trim().to_string());
-            }
-        }
-    }
-
-    None
-}
-
-/// Extract version from BitBake recipe filename
-/// e.g., "busybox_1.35.0.bb" -> "1.35.0"
-fn extract_version_from_filename(filename: &str) -> Option<String> {
-    // Remove .bb extension
-    let name = filename.strip_suffix(".bb")?;
-
-    // Find underscore that separates name from version
-    let underscore_idx = name.rfind('_')?;
-
-    let version = &name[underscore_idx + 1..];
-
-    // Validate it looks like a version
-    if version.chars().next()?.is_ascii_digit() {
-        Some(version.to_string())
-    } else {
-        None
     }
 }
