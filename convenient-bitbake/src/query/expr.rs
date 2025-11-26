@@ -224,14 +224,17 @@ impl std::str::FromStr for TargetPattern {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "//..." {
+        if s == "//..." || s == "*" {
             return Ok(TargetPattern::All);
         }
 
         let parts: Vec<&str> = s.split(':').collect();
 
         match parts.len() {
-            1 => Err(format!("Invalid target pattern: {s}")),
+            // Single part: treat as recipe name from any layer (*:recipe)
+            1 => Ok(TargetPattern::WildcardRecipe {
+                recipe: s.to_string(),
+            }),
             2 => {
                 let layer = parts[0];
                 let recipe_or_wildcard = parts[1];

@@ -35,9 +35,10 @@ pub async fn execute(
     }
 
     println!("Building recipe graph...");
-    let build_plan = orchestrator.build_plan(layer_paths).await?;
+    // Use lightweight recipe graph builder - avoids task spec generation which can crash
+    let (recipe_graph, _build_context) = orchestrator.build_recipe_graph_only(layer_paths).await?;
 
-    println!("  ✓ Loaded {} recipes", build_plan.recipe_graph.recipe_count());
+    println!("  ✓ Loaded {} recipes", recipe_graph.recipe_count());
     println!();
 
     // Parse and execute query
@@ -47,7 +48,7 @@ pub async fn execute(
     let query_expr = QueryParser::parse(query)?;
 
     println!("Executing query...");
-    let engine = RecipeQueryEngine::new(&build_plan.recipe_graph);
+    let engine = RecipeQueryEngine::new(&recipe_graph);
     let results = engine.execute(&query_expr)?;
 
     println!();

@@ -308,6 +308,88 @@ impl BuildOrchestrator {
         })
     }
 
+    /// Build only the recipe graph without task specs
+    ///
+    /// This is a lightweight method for queries that only need recipe dependencies,
+    /// avoiding the expensive task specification generation that can crash with RustPython.
+    pub async fn build_recipe_graph_only(
+        &self,
+        layer_paths: HashMap<String, Vec<PathBuf>>,
+    ) -> Result<(RecipeGraph, BuildContext), Box<dyn std::error::Error + Send + Sync>> {
+        let build_start = Instant::now();
+
+        // Step 1: Build layer context
+        let stage_start = Instant::now();
+        info!("Building layer context with priorities");
+        let mut build_context = BuildContext::new();
+
+        if let Some(machine) = &self.config.machine {
+            build_context.set_machine(machine.clone());
+        }
+
+        if let Some(distro) = &self.config.distro {
+            build_context.set_distro(distro.clone());
+        }
+
+        for layer_conf in self.find_layer_confs(&layer_paths)? {
+            build_context.add_layer_from_conf(&layer_conf)?;
+        }
+        info!("✓ Step 1 completed in {:?}", stage_start.elapsed());
+
+        // Step 2: Parse recipes with parallel pipeline
+        let stage_start = Instant::now();
+        info!("Parsing BitBake recipes with parallel pipeline");
+        let pipeline_config = PipelineConfig {
+            max_io_parallelism: self.config.max_io_parallelism,
+            max_cpu_parallelism: self.config.max_cpu_parallelism,
+            enable_cache: true,
+            cache_dir: self.config.build_dir.join("hitzeleiter-cache/pipeline"),
+        };
+
+        let pipeline = Pipeline::new(pipeline_config, build_context);
+
+        let (recipe_files, _) = pipeline.discover_recipes(&layer_paths).await?;
+        let (parsed_recipes, _) = pipeline.parse_recipes(recipe_files).await?;
+        info!("✓ Step 2 completed in {:?} ({} recipes parsed)", stage_start.elapsed(), parsed_recipes.len());
+
+        // Rebuild build_context for return value (Pipeline consumed the previous one)
+        let mut build_context = BuildContext::new();
+        if let Some(machine) = &self.config.machine {
+            build_context.set_machine(machine.clone());
+        }
+        if let Some(distro) = &self.config.distro {
+            build_context.set_distro(distro.clone());
+        }
+        for layer_conf in self.find_layer_confs(&layer_paths)? {
+            build_context.add_layer_from_conf(&layer_conf)?;
+        }
+
+        // Step 3: Build recipe graph (without task specs)
+        let stage_start = Instant::now();
+        info!("Building recipe dependency graph");
+
+        let class_search_paths: Vec<std::path::PathBuf> = layer_paths
+            .values()
+            .flatten()
+            .map(|layer_path| layer_path.join("classes"))
+            .collect();
+
+        let extractor = RecipeExtractor::new(ExtractionConfig {
+            extract_tasks: false, // Don't extract tasks - we only need dependencies
+            resolve_providers: true,
+            resolve_includes: true,
+            resolve_inherit: false, // Don't need inheritance for simple queries
+            class_search_paths,
+            ..Default::default()
+        });
+        let (recipe_graph, _) = pipeline.build_recipe_graph(&parsed_recipes, &extractor)?;
+        info!("✓ Step 3 completed in {:?}", stage_start.elapsed());
+
+        info!("✓ Recipe graph built in {:?} ({} recipes)", build_start.elapsed(), recipe_graph.recipe_count());
+
+        Ok((recipe_graph, build_context))
+    }
+
     /// Find all layer.conf files in layer paths
     fn find_layer_confs(
         &self,
