@@ -92,12 +92,15 @@ impl ScriptPreprocessor {
             trace!("Evaluating Python expression: {}", python_expr);
 
             // Try SimplePythonEvaluator first (handles common BitBake patterns)
+            // NOTE: RustPython fallback disabled due to thread safety issues causing segfaults
+            // in parallel processing. SimplePythonEvaluator handles most common patterns.
             let evaluation_result = if let Some(value) = simple_eval.evaluate(full_match) {
                 debug!("  → SimplePythonEvaluator result: {}", value);
                 Ok(value)
             } else {
-                // Fallback to RustPython for complex expressions
-                self.python_executor.eval(python_expr, &self.datastore)
+                // Skip RustPython for thread safety - just remove the expression
+                trace!("Skipping RustPython eval for: {}", python_expr);
+                Err("RustPython disabled for thread safety".to_string())
             };
 
             match evaluation_result {
