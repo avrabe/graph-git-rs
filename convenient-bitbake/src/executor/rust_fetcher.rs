@@ -209,11 +209,44 @@ fn fetch_git(src_uri: &SourceUri, downloads_dir: &Path, config: &FetchConfig) ->
 
     if dest_dir.join(".git").exists() || dest_dir.join("HEAD").exists() {
         info!("Repository exists, updating: {}", dest_dir.display());
-        update_git_repo(&dest_dir, src_uri, config)
+        // Try to update, but if it fails with proxy error, use existing repo
+        match update_git_repo(&dest_dir, src_uri, config) {
+            Ok(path) => Ok(path),
+            Err(e) => {
+                let is_proxy_error = matches!(&e, FetchError::GitError(ge)
+                    if ge.message().contains("proxy") || ge.message().contains("401") || ge.message().contains("407"));
+                if is_proxy_error {
+                    warn!("git2 update failed with proxy error, using existing repo: {}", e);
+                    // Try git CLI pull as fallback
+                    if let Err(pull_err) = update_git_repo_cli(&dest_dir, src_uri) {
+                        warn!("git CLI pull also failed, using existing repo as-is: {}", pull_err);
+                    }
+                    Ok(dest_dir.clone())
+                } else {
+                    Err(e)
+                }
+            }
+        }
     } else {
         info!("Cloning repository: {} -> {}", src_uri.url, dest_dir.display());
-        clone_git_repo(src_uri, &dest_dir, config)?;
-        Ok(dest_dir)
+
+        // Try pure Rust git2 first, fall back to git CLI on proxy errors
+        match clone_git_repo(src_uri, &dest_dir, config) {
+            Ok(()) => Ok(dest_dir),
+            Err(e) => {
+                // Check if it's a proxy-related error
+                let is_proxy_error = matches!(&e, FetchError::GitError(ge)
+                    if ge.message().contains("proxy") || ge.message().contains("401") || ge.message().contains("407"));
+
+                if is_proxy_error {
+                    warn!("git2 failed with proxy error, falling back to git CLI: {}", e);
+                    clone_git_repo_cli(src_uri, &dest_dir)?;
+                    Ok(dest_dir)
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 }
 
@@ -373,6 +406,100 @@ fn clone_git_repo(src_uri: &SourceUri, dest_dir: &Path, config: &FetchConfig) ->
     }
 
     Ok(())
+}
+
+/// Fallback: Clone using git CLI (when git2 fails with proxy issues)
+fn clone_git_repo_cli(src_uri: &SourceUri, dest_dir: &Path) -> FetchResult<()> {
+    use std::process::Command;
+
+    info!("Using git CLI fallback for clone");
+
+    let mut args = vec![
+        "clone".to_string(),
+        "--depth".to_string(),
+        "1".to_string(),
+    ];
+
+    // Add branch if specified
+    if let Some(ref branch) = src_uri.branch {
+        if !src_uri.nobranch {
+            args.push("--branch".to_string());
+            args.push(branch.clone());
+        }
+    }
+
+    args.push(src_uri.url.clone());
+    args.push(dest_dir.to_string_lossy().to_string());
+
+    debug!("Running: git {}", args.join(" "));
+
+    let output = Command::new("git")
+        .args(&args)
+        .output()
+        .map_err(|e| FetchError::GitError(git2::Error::from_str(&format!("Failed to run git: {}", e))))?;
+
+    if output.status.success() {
+        info!("git CLI clone successful");
+
+        // Checkout specific revision if needed
+        if let Some(ref srcrev) = src_uri.srcrev {
+            let checkout_output = Command::new("git")
+                .args(["checkout", srcrev])
+                .current_dir(dest_dir)
+                .output()
+                .map_err(|e| FetchError::GitError(git2::Error::from_str(&format!("Failed to checkout: {}", e))))?;
+
+            if !checkout_output.status.success() {
+                warn!("Failed to checkout {}: {}", srcrev, String::from_utf8_lossy(&checkout_output.stderr));
+            }
+        }
+
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(FetchError::GitError(git2::Error::from_str(&format!(
+            "git clone failed: {}",
+            stderr
+        ))))
+    }
+}
+
+/// Fallback: Update using git CLI (when git2 fails with proxy issues)
+fn update_git_repo_cli(repo_dir: &Path, src_uri: &SourceUri) -> FetchResult<()> {
+    use std::process::Command;
+
+    info!("Using git CLI fallback for pull");
+
+    let output = Command::new("git")
+        .args(["pull", "--ff-only"])
+        .current_dir(repo_dir)
+        .output()
+        .map_err(|e| FetchError::GitError(git2::Error::from_str(&format!("Failed to run git pull: {}", e))))?;
+
+    if output.status.success() {
+        info!("git CLI pull successful");
+
+        // Checkout specific revision if needed
+        if let Some(ref srcrev) = src_uri.srcrev {
+            let checkout_output = Command::new("git")
+                .args(["checkout", srcrev])
+                .current_dir(repo_dir)
+                .output()
+                .map_err(|e| FetchError::GitError(git2::Error::from_str(&format!("Failed to checkout: {}", e))))?;
+
+            if !checkout_output.status.success() {
+                warn!("Failed to checkout {}: {}", srcrev, String::from_utf8_lossy(&checkout_output.stderr));
+            }
+        }
+
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(FetchError::GitError(git2::Error::from_str(&format!(
+            "git pull failed: {}",
+            stderr
+        ))))
+    }
 }
 
 fn update_git_repo(

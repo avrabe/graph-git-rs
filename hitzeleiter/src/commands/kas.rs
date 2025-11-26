@@ -64,44 +64,38 @@ pub async fn execute(
             abs_path
         } else if let Some(url) = &repo.url {
             // Remote URL - clone it using pure Rust fetcher
-            let repo_dir = repos_dir.join(repo_name);
+            let branch = repo.branch.as_deref()
+                .or(repo.refspec.as_deref())
+                .unwrap_or("master");
 
-            if repo_dir.exists() {
-                tracing::debug!("Repository {} already exists", repo_name);
-            } else {
-                let branch = repo.branch.as_deref()
-                    .or(repo.refspec.as_deref())
-                    .unwrap_or("master");
-                tracing::info!("Cloning {} (branch: {})...", repo_name, branch);
+            // Build SourceUri for our Rust fetcher
+            let src_uri = SourceUri {
+                raw: url.clone(),
+                scheme: UriScheme::Git,
+                url: url.clone(),
+                protocol: None,
+                branch: Some(branch.to_string()),
+                tag: None,
+                srcrev: None,
+                nobranch: false,
+                destsuffix: Some(repo_name.clone()),
+            };
 
-                // Build SourceUri for our Rust fetcher
-                let src_uri = SourceUri {
-                    raw: url.clone(),
-                    scheme: UriScheme::Git,
-                    url: url.clone(),
-                    protocol: None,
-                    branch: Some(branch.to_string()),
-                    tag: None,
-                    srcrev: None,
-                    nobranch: false,
-                    destsuffix: Some(repo_name.clone()),
-                };
+            // Configure fetcher
+            let fetch_config = FetchConfig::default();
 
-                // Configure fetcher
-                let fetch_config = FetchConfig::default();
-
-                // Use pure Rust git fetcher (no git CLI required)
-                match rust_fetcher::fetch_source(&src_uri, &repos_dir, Some(&fetch_config)) {
-                    Ok(cloned_path) => {
-                        tracing::info!("✓ Cloned {} to {:?}", repo_name, cloned_path);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to clone {}: {}", repo_name, e);
-                        continue;
-                    }
+            // Use pure Rust git fetcher (no git CLI required)
+            // The returned path is the actual cloned location
+            match rust_fetcher::fetch_source(&src_uri, &repos_dir, Some(&fetch_config)) {
+                Ok(cloned_path) => {
+                    tracing::info!("✓ Cloned {} to {:?}", repo_name, cloned_path);
+                    cloned_path
+                }
+                Err(e) => {
+                    tracing::error!("Failed to clone {}: {}", repo_name, e);
+                    continue;
                 }
             }
-            repo_dir
         } else {
             tracing::warn!("Repository {} has neither path nor url, skipping", repo_name);
             continue;
