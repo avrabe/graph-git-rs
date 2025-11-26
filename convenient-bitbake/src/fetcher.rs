@@ -3,7 +3,7 @@
 //! Handles downloading and unpacking sources from SRC_URI
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 

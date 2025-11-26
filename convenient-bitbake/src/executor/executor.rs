@@ -3,7 +3,7 @@
 use super::cache::{ActionCache, ContentAddressableStore};
 use super::direct_executor;
 use super::fetch_task;
-use super::rust_fetcher::{FetchConfig, FetchError as RustFetchError};
+use super::rust_fetcher::FetchConfig;
 use super::sandbox::SandboxManager;
 use super::script_analyzer;
 use crate::fetcher;
@@ -304,14 +304,16 @@ impl TaskExecutor {
                 let duration = start.elapsed().as_millis() as u64;
 
                 // Build stdout with fetch results
+                use std::fmt::Write;
                 let mut stdout = String::new();
-                stdout.push_str(&format!(
-                    "[NOTE] Fetch completed: {} files downloaded ({} bytes)\n",
+                writeln!(
+                    stdout,
+                    "[NOTE] Fetch completed: {} files downloaded ({} bytes)",
                     result.downloaded_files.len(),
                     result.total_bytes
-                ));
+                ).ok();
                 for file in &result.downloaded_files {
-                    stdout.push_str(&format!("  Downloaded: {}\n", file.display()));
+                    writeln!(stdout, "  Downloaded: {}", file.display()).ok();
                 }
 
                 // Add warnings to stderr
@@ -348,9 +350,9 @@ impl TaskExecutor {
                 Ok((stdout, stderr, 0, output_files, duration))
             }
             Err(e) => {
-                let duration = start.elapsed().as_millis() as u64;
-                let stderr = format!("[ERROR] Fetch failed: {}\n", e);
-                warn!("Fetch task failed: {}", e);
+                let _duration = start.elapsed().as_millis() as u64;
+                let _stderr = format!("[ERROR] Fetch failed: {e}\n");
+                warn!("Fetch task failed: {e}");
 
                 // Return error as failed task (not Rust error) so it can be cached
                 Err(ExecutionError::TaskFailed(1))
@@ -405,6 +407,7 @@ impl TaskExecutor {
         }
 
         // Find archives in DL_DIR
+        use std::fmt::Write;
         let mut archives_found = Vec::new();
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -421,20 +424,21 @@ impl TaskExecutor {
                 // Unpack the archive
                 match fetcher::unpack_source(&path, &s_dir) {
                     Ok(()) => {
-                        stdout.push_str(&format!(
-                            "[NOTE] Unpacked: {} -> {}\n",
+                        let _ = writeln!(
+                            stdout,
+                            "[NOTE] Unpacked: {} -> {}",
                             path.display(),
                             s_dir.display()
-                        ));
+                        );
                         unpacked_count += 1;
                     }
                     Err(e) => {
-                        stderr.push_str(&format!(
-                            "[ERROR] Failed to unpack {}: {}\n",
-                            path.display(),
-                            e
-                        ));
-                        warn!("Failed to unpack {}: {}", path.display(), e);
+                        let _ = writeln!(
+                            stderr,
+                            "[ERROR] Failed to unpack {}: {e}",
+                            path.display()
+                        );
+                        warn!("Failed to unpack {}: {e}", path.display());
                     }
                 }
             }
@@ -444,11 +448,11 @@ impl TaskExecutor {
             stdout.push_str("[NOTE] No archives found to unpack\n");
             info!("No archives found in DL_DIR");
         } else {
-            stdout.push_str(&format!(
-                "[NOTE] Unpack completed: {} of {} archives unpacked\n",
-                unpacked_count,
+            let _ = writeln!(
+                stdout,
+                "[NOTE] Unpack completed: {unpacked_count} of {} archives unpacked",
                 archives_found.len()
-            ));
+            );
         }
 
         // Hash unpacked files and store in CAS
@@ -566,6 +570,7 @@ impl TaskExecutor {
         // Sort patches by name (allows 0001-*, 0002-* ordering)
         patches.sort();
 
+        use std::fmt::Write;
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut patches_applied = 0;
@@ -575,11 +580,11 @@ impl TaskExecutor {
             stdout.push_str("[NOTE] No patches found to apply\n");
             info!("No patches found");
         } else {
-            stdout.push_str(&format!("[NOTE] Found {} patches to apply\n", patches.len()));
+            let _ = writeln!(stdout, "[NOTE] Found {} patches to apply", patches.len());
 
             for patch_path in &patches {
                 info!("Applying patch: {}", patch_path.display());
-                stdout.push_str(&format!("Applying: {}\n", patch_path.display()));
+                let _ = writeln!(stdout, "Applying: {}", patch_path.display());
 
                 // Try git apply first, fall back to patch command
                 let result = apply_patch(&s_dir, patch_path);
@@ -590,19 +595,18 @@ impl TaskExecutor {
                         patches_applied += 1;
                     }
                     Err(e) => {
-                        let err_msg = format!("[ERROR] Failed to apply {}: {}\n", patch_path.display(), e);
-                        stderr.push_str(&err_msg);
-                        warn!("{}", err_msg);
+                        let _ = writeln!(stderr, "[ERROR] Failed to apply {}: {e}", patch_path.display());
+                        warn!("[ERROR] Failed to apply {}: {e}", patch_path.display());
                         exit_code = 1;
                     }
                 }
             }
 
-            stdout.push_str(&format!(
-                "[NOTE] Applied {} of {} patches\n",
-                patches_applied,
+            let _ = writeln!(
+                stdout,
+                "[NOTE] Applied {patches_applied} of {} patches",
                 patches.len()
-            ));
+            );
         }
 
         // Hash patched files in S

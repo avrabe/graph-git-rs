@@ -11,7 +11,7 @@ use super::rust_fetcher::{self, FetchConfig, FetchError, FetchResult};
 use crate::{SourceUri, UriScheme};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Result of a fetch task execution
 #[derive(Debug)]
