@@ -82,6 +82,7 @@ pub type GraphResult<T> = Result<T, GraphError>;
 /// A node in the DAG containing data and tracking its edges.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[allow(dead_code)]
 struct Node<N> {
     id: NodeId,
     data: N,
@@ -94,6 +95,7 @@ struct Node<N> {
 /// An edge in the DAG connecting two nodes with optional data.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[allow(dead_code)]
 struct Edge<E> {
     from: NodeId,
     to: NodeId,
@@ -375,6 +377,7 @@ impl<N, E> DAG<N, E> {
         cycles
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn find_cycles_dfs(
         &self,
         node_id: NodeId,

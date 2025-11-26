@@ -108,7 +108,7 @@ fn execute_action(
             // Touch file (create or update mtime)
             if full_path.exists() {
                 // Update mtime
-                let metadata = fs::metadata(&full_path)?;
+                let _metadata = fs::metadata(&full_path)?;
                 let mtime = filetime::FileTime::now();
                 filetime::set_file_times(&full_path, mtime, mtime)?;
             } else {

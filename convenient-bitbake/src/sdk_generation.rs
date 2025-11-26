@@ -25,7 +25,7 @@ impl SdkGenerator {
     }
 
     /// Generate SDK tarball
-    pub fn generate(&self, output: &Path) -> std::io::Result<SdkMetadata> {
+    pub fn generate(&self, _output: &Path) -> std::io::Result<SdkMetadata> {
         println!("Generating SDK: {}", self.config.name);
 
         // TODO: Actual SDK generation

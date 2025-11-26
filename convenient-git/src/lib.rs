@@ -13,7 +13,12 @@
     missing_docs,  // TODO: Add comprehensive docs for public API
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::doc_markdown
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::similar_names,
+    clippy::needless_pass_by_value,
+    clippy::needless_continue
 )]
 
 use std::{

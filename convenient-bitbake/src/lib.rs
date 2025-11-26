@@ -14,7 +14,16 @@
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::doc_markdown,
-    clippy::too_many_lines  // Build system code tends to be verbose
+    clippy::too_many_lines,  // Build system code tends to be verbose
+    clippy::missing_errors_doc,  // Many functions return Result, will document over time
+    clippy::missing_panics_doc,  // Will document panic conditions over time
+    clippy::cast_precision_loss,  // usize/u64 to f64 is acceptable for metrics
+    clippy::cast_possible_truncation,  // u128 to u64 is acceptable for hashes
+    clippy::format_push_string,  // Prefer readability over micro-optimization
+    clippy::unused_self,  // Some methods need self for trait impl or future use
+    clippy::unnecessary_wraps,  // Some wrappers are for API consistency
+    clippy::similar_names,  // Sometimes similar names are appropriate
+    clippy::needless_pass_by_value,  // Some passes by value are intentional
 )]
 
 pub mod syntax_kind;

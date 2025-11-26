@@ -27,7 +27,7 @@ impl IncrementalState {
         }
     }
 
-    pub fn check_file(&mut self, path: &Path) -> bool {
+    pub fn check_file(&mut self, _path: &Path) -> bool {
         // TODO: Implement file change detection
         false
     }
