@@ -153,34 +153,39 @@ fn cleanup_cgroup(cgroup_path: &Path) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-/// Install BitBake prelude script to /hitzeleiter/prelude.sh
+/// Install BitBake prelude script to a workspace-relative directory
 ///
-/// This creates the /bitzel directory and writes the shared prelude script
-/// that is sourced by all task scripts. The prelude provides:
+/// Writes the shared prelude script to the specified sandbox directory.
+/// The prelude provides:
 /// - Standard BitBake environment variables
 /// - Error handling (set -e, set -u, set -o pipefail)
 /// - Helper functions (bb_note, bb_warn, bb_fatal, etc.)
+///
+/// The script is written to `sandbox_root/prelude.sh` and scripts should
+/// source it via the `HITZELEITER_ROOT` environment variable:
+/// `. $HITZELEITER_ROOT/prelude.sh`
+///
+/// For sandboxed execution with mount namespaces, the cache directory is
+/// bind-mounted to `/hitzeleiter` inside the sandbox.
 #[cfg(target_os = "linux")]
-fn install_prelude_script() -> std::io::Result<()> {
+fn install_prelude_script(sandbox_root: &Path) -> std::io::Result<PathBuf> {
     const PRELUDE_CONTENT: &str = include_str!("prelude.sh");
 
-    // Create /hitzeleiter directory
-    fs::create_dir_all("/hitzeleiter")?;
-
-    // Write prelude script
-    fs::write("/hitzeleiter/prelude.sh", PRELUDE_CONTENT)?;
+    // Write prelude script to sandbox/cache directory (workspace-relative)
+    let prelude_path = sandbox_root.join("prelude.sh");
+    fs::write(&prelude_path, PRELUDE_CONTENT)?;
 
     // Make executable
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata("/hitzeleiter/prelude.sh")?.permissions();
+        let mut perms = fs::metadata(&prelude_path)?.permissions();
         perms.set_mode(0o755);
-        fs::set_permissions("/hitzeleiter/prelude.sh", perms)?;
+        fs::set_permissions(&prelude_path, perms)?;
     }
 
-    debug!("Installed BitBake prelude to /hitzeleiter/prelude.sh");
-    Ok(())
+    debug!("Installed BitBake prelude to {}", prelude_path.display());
+    Ok(prelude_path)
 }
 
 /// Execute command in native Linux namespace sandbox
@@ -645,13 +650,24 @@ fn execute_child_without_userns(
 
     debug!("Child: skipping mount operations (no mount namespace)");
 
-    // Install BitBake prelude script
-    install_prelude_script()
-        .map_err(|e| ExecutionError::SandboxError(format!("Failed to install prelude: {e}")))?;
-
-    // Setup stdout/stderr capture
+    // Get sandbox root directory (parent of work_dir)
     let sandbox_root = work_dir.parent()
         .ok_or_else(|| ExecutionError::SandboxError("work_dir has no parent".to_string()))?;
+
+    // Install BitBake prelude script to sandbox directory (workspace-relative)
+    install_prelude_script(sandbox_root)
+        .map_err(|e| ExecutionError::SandboxError(format!("Failed to install prelude: {e}")))?;
+
+    // Add HITZELEITER_ROOT to environment so scripts can find the prelude
+    // For non-sandbox mode, prelude is at the sandbox_root path
+    let mut env_with_root = env.clone();
+    env_with_root.insert(
+        "HITZELEITER_ROOT".to_string(),
+        sandbox_root.to_string_lossy().to_string(),
+    );
+    let env = &env_with_root;
+
+    // Setup stdout/stderr capture
     let stdout_path = sandbox_root.join("stdout.log");
     let stderr_path = sandbox_root.join("stderr.log");
 

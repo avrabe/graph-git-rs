@@ -601,8 +601,9 @@ impl BuildOrchestrator {
         let mut script = String::new();
 
         // Source shared prelude for common environment and functions
+        // HITZELEITER_ROOT is set by the executor to the prelude location
         script.push_str("#!/bin/bash\n");
-        script.push_str(". /hitzeleiter/prelude.sh\n\n");
+        script.push_str(". \"${HITZELEITER_ROOT}/prelude.sh\"\n\n");
 
         // Set recipe-specific variables
         script.push_str(&format!("export PN=\"{recipe_name}\"\n"));
@@ -667,7 +668,7 @@ impl BuildOrchestrator {
         let output_filename = format!("{task_name}.done");
         format!(
             "#!/bin/bash\n\
-. /hitzeleiter/prelude.sh\n\
+. \"${{HITZELEITER_ROOT}}/prelude.sh\"\n\
 \n\
 export PN=\"{recipe_name}\"\n\
 export WORKDIR=\"${{WORKDIR:-/work}}\"\n\

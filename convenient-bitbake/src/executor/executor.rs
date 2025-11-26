@@ -386,6 +386,7 @@ impl TaskExecutor {
         sandbox_spec.cwd = PathBuf::from("/work");
 
         // Create prelude.sh for sandboxed execution
+        // Write to sandbox directory and bind-mount to /hitzeleiter/prelude.sh in sandbox
         const PRELUDE_CONTENT: &str = include_str!("prelude.sh");
         let prelude_path = self.sandbox_manager.sandbox_dir().join("prelude.sh");
         std::fs::write(&prelude_path, PRELUDE_CONTENT)?;
@@ -393,6 +394,10 @@ impl TaskExecutor {
             prelude_path,
             PathBuf::from("/hitzeleiter/prelude.sh"),
         ));
+
+        // Set HITZELEITER_ROOT for scripts to find the prelude
+        // In sandbox mode, prelude is bind-mounted to /hitzeleiter
+        sandbox_spec.env.insert("HITZELEITER_ROOT".to_string(), "/hitzeleiter".to_string());
 
         // If workdir exists, mount it
         if spec.workdir.exists() {
