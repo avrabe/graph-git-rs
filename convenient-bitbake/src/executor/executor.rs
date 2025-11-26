@@ -2,6 +2,8 @@
 
 use super::cache::{ActionCache, ContentAddressableStore};
 use super::direct_executor;
+use super::fetch_task;
+use super::rust_fetcher::{FetchConfig, FetchError as RustFetchError};
 use super::sandbox::SandboxManager;
 use super::script_analyzer;
 use super::types::{
@@ -69,23 +71,29 @@ impl TaskExecutor {
         info!("Cache MISS for {}:{}", spec.recipe, spec.name);
         self.stats.cache_misses += 1;
 
-        // 3. Execute based on execution mode
+        // 3. Execute based on task type and execution mode
+        // Special handling for do_fetch - use pure Rust fetcher
         let (result_stdout, result_stderr, result_exit_code, output_files, duration) =
-            match spec.execution_mode {
-                ExecutionMode::DirectRust => {
-                    // Direct Rust execution - no sandbox, no host contamination
-                    info!("Using DirectRust execution (sandbox-free, hermetic)");
-                    self.execute_direct_rust(&spec)?
-                }
-                ExecutionMode::RustShell => {
-                    // Rust-based shell execution - in-process bash interpreter
-                    info!("Using RustShell execution (in-process, variable tracking)");
-                    self.execute_rust_shell(&spec)?
-                }
-                ExecutionMode::Shell | ExecutionMode::Python => {
-                    // Shell/Python execution - requires full sandboxing
-                    info!("Using sandboxed execution");
-                    self.execute_sandboxed(&spec)?
+            if spec.name == "do_fetch" || spec.name == "fetch" {
+                info!("Using pure Rust fetcher for fetch task (no host tools)");
+                self.execute_fetch_task(&spec)?
+            } else {
+                match spec.execution_mode {
+                    ExecutionMode::DirectRust => {
+                        // Direct Rust execution - no sandbox, no host contamination
+                        info!("Using DirectRust execution (sandbox-free, hermetic)");
+                        self.execute_direct_rust(&spec)?
+                    }
+                    ExecutionMode::RustShell => {
+                        // Rust-based shell execution - in-process bash interpreter
+                        info!("Using RustShell execution (in-process, variable tracking)");
+                        self.execute_rust_shell(&spec)?
+                    }
+                    ExecutionMode::Shell | ExecutionMode::Python => {
+                        // Shell/Python execution - requires full sandboxing
+                        info!("Using sandboxed execution");
+                        self.execute_sandboxed(&spec)?
+                    }
                 }
             };
 
@@ -254,6 +262,155 @@ impl TaskExecutor {
             output_files,
             duration,
         ))
+    }
+
+    /// Execute fetch task using pure Rust fetcher (no host tools)
+    ///
+    /// This uses the `fetch_task` module to download sources directly in Rust,
+    /// without requiring wget, curl, or git CLI on the host.
+    fn execute_fetch_task(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
+        let start = Instant::now();
+
+        info!("Executing fetch task with pure Rust fetcher");
+        debug!("Recipe: {}", spec.recipe);
+        debug!("Environment vars: {:?}", spec.env.keys().collect::<Vec<_>>());
+
+        // Create DL_DIR from environment or default
+        let dl_dir = spec
+            .env
+            .get("DL_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("downloads"));
+
+        std::fs::create_dir_all(&dl_dir)?;
+        info!("DL_DIR: {}", dl_dir.display());
+
+        // Build fetch config from environment
+        let fetch_config = self.build_fetch_config(&spec.env);
+
+        // Execute the fetch task
+        match fetch_task::execute_fetch_task(&spec.env, &dl_dir, Some(&fetch_config)) {
+            Ok(result) => {
+                let duration = start.elapsed().as_millis() as u64;
+
+                // Build stdout with fetch results
+                let mut stdout = String::new();
+                stdout.push_str(&format!(
+                    "[NOTE] Fetch completed: {} files downloaded ({} bytes)\n",
+                    result.downloaded_files.len(),
+                    result.total_bytes
+                ));
+                for file in &result.downloaded_files {
+                    stdout.push_str(&format!("  Downloaded: {}\n", file.display()));
+                }
+
+                // Add warnings to stderr
+                let stderr = result.warnings.join("\n");
+
+                // Hash downloaded files and store in CAS
+                let mut output_files = HashMap::new();
+                for file_path in &result.downloaded_files {
+                    if file_path.is_file() {
+                        let content = std::fs::read(file_path)?;
+                        let hash = self.cas.put(&content)?;
+                        // Use relative path from dl_dir
+                        let rel_path = file_path
+                            .strip_prefix(&dl_dir)
+                            .unwrap_or(file_path)
+                            .to_path_buf();
+                        output_files.insert(rel_path, hash);
+                    }
+                }
+
+                // Create completion marker
+                let outputs_dir = spec.workdir.join("outputs");
+                std::fs::create_dir_all(&outputs_dir)?;
+                let marker_path = outputs_dir.join("do_fetch.done");
+                std::fs::write(&marker_path, format!("Fetched {} files\n", result.downloaded_files.len()))?;
+
+                info!(
+                    "Fetch task completed: {} files, {} bytes in {}ms",
+                    result.downloaded_files.len(),
+                    result.total_bytes,
+                    duration
+                );
+
+                Ok((stdout, stderr, 0, output_files, duration))
+            }
+            Err(e) => {
+                let duration = start.elapsed().as_millis() as u64;
+                let stderr = format!("[ERROR] Fetch failed: {}\n", e);
+                warn!("Fetch task failed: {}", e);
+
+                // Return error as failed task (not Rust error) so it can be cached
+                Err(ExecutionError::TaskFailed(1))
+            }
+        }
+    }
+
+    /// Build fetch configuration from environment variables
+    fn build_fetch_config(&self, env: &HashMap<String, String>) -> FetchConfig {
+        let mut config = FetchConfig::default();
+
+        // Git credentials from environment
+        config.git_user = env
+            .get("GIT_USER")
+            .or_else(|| env.get("BB_GIT_USER"))
+            .cloned();
+        config.git_password = env
+            .get("GIT_PASSWORD")
+            .or_else(|| env.get("BB_GIT_PASSWORD"))
+            .or_else(|| env.get("GIT_TOKEN"))
+            .or_else(|| env.get("GITHUB_TOKEN"))
+            .cloned();
+
+        // Custom proxy override (supports SOCKS: socks5://, socks5h://)
+        config.proxy_url = env
+            .get("FETCHER_PROXY")
+            .or_else(|| env.get("BB_PROXY"))
+            .or_else(|| env.get("GIT_PROXY"))
+            .cloned();
+
+        // Proxy authentication
+        config.proxy_user = env
+            .get("PROXY_USER")
+            .or_else(|| env.get("BB_PROXY_USER"))
+            .cloned();
+        config.proxy_password = env
+            .get("PROXY_PASSWORD")
+            .or_else(|| env.get("BB_PROXY_PASSWORD"))
+            .cloned();
+
+        // SSH key path for git operations
+        config.ssh_key_path = env
+            .get("GIT_SSH_KEY")
+            .or_else(|| env.get("BB_GIT_SSH_KEY"))
+            .map(PathBuf::from);
+
+        // Git protocol preference
+        config.git_protocol = env
+            .get("BB_GIT_PROTOCOL")
+            .or_else(|| env.get("GIT_PROTOCOL"))
+            .cloned();
+
+        // Allow insecure TLS if explicitly requested
+        config.insecure = env
+            .get("BB_FETCH_INSECURE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        // Retry and timeout configuration
+        config.retry_count = env
+            .get("BB_FETCH_RETRIES")
+            .and_then(|v| v.parse().ok());
+        config.timeout_secs = env
+            .get("BB_FETCH_TIMEOUT")
+            .and_then(|v| v.parse().ok());
+
+        config
     }
 
     /// Execute task in sandbox (for Shell/Python modes)
