@@ -286,6 +286,14 @@ thread_local! {
     static CACHED_INTERPRETER: RefCell<Option<Arc<Interpreter>>> = const { RefCell::new(None) };
 }
 
+// Global mutex to serialize interpreter creation across threads
+// RustPython's init_stdlib() may not be thread-safe when called concurrently
+static INTERPRETER_CREATION_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+
+fn get_creation_lock() -> &'static Mutex<()> {
+    INTERPRETER_CREATION_LOCK.get_or_init(|| Mutex::new(()))
+}
+
 // Performance tracking: count total interpreters created across all threads
 static INTERPRETER_CREATION_COUNT: AtomicU64 = AtomicU64::new(0);
 // Performance tracking: count total evaluations
@@ -293,11 +301,26 @@ static EVAL_COUNT: AtomicU64 = AtomicU64::new(0);
 // Performance tracking: cumulative time spent in eval (microseconds)
 static EVAL_TIME_US: AtomicU64 = AtomicU64::new(0);
 
+/// Pre-warm RustPython interpreter for the current thread
+/// Call this before parallel processing to ensure interpreters are ready
+pub fn prewarm_interpreter() {
+    let _ = get_cached_interpreter();
+}
+
 /// Get or create the thread-local cached interpreter
 fn get_cached_interpreter() -> Arc<Interpreter> {
     CACHED_INTERPRETER.with(|cache| {
         let mut cache_mut = cache.borrow_mut();
         if cache_mut.is_none() {
+            // CRITICAL: Serialize interpreter creation across threads
+            // RustPython's init_stdlib() may crash if called concurrently
+            let _lock = get_creation_lock().lock().unwrap();
+
+            // Double-check after acquiring lock (in case another thread created it)
+            if cache_mut.is_some() {
+                return cache_mut.as_ref().unwrap().clone();
+            }
+
             // First access in this thread - create and cache the interpreter
             let start = Instant::now();
             let interp = InterpreterConfig::new()

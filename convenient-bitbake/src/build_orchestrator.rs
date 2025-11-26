@@ -382,14 +382,36 @@ impl BuildOrchestrator {
         let total_tasks = task_graph.tasks.len();
         info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
+        // Limit parallelism to avoid memory exhaustion with large task sets
+        // RustPython interpreters use significant memory, so limit to 4 threads
+        let max_threads = std::cmp::min(4, self.config.max_cpu_parallelism);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(max_threads)
+            .stack_size(8 * 1024 * 1024)  // 8MB stack per thread
+            .build()
+            .expect("Failed to create thread pool");
+
+        // Pre-warm RustPython interpreters in rayon thread pool BEFORE parallel processing
+        // This serializes interpreter creation to avoid concurrent init_stdlib() crashes
+        info!("  Pre-warming {} RustPython interpreters...", max_threads);
+        pool.scope(|s| {
+            for _ in 0..max_threads {
+                s.spawn(|_| {
+                    crate::python_executor::prewarm_interpreter();
+                });
+            }
+        });
+        info!("  ✓ {} interpreters ready", max_threads);
+
         // Progress tracking with atomics
         let processed = Arc::new(AtomicUsize::new(0));
         let preprocess_total_time = Arc::new(AtomicU64::new(0));
         let last_report = Arc::new(Mutex::new(Instant::now()));
 
-        // Use rayon for CPU-bound parallel processing
-        // Note: Rayon uses default thread pool (which is num_cpus by default)
+        // Use our custom thread pool for parallel processing
+        // This runs the parallel work in the pool with limited threads and larger stack
         let specs: Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> =
+            pool.install(|| {
             task_graph.tasks.values()
             .collect::<Vec<_>>()
             .par_iter()
@@ -546,7 +568,8 @@ impl BuildOrchestrator {
 
             Ok((task_key, spec))
         })
-        .collect::<Result<HashMap<_, _>, _>>();
+        .collect::<Result<HashMap<_, _>, _>>()
+        });  // Close pool.install()
 
         let specs = specs?;
 
