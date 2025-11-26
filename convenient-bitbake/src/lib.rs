@@ -24,6 +24,17 @@
     clippy::unnecessary_wraps,  // Some wrappers are for API consistency
     clippy::similar_names,  // Sometimes similar names are appropriate
     clippy::needless_pass_by_value,  // Some passes by value are intentional
+    clippy::uninlined_format_args,  // format!("{}", x) vs format!("{x}") is style
+    clippy::match_same_arms,  // Explicit arms can improve readability
+    clippy::collapsible_if,  // Nested ifs can be clearer
+    clippy::items_after_statements,  // Items after statements are sometimes clearer
+    clippy::implicit_hasher,  // Accept HashMap as-is for simplicity
+    clippy::struct_field_names,  // Struct field naming is intentional
+    clippy::return_self_not_must_use,  // Must-use on Self returning methods
+    clippy::type_complexity,  // Complex types are sometimes necessary
+    clippy::use_debug,  // Debug formatting is useful for development
+    clippy::needless_continue,  // Explicit continue can be clearer
+    clippy::assigning_clones,  // Direct clone assignment is fine
 )]
 
 pub mod syntax_kind;
