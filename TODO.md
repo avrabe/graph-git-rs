@@ -8,12 +8,15 @@
 
 ## Immediate Priority: Source Preparation
 
-### Fetch (Phase 1.1) - START HERE
-- [ ] Wire `fetch_handler.rs` to `do_fetch` task execution
-- [ ] Replace stub in `bbhelpers.rs:206` with real implementation
-- [ ] SRC_URI variable expansion (`${PV}`, `${PN}`)
-- [ ] Checksum verification
+### Fetch (Phase 1.1) - IMPLEMENTED
+- [x] Pure Rust HTTP fetcher (ureq + rustls) - no wget/curl
+- [x] Pure Rust Git fetcher (git2/libgit2) - no git CLI
+- [x] Proxy support (HTTP_PROXY, HTTPS_PROXY, NO_PROXY)
+- [x] SRC_URI variable expansion (`${PV}`, `${PN}`)
+- [x] Checksum verification (SHA256, MD5)
+- [x] SRC_URI parameter parsing (;branch=, ;protocol=, etc.)
 - [ ] **Test:** Download busybox tarball to DL_DIR
+- [ ] Wire to build orchestrator (call from do_fetch task)
 
 ### Unpack (Phase 1.2)
 - [ ] Connect `fetcher.rs:unpack_source()` to `do_unpack` task
@@ -71,8 +74,9 @@
 
 | Component | File | Status |
 |-----------|------|--------|
-| Fetch stub | `convenient-bitbake/src/executor/bbhelpers.rs:206` | STUB |
-| Real fetcher | `convenient-bitbake/src/executor/fetch_handler.rs` | Exists, not wired |
+| **Rust fetcher** | `convenient-bitbake/src/executor/rust_fetcher.rs` | **NEW - Pure Rust** |
+| **Fetch task** | `convenient-bitbake/src/executor/fetch_task.rs` | **NEW - SRC_URI parsing** |
+| Fetch stub | `convenient-bitbake/src/executor/bbhelpers.rs:206` | STUB (to be replaced) |
 | Unpack | `convenient-bitbake/src/fetcher.rs:111` | Works, not wired |
 | Patch | None | NOT IMPLEMENTED |
 | Sysroot | `convenient-bitbake/src/sysroot.rs` | Exists, not wired |
@@ -89,7 +93,8 @@
 - [x] KAS integration (setup only)
 - [x] Caching infrastructure
 - [x] Sandbox infrastructure
-- [ ] **Fetch** ← START HERE
+- [x] **Fetch** - Pure Rust implementation (ureq, git2)
+- [ ] **Fetch wiring** ← NEXT: Connect to build orchestrator
 - [ ] Unpack
 - [ ] Patch
 - [ ] Toolchain
