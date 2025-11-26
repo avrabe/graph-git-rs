@@ -30,12 +30,15 @@ async-trait = "0.1"
 zstd = "0.13"
 lz4 = "1.28"
 
-# Fetcher dependencies
-ureq = { version = "2.10", features = ["json"] }
+# Fetcher dependencies (pure Rust - no host tools required)
+ureq = { version = "2.10", features = ["json", "tls"] }
+git2 = { workspace = true }
 tar = "0.4"
 flate2 = "1.0"
 bzip2 = "0.4"
 xz2 = "0.1"
+hex = "0.4"
+md-5 = "0.10"
 
 # Linux namespaces for native sandboxing (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
