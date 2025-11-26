@@ -18,9 +18,14 @@
 - [x] Checksum verification (SHA256, MD5)
 - [x] SRC_URI parameter parsing (;branch=, ;protocol=, etc.)
 - [x] Wire to build orchestrator (executor.rs calls fetch_task for do_fetch)
+- [x] Wire to KAS command (kas.rs uses rust_fetcher for repo cloning)
 - [x] Enhanced SSH key support (ssh-agent, explicit key paths, default keys)
 - [x] GitHub token authentication (x-access-token)
 - [ ] **Test:** Download busybox tarball to DL_DIR
+
+**Known Limitation:** git2 library has issues with complex proxy authentication
+(JWT tokens in proxy URL). HTTP downloads work correctly through such proxies.
+Workaround: Pre-clone repos or use NO_PROXY for git hosts when using JWT proxies.
 
 ### Unpack (Phase 1.2)
 - [ ] Connect `fetcher.rs:unpack_source()` to `do_unpack` task
