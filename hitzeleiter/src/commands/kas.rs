@@ -5,14 +5,14 @@
 
 use convenient_bitbake::{
     BuildContext, ExtractionConfig, RecipeExtractor,
-    TaskImplementation,
+    TaskImplementation, SourceUri, UriScheme,
     Pipeline, PipelineConfig,
+    executor::rust_fetcher::{self, FetchConfig},
 };
 use convenient_kas::{ConfigGenerator, include_graph::KasIncludeGraph};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Execute build using KAS configuration
 pub async fn execute(
@@ -63,34 +63,42 @@ pub async fn execute(
             tracing::info!("Using local repository {} from {:?}", repo_name, abs_path);
             abs_path
         } else if let Some(url) = &repo.url {
-            // Remote URL - clone it
+            // Remote URL - clone it using pure Rust fetcher
             let repo_dir = repos_dir.join(repo_name);
 
             if repo_dir.exists() {
                 tracing::debug!("Repository {} already exists", repo_name);
             } else {
-                let branch = repo.branch.as_deref().unwrap_or("master");
+                let branch = repo.branch.as_deref()
+                    .or(repo.refspec.as_deref())
+                    .unwrap_or("master");
                 tracing::info!("Cloning {} (branch: {})...", repo_name, branch);
 
-                let output = Command::new("git")
-                    .args([
-                        "clone",
-                        "--branch",
-                        branch,
-                        "--depth",
-                        "1",
-                        url,
-                        repo_dir.to_str().unwrap(),
-                    ])
-                    .output()?;
+                // Build SourceUri for our Rust fetcher
+                let src_uri = SourceUri {
+                    raw: url.clone(),
+                    scheme: UriScheme::Git,
+                    url: url.clone(),
+                    protocol: None,
+                    branch: Some(branch.to_string()),
+                    tag: None,
+                    srcrev: None,
+                    nobranch: false,
+                    destsuffix: Some(repo_name.clone()),
+                };
 
-                if !output.status.success() {
-                    tracing::error!(
-                        "Failed to clone {}: {}",
-                        repo_name,
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                    continue;
+                // Configure fetcher
+                let fetch_config = FetchConfig::default();
+
+                // Use pure Rust git fetcher (no git CLI required)
+                match rust_fetcher::fetch_source(&src_uri, &repos_dir, Some(&fetch_config)) {
+                    Ok(cloned_path) => {
+                        tracing::info!("✓ Cloned {} to {:?}", repo_name, cloned_path);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to clone {}: {}", repo_name, e);
+                        continue;
+                    }
                 }
             }
             repo_dir
