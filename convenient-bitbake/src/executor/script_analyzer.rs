@@ -122,8 +122,13 @@ pub fn analyze_script(script: &str) -> ScriptAnalysis {
             continue;
         }
 
-        // Skip prelude source
-        if trimmed.starts_with(". /hitzeleiter/prelude.sh") || trimmed.starts_with("source /hitzeleiter/prelude.sh") {
+        // Skip prelude source (supports both old hardcoded path and new HITZELEITER_ROOT variable)
+        if trimmed.starts_with(". /hitzeleiter/prelude.sh")
+            || trimmed.starts_with("source /hitzeleiter/prelude.sh")
+            || trimmed.starts_with(". \"${HITZELEITER_ROOT}/prelude.sh\"")
+            || trimmed.starts_with(". ${HITZELEITER_ROOT}/prelude.sh")
+            || trimmed.starts_with("source \"${HITZELEITER_ROOT}/prelude.sh\"")
+            || trimmed.starts_with("source ${HITZELEITER_ROOT}/prelude.sh") {
             continue;
         }
 
