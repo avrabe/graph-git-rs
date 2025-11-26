@@ -50,9 +50,9 @@ impl GitCommit {
     pub fn new(commit: Commit) -> GitCommit {
         GitCommit {
             oid: commit.id().to_string(),
-            name: commit.author().name().unwrap().to_string(),
-            email: commit.author().email().unwrap().to_string(),
-            message: commit.message().unwrap().to_string(),
+            name: commit.author().name().unwrap_or("unknown").to_string(),
+            email: commit.author().email().unwrap_or("unknown@unknown").to_string(),
+            message: commit.message().unwrap_or("").to_string(),
         }
     }
 }
@@ -262,7 +262,9 @@ impl GitRepository {
             match repo.find_remote("origin") {
                 Ok(mut remote) => {
                     self.remote_connect(&mut remote);
-                    remote.download(&[] as &[&str], Some(&mut fo)).unwrap();
+                    if let Err(e) = remote.download(&[] as &[&str], Some(&mut fo)) {
+                        error!("Download failed: {}", e);
+                    }
                     let _ = remote.disconnect();
                 }
                 Err(e) if e.code() == git2::ErrorCode::NotFound => {
@@ -287,9 +289,10 @@ impl GitRepository {
             let mut co = git2::build::CheckoutBuilder::new();
             co.force();
             if let Some(reference) = self.find_reference(name) {
-                repo.set_head_detached(Oid::from_str(&reference.oid).unwrap())
-                    .unwrap();
-                repo.checkout_head(Some(&mut co)).unwrap();
+                let oid = Oid::from_str(&reference.oid)
+                    .map_err(|_| git2::Error::from_str("Invalid OID"))?;
+                repo.set_head_detached(oid)?;
+                repo.checkout_head(Some(&mut co))?;
                 info!("Checked out {}", name);
                 Ok(())
             } else {
@@ -307,21 +310,43 @@ impl GitRepository {
         let _enter = span.enter();
 
         if let Some(repo) = &self.repo {
-            let mut remote = repo.find_remote("origin").unwrap();
+            let mut remote = match repo.find_remote("origin") {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("Failed to find origin remote: {}", e);
+                    return;
+                }
+            };
             self.remote_connect(&mut remote);
 
-            for branch in remote.list().unwrap() {
+            let branches = match remote.list() {
+                Ok(b) => b,
+                Err(e) => {
+                    error!("Failed to list remote branches: {}", e);
+                    return;
+                }
+            };
+
+            for branch in branches {
                 if branch.name().starts_with("refs/heads") {
                     let branch_name = branch.name().to_string();
                     let branch_ref = branch.oid();
-                    let branch_commit = repo.find_commit(branch_ref).unwrap();
+                    let branch_commit = match repo.find_commit(branch_ref) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            warn!("Failed to find commit for branch {}: {}", branch_name, e);
+                            continue;
+                        }
+                    };
 
                     if let Ok(local_branch) = repo.find_branch(&branch_name, BranchType::Local) {
                         if !local_branch.is_head() {
-                            repo.branch(&branch_name, &branch_commit, true).unwrap();
+                            if let Err(e) = repo.branch(&branch_name, &branch_commit, true) {
+                                warn!("Failed to create branch {}: {}", branch_name, e);
+                            }
                         }
-                    } else {
-                        repo.branch(&branch_name, &branch_commit, true).unwrap();
+                    } else if let Err(e) = repo.branch(&branch_name, &branch_commit, true) {
+                        warn!("Failed to create branch {}: {}", branch_name, e);
                     }
                 }
             }
@@ -348,17 +373,32 @@ impl GitRepository {
         };
         let _enter = span.enter();
         if let Some(repo) = &self.repo {
-            let mut remote = repo.find_remote("origin").unwrap();
+            let mut remote = match repo.find_remote("origin") {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("Failed to find origin remote: {}", e);
+                    return None;
+                }
+            };
             self.remote_connect(&mut remote);
 
-            let git_remote_heads = remote
-                .list()
-                .unwrap()
+            let branch_list = match remote.list() {
+                Ok(list) => list,
+                Err(e) => {
+                    error!("Failed to list remote branches: {}", e);
+                    return None;
+                }
+            };
+
+            let git_remote_heads = branch_list
                 .iter()
                 .filter(|branch| branch.name().starts_with(refs_string))
-                .map(|branch| GitRemoteHead {
-                    oid: branch.oid().to_string(),
-                    name: branch.name().split(refs_string).last().unwrap().to_string(),
+                .filter_map(|branch| {
+                    let name = branch.name().split(refs_string).last()?;
+                    Some(GitRemoteHead {
+                        oid: branch.oid().to_string(),
+                        name: name.to_string(),
+                    })
                 })
                 .collect::<Vec<GitRemoteHead>>();
             info!("Found {} remote heads", git_remote_heads.len());
