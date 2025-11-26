@@ -49,6 +49,10 @@ pub enum Commands {
 
         /// Target recipe to build
         target: String,
+
+        /// Run specified task for target AND all dependencies (like bitbake --runall=fetch)
+        #[arg(long)]
+        runall: Option<String>,
     },
 
     /// Clean build cache

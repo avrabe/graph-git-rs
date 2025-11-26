@@ -462,3 +462,185 @@ pub async fn execute(
         Err("Build failed".into())
     }
 }
+
+/// Execute a specific task for target AND all its dependencies
+/// This implements the BitBake --runall=<task> functionality
+pub async fn execute_runall(
+    build_dir: &Path,
+    target: &str,
+    task_name: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use convenient_bitbake::executor::fetch_task;
+    use convenient_bitbake::executor::rust_fetcher::FetchConfig;
+    use std::collections::HashSet;
+
+    let start_time = Instant::now();
+
+    // Normalize task name (add do_ prefix if not present)
+    let normalized_task = if task_name.starts_with("do_") {
+        task_name.to_string()
+    } else {
+        format!("do_{}", task_name)
+    };
+
+    println!("🎯 Task: {} (normalized: {})", task_name, normalized_task);
+    println!();
+
+    // ========== Load Build Environment ==========
+    println!("🏗️  Loading build environment...");
+    let env = BuildEnvironment::from_build_dir(build_dir)?;
+    println!("  ✓ MACHINE: {}", env.get_machine().unwrap_or("unknown"));
+    println!("  ✓ DISTRO:  {}", env.get_distro().unwrap_or("unknown"));
+    println!("  ✓ Layers:  {}", env.layers.len());
+    println!();
+
+    // ========== Build Orchestration ==========
+    println!("🎼 Building recipe graph...");
+
+    let config = OrchestratorConfig {
+        build_dir: build_dir.to_path_buf(),
+        machine: env.get_machine().map(|s| s.to_string()),
+        distro: env.get_distro().map(|s| s.to_string()),
+        max_io_parallelism: 32,
+        max_cpu_parallelism: num_cpus::get(),
+    };
+
+    let orchestrator = BuildOrchestrator::new(config);
+
+    // Create layer paths map
+    let mut layer_paths: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+    for (i, layer) in env.layers.iter().enumerate() {
+        let layer_name = format!("layer_{}", i);
+        layer_paths.insert(layer_name, vec![layer.clone()]);
+    }
+
+    let build_plan = orchestrator.build_plan(layer_paths).await?;
+
+    println!("  ✓ Recipes parsed: {}", build_plan.recipe_graph.recipe_count());
+    println!();
+
+    // ========== Find Target and All Dependencies ==========
+    println!("🔍 Finding target recipe: {}", target);
+    let recipe_id = build_plan.recipe_graph.find_recipe(target)
+        .ok_or_else(|| format!("Recipe '{}' not found", target))?;
+
+    println!("  ✓ Found target recipe");
+
+    // Collect all recipes in dependency tree (recursive)
+    println!("🌳 Traversing dependency tree...");
+    let mut all_recipe_ids: HashSet<convenient_bitbake::RecipeId> = HashSet::new();
+    let mut to_visit = vec![recipe_id];
+
+    while let Some(rid) = to_visit.pop() {
+        if all_recipe_ids.insert(rid) {
+            // Get dependencies of this recipe
+            let deps = build_plan.recipe_graph.get_dependencies(rid);
+            for dep_id in deps {
+                if !all_recipe_ids.contains(&dep_id) {
+                    to_visit.push(dep_id);
+                }
+            }
+        }
+    }
+
+    println!("  ✓ Found {} recipes in dependency tree", all_recipe_ids.len());
+    println!();
+
+    // ========== Execute Task for All Recipes ==========
+    println!("🚀 Running {} for {} recipes...", normalized_task, all_recipe_ids.len());
+    println!();
+
+    let dl_dir = build_dir.join("downloads");
+    std::fs::create_dir_all(&dl_dir)?;
+
+    let mut success_count = 0;
+    let mut skip_count = 0;
+    let mut fail_count = 0;
+    let total = all_recipe_ids.len();
+
+    // For fetch task, use pure Rust fetcher
+    if normalized_task == "do_fetch" || task_name == "fetch" {
+        println!("📦 Using pure Rust fetcher (no host tools required)");
+        println!();
+
+        for (idx, rid) in all_recipe_ids.iter().enumerate() {
+            if let Some(recipe) = build_plan.recipe_graph.get_recipe(*rid) {
+                print!("  [{}/{}] {}... ", idx + 1, total, recipe.name);
+
+                // Look for fetch task spec for this recipe
+                // Task specs are keyed as "recipe_name:task_name" (without do_ prefix)
+                let fetch_task_key = format!("{}:fetch", recipe.name);
+                let do_fetch_task_key = format!("{}:do_fetch", recipe.name);
+
+                let task_spec = build_plan.task_specs.get(&fetch_task_key)
+                    .or_else(|| build_plan.task_specs.get(&do_fetch_task_key));
+
+                if let Some(spec) = task_spec {
+                    // Use the environment from the task spec
+                    if spec.env.contains_key("SRC_URI") {
+                        let fetch_config = FetchConfig::default();
+
+                        match fetch_task::execute_fetch_task(&spec.env, &dl_dir, Some(&fetch_config)) {
+                            Ok(result) => {
+                                if result.downloaded_files.is_empty() && result.warnings.is_empty() {
+                                    println!("⏭️  skipped (no sources)");
+                                    skip_count += 1;
+                                } else {
+                                    println!("✅ {} files ({} bytes)",
+                                        result.downloaded_files.len(),
+                                        result.total_bytes
+                                    );
+                                    success_count += 1;
+                                }
+                            }
+                            Err(e) => {
+                                println!("❌ {}", e);
+                                fail_count += 1;
+                            }
+                        }
+                    } else {
+                        println!("⏭️  skipped (no SRC_URI in task spec)");
+                        skip_count += 1;
+                    }
+                } else {
+                    println!("⏭️  skipped (no fetch task spec)");
+                    skip_count += 1;
+                }
+            }
+        }
+    } else {
+        // For other tasks, we'd need the full executor
+        println!("⚠️  Task '{}' not yet implemented in runall mode", normalized_task);
+        println!("   Currently only 'fetch' is supported");
+        return Err(format!("Task '{}' not supported in runall mode yet", task_name).into());
+    }
+
+    println!();
+
+    // ========== Summary ==========
+    let total_duration = start_time.elapsed();
+
+    println!("╔════════════════════════════════════════════════════════╗");
+    if fail_count == 0 {
+        println!("║               RUNALL COMPLETED! ✅                     ║");
+    } else {
+        println!("║            RUNALL COMPLETED WITH ERRORS ⚠️             ║");
+    }
+    println!("╚════════════════════════════════════════════════════════╝");
+    println!();
+    println!("📊 Summary:");
+    println!("  Task:      {}", normalized_task);
+    println!("  Target:    {}", target);
+    println!("  Recipes:   {}", total);
+    println!("  Success:   {}", success_count);
+    println!("  Skipped:   {}", skip_count);
+    println!("  Failed:    {}", fail_count);
+    println!("  Duration:  {:.2}s", total_duration.as_secs_f64());
+    println!();
+
+    if fail_count > 0 {
+        Err(format!("{} recipes failed", fail_count).into())
+    } else {
+        Ok(())
+    }
+}
