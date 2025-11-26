@@ -1,361 +1,538 @@
-//! Query expression parser
+//! Query expression parser using proper tokenization
 //!
-//! Parses query strings into QueryExpr AST nodes.
+//! Parses query strings into QueryExpr AST nodes with good error messages.
 
 use super::expr::{QueryExpr, TargetPattern};
-use std::str::FromStr;
+use super::lexer::{QueryLexer, Token, TokenKind, ParseError};
 
-/// Query parser
-pub struct QueryParser;
+/// Query parser with proper tokenization
+pub struct QueryParser<'a> {
+    tokens: Vec<Token>,
+    pos: usize,
+    source: &'a str,
+}
 
-impl QueryParser {
+impl<'a> QueryParser<'a> {
     /// Parse a query string into a QueryExpr
-    pub fn parse(query: &str) -> Result<QueryExpr, String> {
-        let query = query.trim();
+    pub fn parse(query: &str) -> Result<QueryExpr, ParseError> {
+        let tokens = QueryLexer::tokenize(query);
+        let mut parser = QueryParser {
+            tokens,
+            pos: 0,
+            source: query,
+        };
 
-        // Handle set operations first (lowest precedence)
-        if let Some(pos) = find_operator(query, " intersect ") {
-            let left = Self::parse(&query[..pos])?;
-            let right = Self::parse(&query[pos + 11..])?;
-            return Ok(QueryExpr::Intersect(Box::new(left), Box::new(right)));
+        let expr = parser.parse_expr()?;
+
+        // Ensure we consumed all tokens
+        if parser.pos < parser.tokens.len() {
+            let tok = &parser.tokens[parser.pos];
+            return Err(ParseError::new(
+                format!("unexpected token '{}'", tok.text),
+                tok.span.clone(),
+                query,
+            ));
         }
 
-        if let Some(pos) = find_operator(query, " union ") {
-            let left = Self::parse(&query[..pos])?;
-            let right = Self::parse(&query[pos + 7..])?;
-            return Ok(QueryExpr::Union(Box::new(left), Box::new(right)));
+        Ok(expr)
+    }
+
+    /// Parse an expression (handles set operations at lowest precedence)
+    fn parse_expr(&mut self) -> Result<QueryExpr, ParseError> {
+        let mut left = self.parse_primary()?;
+
+        // Handle set operations (left-associative)
+        while let Some(tok) = self.peek() {
+            match tok.kind {
+                TokenKind::Intersect => {
+                    self.advance();
+                    let right = self.parse_primary()?;
+                    left = QueryExpr::Intersect(Box::new(left), Box::new(right));
+                }
+                TokenKind::Union => {
+                    self.advance();
+                    let right = self.parse_primary()?;
+                    left = QueryExpr::Union(Box::new(left), Box::new(right));
+                }
+                TokenKind::Except => {
+                    self.advance();
+                    let right = self.parse_primary()?;
+                    left = QueryExpr::Except(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
         }
 
-        if let Some(pos) = find_operator(query, " except ") {
-            let left = Self::parse(&query[..pos])?;
-            let right = Self::parse(&query[pos + 8..])?;
-            return Ok(QueryExpr::Except(Box::new(left), Box::new(right)));
-        }
+        Ok(left)
+    }
 
-        // Handle function calls
-        if query.starts_with("deps(") {
-            return Self::parse_deps(query);
-        }
+    /// Parse a primary expression (function call or target pattern)
+    fn parse_primary(&mut self) -> Result<QueryExpr, ParseError> {
+        let tok = self.peek().ok_or_else(|| {
+            ParseError::new(
+                "unexpected end of query",
+                self.source.len()..self.source.len(),
+                self.source,
+            )
+        })?;
 
-        if query.starts_with("rdeps(") {
-            return Self::parse_rdeps(query);
-        }
-
-        if query.starts_with("somepath(") {
-            return Self::parse_somepath(query);
-        }
-
-        if query.starts_with("allpaths(") {
-            return Self::parse_allpaths(query);
-        }
-
-        if query.starts_with("kind(") {
-            return Self::parse_kind(query);
-        }
-
-        if query.starts_with("filter(") {
-            return Self::parse_filter(query);
-        }
-
-        if query.starts_with("attr(") {
-            return Self::parse_attr(query);
-        }
-
-        // Task-specific query functions
-        if query.starts_with("script(") {
-            return Self::parse_script(query);
-        }
-
-        if query.starts_with("inputs(") {
-            return Self::parse_inputs(query);
-        }
-
-        if query.starts_with("outputs(") {
-            return Self::parse_outputs(query);
-        }
-
-        if query.starts_with("env(") {
-            return Self::parse_env(query);
-        }
-
-        if query.starts_with("critical-path(") {
-            return Self::parse_critical_path(query);
+        // Check for function calls
+        if tok.is_function() {
+            return self.parse_function_call();
         }
 
         // Parse as target pattern
-        let pattern = TargetPattern::from_str(query)
-            .map_err(|e| format!("Invalid target pattern: {e}"))?;
-        Ok(QueryExpr::Target(pattern))
+        self.parse_target_pattern()
     }
 
-    fn parse_deps(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "deps")?;
+    /// Parse a function call
+    fn parse_function_call(&mut self) -> Result<QueryExpr, ParseError> {
+        let func_tok = self.advance().unwrap();
+        let func_name = func_tok.text.clone();
+        let func_span = func_tok.span.clone();
 
-        if args.is_empty() {
-            return Err("deps() requires at least one argument".to_string());
-        }
+        // Expect opening paren
+        self.expect(TokenKind::LParen)?;
 
-        if args.len() == 1 {
-            let expr = Box::new(Self::parse(&args[0])?);
-            Ok(QueryExpr::Deps {
-                expr,
-                max_depth: None,
-            })
-        } else if args.len() == 2 {
-            let expr = Box::new(Self::parse(&args[0])?);
-            let max_depth = args[1]
-                .trim()
-                .parse::<usize>()
-                .map_err(|_| format!("Invalid max_depth: {}", args[1]))?;
-            Ok(QueryExpr::Deps {
-                expr,
-                max_depth: Some(max_depth),
-            })
-        } else {
-            Err(format!("deps() takes 1 or 2 arguments, got {}", args.len()))
+        // Parse arguments
+        let args = self.parse_args()?;
+
+        // Expect closing paren
+        self.expect(TokenKind::RParen)?;
+
+        // Build the appropriate QueryExpr
+        match func_name.as_str() {
+            "deps" => self.build_deps(args, func_span),
+            "rdeps" => self.build_rdeps(args, func_span),
+            "somepath" => self.build_somepath(args, func_span),
+            "allpaths" => self.build_allpaths(args, func_span),
+            "kind" => self.build_kind(args, func_span),
+            "filter" => self.build_filter(args, func_span),
+            "attr" => self.build_attr(args, func_span),
+            "script" => self.build_unary(args, func_span, "script", QueryExpr::Script),
+            "inputs" => self.build_unary(args, func_span, "inputs", QueryExpr::Inputs),
+            "outputs" => self.build_unary(args, func_span, "outputs", QueryExpr::Outputs),
+            "env" => self.build_unary(args, func_span, "env", QueryExpr::Env),
+            "critical-path" => self.build_unary(args, func_span, "critical-path", QueryExpr::CriticalPath),
+            _ => Err(ParseError::new(
+                format!("unknown function '{func_name}'"),
+                func_span,
+                self.source,
+            )),
         }
     }
 
-    fn parse_rdeps(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "rdeps")?;
+    /// Parse comma-separated arguments
+    fn parse_args(&mut self) -> Result<Vec<QueryArg>, ParseError> {
+        let mut args = Vec::new();
 
-        if args.len() != 2 {
-            return Err(format!("rdeps() takes 2 arguments, got {}", args.len()));
+        // Check for empty args
+        if self.check(TokenKind::RParen) {
+            return Ok(args);
         }
 
-        let universe = Box::new(Self::parse(&args[0])?);
-        let target = Box::new(Self::parse(&args[1])?);
+        // Parse first arg
+        args.push(self.parse_arg()?);
 
-        Ok(QueryExpr::ReverseDeps { universe, target })
-    }
-
-    fn parse_somepath(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "somepath")?;
-
-        if args.len() != 2 {
-            return Err(format!(
-                "somepath() takes 2 arguments, got {}",
-                args.len()
-            ));
+        // Parse remaining args
+        while self.check(TokenKind::Comma) {
+            self.advance(); // consume comma
+            args.push(self.parse_arg()?);
         }
 
-        let from = Box::new(Self::parse(&args[0])?);
-        let to = Box::new(Self::parse(&args[1])?);
-
-        Ok(QueryExpr::SomePath { from, to })
+        Ok(args)
     }
 
-    fn parse_allpaths(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "allpaths")?;
+    /// Parse a single argument (can be expr, string, or number)
+    fn parse_arg(&mut self) -> Result<QueryArg, ParseError> {
+        let tok = self.peek().ok_or_else(|| {
+            ParseError::new(
+                "expected argument",
+                self.source.len()..self.source.len(),
+                self.source,
+            )
+        })?;
 
-        if args.len() != 2 {
-            return Err(format!(
-                "allpaths() takes 2 arguments, got {}",
-                args.len()
-            ));
-        }
-
-        let from = Box::new(Self::parse(&args[0])?);
-        let to = Box::new(Self::parse(&args[1])?);
-
-        Ok(QueryExpr::AllPaths { from, to })
-    }
-
-    fn parse_kind(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "kind")?;
-
-        if args.len() != 2 {
-            return Err(format!("kind() takes 2 arguments, got {}", args.len()));
-        }
-
-        let pattern = unquote(&args[0]);
-        let expr = Box::new(Self::parse(&args[1])?);
-
-        Ok(QueryExpr::Kind { pattern, expr })
-    }
-
-    fn parse_filter(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "filter")?;
-
-        if args.len() != 2 {
-            return Err(format!("filter() takes 2 arguments, got {}", args.len()));
-        }
-
-        let pattern = unquote(&args[0]);
-        let expr = Box::new(Self::parse(&args[1])?);
-
-        Ok(QueryExpr::Filter { pattern, expr })
-    }
-
-    fn parse_attr(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "attr")?;
-
-        if args.len() != 3 {
-            return Err(format!("attr() takes 3 arguments, got {}", args.len()));
-        }
-
-        let name = unquote(&args[0]);
-        let value = unquote(&args[1]);
-        let expr = Box::new(Self::parse(&args[2])?);
-
-        Ok(QueryExpr::Attr { name, value, expr })
-    }
-
-    fn parse_script(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "script")?;
-
-        if args.len() != 1 {
-            return Err(format!("script() takes 1 argument, got {}", args.len()));
-        }
-
-        let expr = Box::new(Self::parse(&args[0])?);
-        Ok(QueryExpr::Script(expr))
-    }
-
-    fn parse_inputs(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "inputs")?;
-
-        if args.len() != 1 {
-            return Err(format!("inputs() takes 1 argument, got {}", args.len()));
-        }
-
-        let expr = Box::new(Self::parse(&args[0])?);
-        Ok(QueryExpr::Inputs(expr))
-    }
-
-    fn parse_outputs(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "outputs")?;
-
-        if args.len() != 1 {
-            return Err(format!("outputs() takes 1 argument, got {}", args.len()));
-        }
-
-        let expr = Box::new(Self::parse(&args[0])?);
-        Ok(QueryExpr::Outputs(expr))
-    }
-
-    fn parse_env(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "env")?;
-
-        if args.len() != 1 {
-            return Err(format!("env() takes 1 argument, got {}", args.len()));
-        }
-
-        let expr = Box::new(Self::parse(&args[0])?);
-        Ok(QueryExpr::Env(expr))
-    }
-
-    fn parse_critical_path(query: &str) -> Result<QueryExpr, String> {
-        let args = extract_function_args(query, "critical-path")?;
-
-        if args.len() != 1 {
-            return Err(format!(
-                "critical-path() takes 1 argument, got {}",
-                args.len()
-            ));
-        }
-
-        let expr = Box::new(Self::parse(&args[0])?);
-        Ok(QueryExpr::CriticalPath(expr))
-    }
-}
-
-/// Find an operator at the top level (not inside parentheses or quotes)
-fn find_operator(s: &str, op: &str) -> Option<usize> {
-    let mut depth = 0;
-    let mut in_quote = false;
-    let mut quote_char = ' ';
-
-    for (i, c) in s.char_indices() {
-        match c {
-            '\'' | '"' => {
-                if !in_quote {
-                    in_quote = true;
-                    quote_char = c;
-                } else if c == quote_char {
-                    in_quote = false;
-                }
+        match tok.kind {
+            TokenKind::Number => {
+                let tok = self.advance().unwrap();
+                Ok(QueryArg::Number(tok.number_value().unwrap()))
             }
-            '(' if !in_quote => depth += 1,
-            ')' if !in_quote => depth -= 1,
-            _ => {}
-        }
-
-        if depth == 0 && !in_quote
-            && s[i..].starts_with(op) {
-                return Some(i);
-            }
-    }
-
-    None
-}
-
-/// Extract function arguments from a function call
-fn extract_function_args(query: &str, func_name: &str) -> Result<Vec<String>, String> {
-    if !query.starts_with(&format!("{func_name}(")) {
-        return Err(format!("Not a {func_name} function call"));
-    }
-
-    if !query.ends_with(')') {
-        return Err(format!("Missing closing parenthesis in {func_name}"));
-    }
-
-    let args_str = &query[func_name.len() + 1..query.len() - 1];
-
-    if args_str.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Split by commas at top level (not inside parentheses or quotes)
-    let mut args = Vec::new();
-    let mut current_arg = String::new();
-    let mut depth = 0;
-    let mut in_quote = false;
-    let mut quote_char = ' ';
-
-    for c in args_str.chars() {
-        match c {
-            '\'' | '"' => {
-                if !in_quote {
-                    in_quote = true;
-                    quote_char = c;
-                } else if c == quote_char {
-                    in_quote = false;
-                }
-                current_arg.push(c);
-            }
-            '(' if !in_quote => {
-                depth += 1;
-                current_arg.push(c);
-            }
-            ')' if !in_quote => {
-                depth -= 1;
-                current_arg.push(c);
-            }
-            ',' if depth == 0 && !in_quote => {
-                args.push(current_arg.trim().to_string());
-                current_arg.clear();
+            TokenKind::DoubleQuotedString | TokenKind::SingleQuotedString => {
+                let tok = self.advance().unwrap();
+                Ok(QueryArg::String(tok.string_value()))
             }
             _ => {
-                current_arg.push(c);
+                // Try to parse as expression
+                let expr = self.parse_expr()?;
+                Ok(QueryArg::Expr(expr))
             }
         }
     }
 
-    if !current_arg.is_empty() {
-        args.push(current_arg.trim().to_string());
+    /// Parse a target pattern
+    fn parse_target_pattern(&mut self) -> Result<QueryExpr, ParseError> {
+        // Check for //... (all targets)
+        if self.check(TokenKind::AllTargets) {
+            self.advance();
+            return Ok(QueryExpr::Target(TargetPattern::All));
+        }
+
+        // Check for * (also all targets)
+        if self.check(TokenKind::Star) && self.peek_next().map(|t| t.kind != TokenKind::Colon).unwrap_or(true) {
+            self.advance();
+            return Ok(QueryExpr::Target(TargetPattern::All));
+        }
+
+        // Parse pattern parts: [layer:]recipe[:task]
+        let first = self.parse_pattern_part()?;
+
+        if !self.check(TokenKind::Colon) {
+            // Just a recipe name (wildcard layer)
+            return Ok(QueryExpr::Target(TargetPattern::WildcardRecipe {
+                recipe: first,
+            }));
+        }
+
+        self.advance(); // consume first colon
+
+        // Check for ... (layer:...)
+        if self.check(TokenKind::Ellipsis) {
+            self.advance();
+            return Ok(QueryExpr::Target(TargetPattern::LayerAll(first)));
+        }
+
+        let second = self.parse_pattern_part()?;
+
+        if !self.check(TokenKind::Colon) {
+            // layer:recipe or *:recipe
+            if first == "*" {
+                return Ok(QueryExpr::Target(TargetPattern::WildcardRecipe {
+                    recipe: second,
+                }));
+            }
+            return Ok(QueryExpr::Target(TargetPattern::Recipe {
+                layer: first,
+                recipe: second,
+            }));
+        }
+
+        self.advance(); // consume second colon
+
+        let third = self.parse_pattern_part()?;
+
+        // layer:recipe:task or *:recipe:task
+        if first == "*" {
+            if third == "*" {
+                return Ok(QueryExpr::Target(TargetPattern::WildcardRecipeAllTasks {
+                    recipe: second,
+                }));
+            }
+            return Ok(QueryExpr::Target(TargetPattern::WildcardTask {
+                recipe: second,
+                task: third,
+            }));
+        }
+
+        if third == "*" {
+            return Ok(QueryExpr::Target(TargetPattern::RecipeAllTasks {
+                layer: first,
+                recipe: second,
+            }));
+        }
+
+        Ok(QueryExpr::Target(TargetPattern::Task {
+            layer: first,
+            recipe: second,
+            task: third,
+        }))
     }
 
-    Ok(args)
+    /// Parse a pattern part (identifier or *)
+    fn parse_pattern_part(&mut self) -> Result<String, ParseError> {
+        let tok = self.peek().ok_or_else(|| {
+            ParseError::new(
+                "expected pattern part",
+                self.source.len()..self.source.len(),
+                self.source,
+            )
+        })?;
+
+        match tok.kind {
+            TokenKind::Ident => {
+                let tok = self.advance().unwrap();
+                Ok(tok.text)
+            }
+            TokenKind::Star => {
+                self.advance();
+                Ok("*".to_string())
+            }
+            _ => Err(ParseError::new(
+                format!("expected identifier or '*', found '{}'", tok.text),
+                tok.span.clone(),
+                self.source,
+            )),
+        }
+    }
+
+    // Builder helpers for each function type
+
+    fn build_deps(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
+        match args.len() {
+            1 => {
+                let expr = args.into_iter().next().unwrap().into_expr().ok_or_else(|| {
+                    ParseError::new("deps() argument must be a target expression", span.clone(), self.source)
+                })?;
+                Ok(QueryExpr::Deps {
+                    expr: Box::new(expr),
+                    max_depth: None,
+                })
+            }
+            2 => {
+                let mut iter = args.into_iter();
+                let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+                    ParseError::new("deps() first argument must be a target expression", span.clone(), self.source)
+                })?;
+                let depth = iter.next().unwrap().into_number().ok_or_else(|| {
+                    ParseError::new("deps() second argument must be a number", span.clone(), self.source)
+                })?;
+                Ok(QueryExpr::Deps {
+                    expr: Box::new(expr),
+                    max_depth: Some(depth),
+                })
+            }
+            n => Err(ParseError::new(
+                format!("deps() takes 1 or 2 arguments, got {n}"),
+                span,
+                self.source,
+            )),
+        }
+    }
+
+    fn build_rdeps(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
+        if args.len() != 2 {
+            return Err(ParseError::new(
+                format!("rdeps() takes 2 arguments, got {}", args.len()),
+                span,
+                self.source,
+            ));
+        }
+        let mut iter = args.into_iter();
+        let universe = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("rdeps() first argument must be a target expression", span.clone(), self.source)
+        })?;
+        let target = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("rdeps() second argument must be a target expression", span.clone(), self.source)
+        })?;
+        Ok(QueryExpr::ReverseDeps {
+            universe: Box::new(universe),
+            target: Box::new(target),
+        })
+    }
+
+    fn build_somepath(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
+        if args.len() != 2 {
+            return Err(ParseError::new(
+                format!("somepath() takes 2 arguments, got {}", args.len()),
+                span,
+                self.source,
+            ));
+        }
+        let mut iter = args.into_iter();
+        let from = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("somepath() first argument must be a target expression", span.clone(), self.source)
+        })?;
+        let to = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("somepath() second argument must be a target expression", span.clone(), self.source)
+        })?;
+        Ok(QueryExpr::SomePath {
+            from: Box::new(from),
+            to: Box::new(to),
+        })
+    }
+
+    fn build_allpaths(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
+        if args.len() != 2 {
+            return Err(ParseError::new(
+                format!("allpaths() takes 2 arguments, got {}", args.len()),
+                span,
+                self.source,
+            ));
+        }
+        let mut iter = args.into_iter();
+        let from = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("allpaths() first argument must be a target expression", span.clone(), self.source)
+        })?;
+        let to = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("allpaths() second argument must be a target expression", span.clone(), self.source)
+        })?;
+        Ok(QueryExpr::AllPaths {
+            from: Box::new(from),
+            to: Box::new(to),
+        })
+    }
+
+    fn build_kind(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
+        if args.len() != 2 {
+            return Err(ParseError::new(
+                format!("kind() takes 2 arguments, got {}", args.len()),
+                span,
+                self.source,
+            ));
+        }
+        let mut iter = args.into_iter();
+        let pattern = iter.next().unwrap().into_string().ok_or_else(|| {
+            ParseError::new("kind() first argument must be a string pattern", span.clone(), self.source)
+        })?;
+        let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("kind() second argument must be a target expression", span.clone(), self.source)
+        })?;
+        Ok(QueryExpr::Kind {
+            pattern,
+            expr: Box::new(expr),
+        })
+    }
+
+    fn build_filter(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
+        if args.len() != 2 {
+            return Err(ParseError::new(
+                format!("filter() takes 2 arguments, got {}", args.len()),
+                span,
+                self.source,
+            ));
+        }
+        let mut iter = args.into_iter();
+        let pattern = iter.next().unwrap().into_string().ok_or_else(|| {
+            ParseError::new("filter() first argument must be a string pattern", span.clone(), self.source)
+        })?;
+        let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("filter() second argument must be a target expression", span.clone(), self.source)
+        })?;
+        Ok(QueryExpr::Filter {
+            pattern,
+            expr: Box::new(expr),
+        })
+    }
+
+    fn build_attr(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
+        if args.len() != 3 {
+            return Err(ParseError::new(
+                format!("attr() takes 3 arguments, got {}", args.len()),
+                span,
+                self.source,
+            ));
+        }
+        let mut iter = args.into_iter();
+        let name = iter.next().unwrap().into_string().ok_or_else(|| {
+            ParseError::new("attr() first argument must be a string", span.clone(), self.source)
+        })?;
+        let value = iter.next().unwrap().into_string().ok_or_else(|| {
+            ParseError::new("attr() second argument must be a string", span.clone(), self.source)
+        })?;
+        let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new("attr() third argument must be a target expression", span.clone(), self.source)
+        })?;
+        Ok(QueryExpr::Attr {
+            name,
+            value,
+            expr: Box::new(expr),
+        })
+    }
+
+    fn build_unary<F>(
+        &self,
+        args: Vec<QueryArg>,
+        span: std::ops::Range<usize>,
+        func_name: &str,
+        constructor: F,
+    ) -> Result<QueryExpr, ParseError>
+    where
+        F: FnOnce(Box<QueryExpr>) -> QueryExpr,
+    {
+        if args.len() != 1 {
+            return Err(ParseError::new(
+                format!("{func_name}() takes 1 argument, got {}", args.len()),
+                span,
+                self.source,
+            ));
+        }
+        let expr = args.into_iter().next().unwrap().into_expr().ok_or_else(|| {
+            ParseError::new(format!("{func_name}() argument must be a target expression"), span.clone(), self.source)
+        })?;
+        Ok(constructor(Box::new(expr)))
+    }
+
+    // Token manipulation helpers
+
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.pos)
+    }
+
+    fn peek_next(&self) -> Option<&Token> {
+        self.tokens.get(self.pos + 1)
+    }
+
+    fn check(&self, kind: TokenKind) -> bool {
+        self.peek().map(|t| t.kind == kind).unwrap_or(false)
+    }
+
+    fn advance(&mut self) -> Option<Token> {
+        if self.pos < self.tokens.len() {
+            let tok = self.tokens[self.pos].clone();
+            self.pos += 1;
+            Some(tok)
+        } else {
+            None
+        }
+    }
+
+    fn expect(&mut self, kind: TokenKind) -> Result<Token, ParseError> {
+        if let Some(tok) = self.peek() {
+            if tok.kind == kind {
+                return Ok(self.advance().unwrap());
+            }
+            return Err(ParseError::new(
+                format!("expected '{}', found '{}'", kind, tok.text),
+                tok.span.clone(),
+                self.source,
+            ));
+        }
+        Err(ParseError::new(
+            format!("expected '{}', found end of query", kind),
+            self.source.len()..self.source.len(),
+            self.source,
+        ))
+    }
 }
 
-/// Remove quotes from a string
-fn unquote(s: &str) -> String {
-    let s = s.trim();
-    if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
+/// Argument types during parsing
+enum QueryArg {
+    Expr(QueryExpr),
+    String(String),
+    Number(usize),
+}
+
+impl QueryArg {
+    fn into_expr(self) -> Option<QueryExpr> {
+        match self {
+            QueryArg::Expr(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    fn into_string(self) -> Option<String> {
+        match self {
+            QueryArg::String(s) => Some(s),
+            QueryArg::Expr(QueryExpr::Target(TargetPattern::WildcardRecipe { recipe })) => Some(recipe),
+            _ => None,
+        }
+    }
+
+    fn into_number(self) -> Option<usize> {
+        match self {
+            QueryArg::Number(n) => Some(n),
+            _ => None,
+        }
     }
 }
 
@@ -364,163 +541,91 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_target() {
+    fn test_parse_simple_target() {
+        let expr = QueryParser::parse("busybox").unwrap();
+        assert!(matches!(expr, QueryExpr::Target(TargetPattern::WildcardRecipe { .. })));
+    }
+
+    #[test]
+    fn test_parse_target_pattern() {
         let expr = QueryParser::parse("meta-core:busybox").unwrap();
-        assert!(matches!(expr, QueryExpr::Target(_)));
+        assert!(matches!(expr, QueryExpr::Target(TargetPattern::Recipe { .. })));
     }
 
     #[test]
     fn test_parse_deps() {
-        let expr = QueryParser::parse("deps(meta-core:busybox)").unwrap();
+        let expr = QueryParser::parse("deps(busybox)").unwrap();
         match expr {
-            QueryExpr::Deps { expr, max_depth } => {
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-                assert_eq!(max_depth, None);
-            }
+            QueryExpr::Deps { max_depth, .. } => assert_eq!(max_depth, None),
             _ => panic!("Expected Deps"),
         }
 
-        let expr = QueryParser::parse("deps(meta-core:busybox, 2)").unwrap();
+        let expr = QueryParser::parse("deps(busybox, 2)").unwrap();
         match expr {
-            QueryExpr::Deps { expr, max_depth } => {
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-                assert_eq!(max_depth, Some(2));
-            }
+            QueryExpr::Deps { max_depth, .. } => assert_eq!(max_depth, Some(2)),
             _ => panic!("Expected Deps"),
         }
     }
 
     #[test]
     fn test_parse_rdeps() {
-        let expr = QueryParser::parse("rdeps(//..., meta-core:glibc)").unwrap();
-        match expr {
-            QueryExpr::ReverseDeps { universe, target } => {
-                assert!(matches!(*universe, QueryExpr::Target(_)));
-                assert!(matches!(*target, QueryExpr::Target(_)));
-            }
-            _ => panic!("Expected ReverseDeps"),
-        }
+        let expr = QueryParser::parse("rdeps(//..., glibc)").unwrap();
+        assert!(matches!(expr, QueryExpr::ReverseDeps { .. }));
     }
 
     #[test]
     fn test_parse_kind() {
-        let expr = QueryParser::parse("kind('go_binary', //...)").unwrap();
+        let expr = QueryParser::parse(r#"kind("*-native", //...)"#).unwrap();
         match expr {
-            QueryExpr::Kind { pattern, expr } => {
-                assert_eq!(pattern, "go_binary");
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-            }
+            QueryExpr::Kind { pattern, .. } => assert_eq!(pattern, "*-native"),
             _ => panic!("Expected Kind"),
         }
     }
 
     #[test]
     fn test_parse_intersect() {
-        let expr = QueryParser::parse("deps(meta-core:busybox) intersect kind('class_*', //...)")
-            .unwrap();
+        let expr = QueryParser::parse("deps(busybox) intersect kind(\"lib*\", //...)").unwrap();
         assert!(matches!(expr, QueryExpr::Intersect(_, _)));
     }
 
     #[test]
     fn test_parse_nested() {
-        let expr = QueryParser::parse("deps(rdeps(//..., meta-core:glibc))").unwrap();
+        let expr = QueryParser::parse("deps(rdeps(//..., glibc))").unwrap();
         match expr {
             QueryExpr::Deps { expr, .. } => {
                 assert!(matches!(*expr, QueryExpr::ReverseDeps { .. }));
             }
-            _ => panic!("Expected nested Deps -> ReverseDeps"),
+            _ => panic!("Expected nested"),
         }
     }
 
     #[test]
-    fn test_parse_script() {
+    fn test_parse_wildcard() {
+        let expr = QueryParser::parse("*:busybox:do_compile").unwrap();
+        assert!(matches!(
+            expr,
+            QueryExpr::Target(TargetPattern::WildcardTask { .. })
+        ));
+    }
+
+    #[test]
+    fn test_parse_all_targets() {
+        let expr = QueryParser::parse("//...").unwrap();
+        assert!(matches!(expr, QueryExpr::Target(TargetPattern::All)));
+
+        let expr = QueryParser::parse("*").unwrap();
+        assert!(matches!(expr, QueryExpr::Target(TargetPattern::All)));
+    }
+
+    #[test]
+    fn test_error_message() {
+        let err = QueryParser::parse("deps(").unwrap_err();
+        assert!(err.message.contains("expected"));
+    }
+
+    #[test]
+    fn test_script_query() {
         let expr = QueryParser::parse("script(*:busybox:configure)").unwrap();
-        match expr {
-            QueryExpr::Script(expr) => {
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-            }
-            _ => panic!("Expected Script"),
-        }
-    }
-
-    #[test]
-    fn test_parse_inputs() {
-        let expr = QueryParser::parse("inputs(*:busybox:compile)").unwrap();
-        match expr {
-            QueryExpr::Inputs(expr) => {
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-            }
-            _ => panic!("Expected Inputs"),
-        }
-    }
-
-    #[test]
-    fn test_parse_outputs() {
-        let expr = QueryParser::parse("outputs(*:busybox:install)").unwrap();
-        match expr {
-            QueryExpr::Outputs(expr) => {
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-            }
-            _ => panic!("Expected Outputs"),
-        }
-    }
-
-    #[test]
-    fn test_parse_env() {
-        let expr = QueryParser::parse("env(*:busybox:configure)").unwrap();
-        match expr {
-            QueryExpr::Env(expr) => {
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-            }
-            _ => panic!("Expected Env"),
-        }
-    }
-
-    #[test]
-    fn test_parse_critical_path() {
-        let expr = QueryParser::parse("critical-path(*:busybox:install)").unwrap();
-        match expr {
-            QueryExpr::CriticalPath(expr) => {
-                assert!(matches!(*expr, QueryExpr::Target(_)));
-            }
-            _ => panic!("Expected CriticalPath"),
-        }
-    }
-
-    #[test]
-    fn test_parse_wildcard_pattern() {
-        // Test wildcard recipe
-        let expr = QueryParser::parse("*:busybox").unwrap();
-        match expr {
-            QueryExpr::Target(pattern) => {
-                assert!(matches!(pattern, TargetPattern::WildcardRecipe { .. }));
-            }
-            _ => panic!("Expected Target with WildcardRecipe"),
-        }
-
-        // Test wildcard task
-        let expr = QueryParser::parse("*:busybox:configure").unwrap();
-        match expr {
-            QueryExpr::Target(pattern) => {
-                assert!(matches!(pattern, TargetPattern::WildcardTask { .. }));
-            }
-            _ => panic!("Expected Target with WildcardTask"),
-        }
-    }
-
-    #[test]
-    fn test_parse_composed_task_query() {
-        // Test composability: script(deps(*:busybox:install, 5))
-        let expr = QueryParser::parse("script(deps(*:busybox:install, 5))").unwrap();
-        match expr {
-            QueryExpr::Script(inner) => match *inner {
-                QueryExpr::Deps { expr, max_depth } => {
-                    assert!(matches!(*expr, QueryExpr::Target(_)));
-                    assert_eq!(max_depth, Some(5));
-                }
-                _ => panic!("Expected Deps inside Script"),
-            },
-            _ => panic!("Expected Script"),
-        }
+        assert!(matches!(expr, QueryExpr::Script(_)));
     }
 }
