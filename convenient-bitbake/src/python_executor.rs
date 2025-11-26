@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 // Module containing bb.utils functions
 #[pymodule]
 mod bb_utils {
-    use super::{PyStrRef, PyObjectRef, VirtualMachine, PyResult, bitbake_internal, PyPayload};
+    use super::{PyStrRef, PyObjectRef, VirtualMachine, PyResult, bitbake_internal};
     use rustpython::vm::builtins::PyList;
 
     #[pyfunction]
@@ -73,7 +73,7 @@ mod bb_utils {
     /// Get Rust toolchain component path
     /// Used by rust-common.bbclass for Rust builds
     #[pyfunction]
-    fn rust_tool(d: PyObjectRef, tool_sys: PyStrRef, vm: &VirtualMachine) -> PyResult<String> {
+    fn rust_tool(_d: PyObjectRef, tool_sys: PyStrRef, _vm: &VirtualMachine) -> PyResult<String> {
         // For now, return a placeholder path based on the system
         // In real BitBake, this would resolve actual Rust toolchain paths
         let sys_name = tool_sys.as_str();
@@ -211,7 +211,7 @@ mod bb_utils {
 // Module containing bb
 #[pymodule]
 mod bb {
-    use super::{VirtualMachine, PyObjectRef, PyPayload};
+    use super::{VirtualMachine, PyObjectRef};
 
     #[pyattr]
     fn utils(_vm: &VirtualMachine) -> PyObjectRef {

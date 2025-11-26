@@ -1471,7 +1471,7 @@ impl RecipeExtractor {
 
                 // Debug: Log if busybox task is getting dependencies
                 if busybox_constraints
-                    && let Some((recipe_name, task_name)) = debug_info {
+                    && let Some((_recipe_name, task_name)) = debug_info {
                         debug!("  {} after: {} -> {} (added {} from {:?})",
                             task_name, after_count_before, task_node.after.len(),
                             after_ids.len(), after_names);

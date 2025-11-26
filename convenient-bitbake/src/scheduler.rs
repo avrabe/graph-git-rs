@@ -102,7 +102,7 @@ impl TaskScheduler {
 
         // Compute critical path lengths using topological sort + dynamic programming
         let mut critical_lengths: HashMap<TaskId, u32> = HashMap::new();
-        let visited: HashSet<TaskId> = HashSet::new();
+        let _visited: HashSet<TaskId> = HashSet::new();
 
         // Process tasks in reverse topological order (leaves first)
         let sorted_tasks = self.topological_sort(&task_deps);
@@ -126,7 +126,7 @@ impl TaskScheduler {
 
         // Count dependents for each task
         let mut dependent_counts: HashMap<TaskId, u32> = HashMap::new();
-        for (task_id, deps) in &task_deps {
+        for (_task_id, deps) in &task_deps {
             for dep in deps {
                 *dependent_counts.entry(*dep).or_insert(0) += 1;
             }

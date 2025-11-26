@@ -282,33 +282,29 @@ pub async fn execute(
                         // Parse SRC_URI to get download URLs
                         let sources = fetcher::parse_src_uri(&expanded_src_uri);
 
-                        if !sources.is_empty() {
+                        // Only fetch first HTTP/HTTPS source for now
+                        if let Some((url, _name)) = sources.into_iter().next() {
                             let dl_dir = build_dir.join("downloads");
 
-                            // Fetch and unpack first source (tarball)
-                            for (url, _name) in sources {
-                                match fetcher::fetch_source(&url, &dl_dir) {
-                                    Ok(archive_path) => {
-                                        // Unpack to workdir
-                                        let work_base = tmpdir.join("work")
-                                            .join(&exec_task.recipe_name)
-                                            .join("1.0");  // TODO: Use actual PV
+                            match fetcher::fetch_source(&url, &dl_dir) {
+                                Ok(archive_path) => {
+                                    // Unpack to workdir
+                                    let work_base = tmpdir.join("work")
+                                        .join(&exec_task.recipe_name)
+                                        .join("1.0");  // TODO: Use actual PV
 
-                                        match fetcher::unpack_source(&archive_path, &work_base) {
-                                            Ok(()) => {
-                                                println!("    ✓ Fetched and unpacked: {}", url);
-                                            }
-                                            Err(e) => {
-                                                eprintln!("    ✗ Failed to unpack: {}", e);
-                                            }
+                                    match fetcher::unpack_source(&archive_path, &work_base) {
+                                        Ok(()) => {
+                                            println!("    ✓ Fetched and unpacked: {}", url);
+                                        }
+                                        Err(e) => {
+                                            eprintln!("    ✗ Failed to unpack: {}", e);
                                         }
                                     }
-                                    Err(e) => {
-                                        eprintln!("    ✗ Failed to fetch: {}", e);
-                                    }
                                 }
-                                // Only fetch first HTTP/HTTPS source for now
-                                break;
+                                Err(e) => {
+                                    eprintln!("    ✗ Failed to fetch: {}", e);
+                                }
                             }
                         }
                     }

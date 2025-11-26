@@ -148,7 +148,7 @@ pub(crate) mod bb_fetch2 {
 /// Module containing bb package (top-level)
 #[pymodule]
 pub(crate) mod bb {
-    use super::{VirtualMachine, PyObjectRef, PyPayload};
+    use super::{VirtualMachine, PyObjectRef};
 
     #[pyattr]
     fn fetch2(_vm: &VirtualMachine) -> PyObjectRef {
