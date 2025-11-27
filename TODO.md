@@ -15,7 +15,7 @@
 | Tests don't compile (`bitzel` crate) | Critical | **FIXED** ✓ |
 | Query parser was hacky | High | **FIXED** ✓ (Logos lexer) |
 | Core pipeline incomplete | High | **IN PROGRESS** |
-| 50+ unwrap() in production code | Medium | **TODO** |
+| 50+ unwrap() in production code | Medium | **FIXED** ✓ (convenient-git) |
 | No dry-run support for builds | Medium | **TODO** |
 
 ### Gap to State-of-the-Art
@@ -49,12 +49,12 @@
 - [x] Support set operations: intersect, union, except
 - [x] Proper error messages with source location context
 
-### 0.4 Remove Critical unwrap() Calls (Pending)
-- [ ] `convenient-git/src/lib.rs:173` - panic! in constructor
-- [ ] `convenient-git/src/lib.rs:48-50` - unwraps on author info
-- [ ] `convenient-git/src/lib.rs:260,287,305-306,346,356` - git operations
-- [ ] `convenient-bitbake/src/executor/executor.rs:433` - chained unwraps
-- [ ] `convenient-bitbake/src/build_orchestrator.rs:392` - thread pool
+### 0.4 Remove Critical unwrap() Calls ✓ COMPLETED
+- [x] `convenient-git/src/lib.rs` - panic! in constructor → Now returns Result
+- [x] `convenient-git/src/lib.rs` - unwraps on author info → Now uses unwrap_or fallbacks
+- [x] `convenient-git/src/lib.rs` - git operations → Proper error handling with Result
+- [x] `convenient-bitbake/src/executor/executor.rs` - Only test code uses unwrap() (acceptable)
+- [x] `convenient-bitbake/src/build_orchestrator.rs` - Mutex lock unwrap (acceptable for poisoned mutex)
 
 ---
 

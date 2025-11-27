@@ -100,18 +100,17 @@ impl GitRepository {
         proxy_opts
     }
 
-    fn remote_connect(&self, remote: &mut Remote<'_>) {
+    fn remote_connect(&self, remote: &mut Remote<'_>) -> Result<(), git2::Error> {
         let mut cb = RemoteCallbacks::new();
         cb.credentials(|_url, _username_from_url, _allowed_types| {
             Cred::userpass_plaintext(&self.git_user, &self.git_password)
         });
-        remote
-            .connect_auth(
-                git2::Direction::Fetch,
-                Some(cb),
-                Some(Self::proxy_opts_auto()),
-            )
-            .unwrap();
+        remote.connect_auth(
+            git2::Direction::Fetch,
+            Some(cb),
+            Some(Self::proxy_opts_auto()),
+        )?;
+        Ok(())
     }
 
     pub fn new(
@@ -119,7 +118,7 @@ impl GitRepository {
         git_url: &String,
         git_user: &String,
         git_password: &String,
-    ) -> GitRepository {
+    ) -> Result<GitRepository, git2::Error> {
         let span = span!(Level::INFO, "clone", uri=%git_url);
         let _enter = span.enter();
 
@@ -161,29 +160,35 @@ impl GitRepository {
             Ok(repo) => repo,
             Err(e) if e.code() == git2::ErrorCode::NotFound => {
                 // Repository not found, clone it
-                loop {
+                const MAX_CLONE_RETRIES: u32 = 3;
+                let mut last_error = e;
+                for attempt in 1..=MAX_CLONE_RETRIES {
                     match builder.clone(git_url, Path::new(repo_path)) {
-                        Ok(repo) => break repo,
+                        Ok(repo) => return Ok(GitRepository {
+                            repo: Some(repo),
+                            git_url: git_url.clone(),
+                            git_user: git_user.clone(),
+                            git_password: git_password.clone(),
+                        }),
                         Err(e) => {
-                            // Repository not found, clone it
-                            warn!("failed to open: {}", e);
-                            continue;
+                            warn!("Clone attempt {}/{} failed: {}", attempt, MAX_CLONE_RETRIES, e);
+                            last_error = e;
                         }
-                    };
+                    }
                 }
-                //builder.clone(git_url, Path::new(repo_path)).unwrap()
+                return Err(last_error);
             }
             Err(e) => {
-                // Some other error, panic
-                panic!("failed to open: {e}");
+                // Some other error, return it
+                return Err(e);
             }
         };
-        GitRepository {
+        Ok(GitRepository {
             repo: Some(repo),
             git_url: git_url.clone(),
             git_user: git_user.clone(),
             git_password: git_password.clone(),
-        }
+        })
     }
 
     fn is_multiple_of_one_percent_or_total(n: usize, total: usize) -> bool {
@@ -197,7 +202,12 @@ impl GitRepository {
     }
 
     fn print(state: &mut State) {
-        let stats = state.progress.as_ref().unwrap();
+        let Some(stats) = state.progress.as_ref() else {
+            return;
+        };
+        if stats.total_objects() == 0 {
+            return;
+        }
         let network_pct = (100 * stats.received_objects()) / stats.total_objects();
         let index_pct = (100 * stats.indexed_objects()) / stats.total_objects();
         let co_pct = if state.total > 0 {
@@ -261,7 +271,10 @@ impl GitRepository {
             fo.download_tags(git2::AutotagOption::All);
             match repo.find_remote("origin") {
                 Ok(mut remote) => {
-                    self.remote_connect(&mut remote);
+                    if let Err(e) = self.remote_connect(&mut remote) {
+                        error!("Failed to connect to remote: {}", e);
+                        return;
+                    }
                     if let Err(e) = remote.download(&[] as &[&str], Some(&mut fo)) {
                         error!("Download failed: {}", e);
                     }
@@ -317,7 +330,10 @@ impl GitRepository {
                     return;
                 }
             };
-            self.remote_connect(&mut remote);
+            if let Err(e) = self.remote_connect(&mut remote) {
+                error!("Failed to connect to remote: {}", e);
+                return;
+            }
 
             let branches = match remote.list() {
                 Ok(b) => b,
@@ -380,7 +396,10 @@ impl GitRepository {
                     return None;
                 }
             };
-            self.remote_connect(&mut remote);
+            if let Err(e) = self.remote_connect(&mut remote) {
+                error!("Failed to connect to remote: {}", e);
+                return None;
+            }
 
             let branch_list = match remote.list() {
                 Ok(list) => list,
@@ -416,7 +435,13 @@ impl GitRepository {
             let remote_name = format!("refs/remotes/origin/{name}");
             let reference = repo.find_reference(remote_name.as_str());
             match reference {
-                Ok(reference) => Some(GitCommit::new(reference.peel_to_commit().unwrap().clone())),
+                Ok(reference) => match reference.peel_to_commit() {
+                    Ok(commit) => Some(GitCommit::new(commit)),
+                    Err(e) => {
+                        error!("Failed to peel reference to commit: {}", e);
+                        None
+                    }
+                },
                 Err(e) => {
                     error!("Error: {}", e);
                     None

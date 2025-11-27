@@ -601,8 +601,13 @@ async fn application(
             warn!("Repo path: {}", repo_path.display());
 
             // Try opening the repository
-            let git_repository = GitRepository::new(repo_path, &git_url, &git_user, &git_password);
-            //let repo = gitRepository.new_repository(repo_path, &opts.git_url);
+            let git_repository = match GitRepository::new(repo_path, &git_url, &git_user, &git_password) {
+                Ok(repo) => repo,
+                Err(e) => {
+                    error!("Failed to open/clone repository {}: {}", git_url, e);
+                    continue;
+                }
+            };
             git_repository.update_from_remote();
             git_repository.map_remote_branches_local();
 

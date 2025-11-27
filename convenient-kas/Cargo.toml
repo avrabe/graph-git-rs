@@ -8,7 +8,7 @@ license = "MIT"
 
 [dependencies]
 serde = { workspace = true }
-serde_yaml = "0.9.34+deprecated"
+serde_yaml = "0.9.34"
 tracing = { workspace = true }
 git2 = { workspace = true }
 sha2 = "0.10"
