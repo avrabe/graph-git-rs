@@ -57,6 +57,35 @@ docs/
 - Link to related documents when relevant
 - Date significant documents (status updates, reports)
 
+## Prerequisites
+
+Before building, ensure the following dependencies are installed:
+
+### Required Tools
+
+- **Rust** (stable toolchain): Install via [rustup](https://rustup.rs/)
+- **protoc** (Protocol Buffers compiler): Required for gRPC/protobuf support in `convenient-cache`
+
+### Installing protoc
+
+**Debian/Ubuntu:**
+```bash
+sudo apt-get install protobuf-compiler
+```
+
+**macOS (Homebrew):**
+```bash
+brew install protobuf
+```
+
+**From source:**
+Download from https://github.com/protocolbuffers/protobuf/releases
+
+Verify installation:
+```bash
+protoc --version
+```
+
 ## Code Organization
 
 ### Crate Structure
