@@ -57,6 +57,11 @@ pub enum Commands {
         /// Dry-run mode: show what would be executed without actually running tasks
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip fetch tasks (for offline/network-less environments)
+        /// Mark fetch tasks as successful without actually downloading
+        #[arg(long)]
+        skip_fetch: bool,
     },
 
     /// Clean build cache

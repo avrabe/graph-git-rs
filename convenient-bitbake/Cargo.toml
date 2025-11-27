@@ -32,7 +32,8 @@ zstd = "0.13"
 lz4 = "1.28"
 
 # Fetcher dependencies (pure Rust - no host tools required)
-ureq = { version = "2.10", features = ["json", "tls"] }
+# native-certs: uses OS certificate store for TLS verification (required for sandbox environments)
+ureq = { version = "2.10", features = ["json", "tls", "native-certs"] }
 git2 = { workspace = true }
 tar = "0.4"
 flate2 = "1.0"
