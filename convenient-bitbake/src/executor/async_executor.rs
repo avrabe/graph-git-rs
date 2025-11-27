@@ -2,7 +2,7 @@
 //! WASM-compatible using platform-agnostic async
 
 use super::executor::TaskExecutor;
-use super::types::{ExecutionResult, TaskOutput, TaskSpec};
+use super::types::{ExecutionMode, ExecutionResult, NetworkPolicy, ResourceLimits, TaskOutput, TaskSpec};
 use crate::task_graph::TaskGraph;
 use crate::scheduler::TaskScheduler;
 use std::collections::{HashMap, HashSet};
