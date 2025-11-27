@@ -97,6 +97,13 @@
 - [x] HTTP proxy auto-detection from environment variables (`HTTPS_PROXY`, `https_proxy`)
 - [x] Added `--skip-fetch` flag for offline/network-less builds
 - [x] Git CLI fallback when git2 fails with authentication errors
+- [x] **Mirror Fallback System** for HTTP sources:
+  - Git config `url.<base>.insteadOf` support
+  - BitBake-style `PREMIRRORS` environment variable
+  - `FETCH_MIRRORS` environment variable (simpler format)
+  - Built-in mirrors for busybox, linux, glibc, openssl, zlib, xz, etc.
+  - Auto-detection via `github.com/mirror/*` repositories
+  - Creates proper compressed tarballs from git archive
 
 **SRC_URI Resolution (November 2025):**
 - [x] Extract `${PV}` from recipe filename (e.g., `busybox_1.35.0.bb` → PV=1.35.0)
@@ -105,7 +112,9 @@
 
 **Known Issues:**
 - Some external servers (e.g., busybox.net) may return HTTP 503 intermittently
-  - This is a server-side issue, not a code problem (curl exhibits same behavior)
+  - ✅ Now handled by automatic git mirror fallback
+- Inline Python expressions in SRC_URI (e.g., `${@["", "file://init.cfg"][...]}`) not evaluated
+  - These conditional includes need proper Python expression handling
 
 ---
 
