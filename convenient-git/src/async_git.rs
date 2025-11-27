@@ -327,13 +327,6 @@ impl AsyncGitRepository {
     }
 }
 
-/// Helper function to setup proxy options
-fn proxy_opts_auto() -> ProxyOptions<'static> {
-    let mut proxy_opts = ProxyOptions::new();
-    proxy_opts.auto();
-    proxy_opts
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

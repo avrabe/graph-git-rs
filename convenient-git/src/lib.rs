@@ -115,9 +115,9 @@ impl GitRepository {
 
     pub fn new(
         repo_path: &Path,
-        git_url: &String,
-        git_user: &String,
-        git_password: &String,
+        git_url: &str,
+        git_user: &str,
+        git_password: &str,
     ) -> Result<GitRepository, git2::Error> {
         let span = span!(Level::INFO, "clone", uri=%git_url);
         let _enter = span.enter();
@@ -166,9 +166,9 @@ impl GitRepository {
                     match builder.clone(git_url, Path::new(repo_path)) {
                         Ok(repo) => return Ok(GitRepository {
                             repo: Some(repo),
-                            git_url: git_url.clone(),
-                            git_user: git_user.clone(),
-                            git_password: git_password.clone(),
+                            git_url: git_url.to_owned(),
+                            git_user: git_user.to_owned(),
+                            git_password: git_password.to_owned(),
                         }),
                         Err(e) => {
                             warn!("Clone attempt {}/{} failed: {}", attempt, MAX_CLONE_RETRIES, e);
@@ -185,9 +185,9 @@ impl GitRepository {
         };
         Ok(GitRepository {
             repo: Some(repo),
-            git_url: git_url.clone(),
-            git_user: git_user.clone(),
-            git_password: git_password.clone(),
+            git_url: git_url.to_owned(),
+            git_user: git_user.to_owned(),
+            git_password: git_password.to_owned(),
         })
     }
 
