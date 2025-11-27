@@ -6,7 +6,7 @@
 //! 3. Verifying cache reuse on second run (incremental builds)
 
 use convenient_bitbake::executor::{AsyncTaskExecutor, TaskExecutor, TaskSpec};
-use convenient_bitbake::executor::types::{NetworkPolicy, ResourceLimits};
+use convenient_bitbake::executor::types::{ExecutionMode, NetworkPolicy, ResourceLimits};
 use convenient_bitbake::recipe_graph::{RecipeGraph, TaskDependency};
 use convenient_bitbake::task_graph::TaskGraphBuilder;
 use std::collections::HashMap;
@@ -362,6 +362,7 @@ echo "Task completed" > "$D/{}.stamp"
             env: HashMap::new(),
             outputs: vec![],
             timeout: Some(Duration::from_secs(30)),
+            execution_mode: ExecutionMode::Shell,
             network_policy,
             resource_limits: ResourceLimits::default(),
         };

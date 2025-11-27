@@ -8,8 +8,8 @@ use super::sandbox::SandboxManager;
 use super::script_analyzer;
 use crate::fetcher;
 use super::types::{
-    ContentHash, ExecutionError, ExecutionMode, ExecutionResult,
-    SandboxSpec, TaskOutput, TaskSignature, TaskSpec,
+    ContentHash, ExecutionError, ExecutionMode, ExecutionResult, NetworkPolicy,
+    ResourceLimits, SandboxSpec, TaskOutput, TaskSignature, TaskSpec,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

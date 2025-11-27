@@ -8,7 +8,7 @@
 //! 5. Performance statistics and timing analysis
 
 use convenient_bitbake::executor::{InteractiveExecutor, InteractiveOptions, TaskSpec};
-use convenient_bitbake::executor::types::{NetworkPolicy, ResourceLimits};
+use convenient_bitbake::executor::types::{ExecutionMode, NetworkPolicy, ResourceLimits};
 use convenient_bitbake::recipe_graph::{RecipeGraph, TaskDependency};
 use convenient_bitbake::task_graph::TaskGraphBuilder;
 use std::collections::HashMap;
@@ -386,6 +386,7 @@ echo "Done" > "$D/{}.stamp"
             env: HashMap::new(),
             outputs: vec![],
             timeout: Some(Duration::from_secs(30)),
+            execution_mode: ExecutionMode::Shell,
             network_policy,
             resource_limits: ResourceLimits::default(),
         };

@@ -26,7 +26,7 @@
 
 use super::types::{ExecutionError, ExecutionResult, SandboxSpec};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 

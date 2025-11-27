@@ -10,11 +10,9 @@ use crate::{
 };
 use crate::executor::types::{NetworkPolicy, ResourceLimits};
 use crate::executor::ScriptPreprocessor;
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
