@@ -192,12 +192,23 @@ impl BuildOrchestrator {
             }
 
             // Extract variables from recipe content for preprocessing
+            // IMPORTANT: Enable resolve_includes to get variables from .inc files
+            // (many recipes like libxcrypt only have "require foo.inc" in the .bb file)
             let extractor_for_vars = RecipeExtractor::new(ExtractionConfig {
                 extract_tasks: false,
                 use_simple_python_eval: false,
+                resolve_includes: true,  // Critical: resolve require/include statements
                 ..Default::default()
             });
-            let vars = extractor_for_vars.parse_variables(&parsed.content);
+
+            // Get the recipe's directory to resolve relative includes
+            let recipe_dir = parsed.file.path.parent().map(|p| p.to_path_buf());
+            let vars = if let Some(dir) = recipe_dir {
+                extractor_for_vars.parse_variables_with_includes(&parsed.content, &dir)
+            } else {
+                extractor_for_vars.parse_variables(&parsed.content)
+            };
+
             recipe_variables.insert(parsed.file.name.clone(), vars);
         }
 
