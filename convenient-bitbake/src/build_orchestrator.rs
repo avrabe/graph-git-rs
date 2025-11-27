@@ -201,13 +201,8 @@ impl BuildOrchestrator {
                 ..Default::default()
             });
 
-            // Get the recipe's directory to resolve relative includes
-            let recipe_dir = parsed.file.path.parent().map(|p| p.to_path_buf());
-            let vars = if let Some(dir) = recipe_dir {
-                extractor_for_vars.parse_variables_with_includes(&parsed.content, &dir)
-            } else {
-                extractor_for_vars.parse_variables(&parsed.content)
-            };
+            // Pass the full recipe path to extract both name and version for variable expansion
+            let vars = extractor_for_vars.parse_variables_with_includes(&parsed.content, &parsed.file.path);
 
             recipe_variables.insert(parsed.file.name.clone(), vars);
         }

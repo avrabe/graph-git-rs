@@ -331,18 +331,22 @@ impl RecipeExtractor {
 
     /// Parse variables with include/require file resolution
     /// This first resolves any include/require statements then parses variables
-    pub fn parse_variables_with_includes(&self, content: &str, recipe_dir: &Path) -> HashMap<String, String> {
-        // Resolve includes first
-        let recipe_name = recipe_dir.file_name()
+    pub fn parse_variables_with_includes(&self, content: &str, recipe_path: &Path) -> HashMap<String, String> {
+        // Extract recipe name and version from filename (e.g., "busybox_1.35.0.bb" -> name="busybox", version="1.35.0")
+        let file_stem = recipe_path.file_stem()
             .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+            .unwrap_or("unknown");
 
-        // Create a fake recipe path from the directory for include resolution
-        let recipe_path = recipe_dir.join("recipe.bb");
+        let (recipe_name, recipe_version) = if let Some(underscore_pos) = file_stem.rfind('_') {
+            let name = file_stem[..underscore_pos].to_string();
+            let version = file_stem[underscore_pos + 1..].to_string();
+            (name, Some(version))
+        } else {
+            (file_stem.to_string(), None)
+        };
 
         let resolved_content = if self.config.resolve_includes {
-            match self.resolve_includes_in_content(content, &recipe_path, &recipe_name) {
+            match self.resolve_includes_in_content(content, recipe_path, &recipe_name, recipe_version.as_deref()) {
                 Ok(resolved) => resolved,
                 Err(_) => content.to_string(),
             }
@@ -1556,18 +1560,23 @@ impl RecipeExtractor {
         let mut content = std::fs::read_to_string(file_path)
             .map_err(|e| format!("Failed to read file: {e}"))?;
 
-        let recipe_name = file_path
+        let file_stem = file_path
             .file_stem()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| "Invalid file name".to_string())?
-            .split('_')
-            .next()
-            .unwrap_or("")
-            .to_string();
+            .ok_or_else(|| "Invalid file name".to_string())?;
+
+        // Extract recipe name and version from filename (e.g., "busybox_1.36.1" -> name="busybox", version="1.36.1")
+        let (recipe_name, recipe_version) = if let Some(underscore_pos) = file_stem.rfind('_') {
+            let name = file_stem[..underscore_pos].to_string();
+            let version = file_stem[underscore_pos + 1..].to_string();
+            (name, Some(version))
+        } else {
+            (file_stem.to_string(), None)
+        };
 
         // Resolve includes if enabled
         if self.config.resolve_includes {
-            content = self.resolve_includes_in_content(&content, file_path, &recipe_name)?;
+            content = self.resolve_includes_in_content(&content, file_path, &recipe_name, recipe_version.as_deref())?;
         }
 
         // Resolve inherit classes if enabled
@@ -1577,9 +1586,19 @@ impl RecipeExtractor {
 
         let extraction = self.extract_from_content(graph, recipe_name, &content)?;
 
-        // Update file path
+        // Update file path and version from filename if not set in recipe content
         if let Some(recipe) = graph.get_recipe_mut(extraction.recipe_id) {
             recipe.file_path = Some(file_path.to_path_buf());
+
+            // Set version from filename if not already set from recipe content
+            // (PV is often derived from filename, e.g., busybox_1.36.1.bb -> PV=1.36.1)
+            if recipe.version.is_none() {
+                if let Some(version) = recipe_version {
+                    recipe.version = Some(version.clone());
+                    // Also add to metadata so it's available for variable expansion
+                    recipe.metadata.insert("PV".to_string(), version);
+                }
+            }
         }
 
         Ok(extraction)
@@ -1591,6 +1610,7 @@ impl RecipeExtractor {
         content: &str,
         recipe_path: &Path,
         recipe_name: &str,
+        recipe_version: Option<&str>,
     ) -> Result<String, String> {
         let mut resolved = String::new();
         let mut seen_files = std::collections::HashSet::new();
@@ -1601,14 +1621,17 @@ impl RecipeExtractor {
 
         // Get base name for variable expansion: bash_5.2.21.bb -> bash
         let base_name = recipe_name.to_string();
+        let version = recipe_version.unwrap_or("").to_string();
 
         for line in content.lines() {
             let trimmed = line.trim();
 
             // Check for include/require directives
             if let Some(include_path) = self.parse_include_directive(trimmed) {
-                // Expand simple variables like ${BPN}
-                let expanded = include_path.replace("${BPN}", &base_name);
+                // Expand simple variables like ${BPN} and ${PV}
+                let expanded = include_path
+                    .replace("${BPN}", &base_name)
+                    .replace("${PV}", &version);
 
                 // Try to find and read the include file
                 match self.find_include_file(&expanded, recipe_dir, &base_name) {
@@ -1625,10 +1648,12 @@ impl RecipeExtractor {
                         // Read the include file
                         if let Ok(include_content) = std::fs::read_to_string(&include_file_path) {
                             // Recursively resolve includes in the included file
+                            // Pass the same version since it applies to the whole recipe
                             if let Ok(resolved_include) = self.resolve_includes_in_content(
                                 &include_content,
                                 &include_file_path,
                                 &base_name,
+                                recipe_version,
                             ) {
                                 resolved.push_str(&resolved_include);
                                 resolved.push('\n');
