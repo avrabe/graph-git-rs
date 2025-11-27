@@ -199,7 +199,25 @@ pub fn verify_md5(file_path: &Path, expected_md5: &str) -> FetchResult<()> {
 // ============================================================================
 
 fn fetch_git(src_uri: &SourceUri, downloads_dir: &Path, config: &FetchConfig) -> FetchResult<PathBuf> {
-    let repo_name = extract_repo_name(&src_uri.url)?;
+    // Convert git:// to https:// when proxy is configured
+    // git:// protocol doesn't work through HTTP proxies, but https:// does
+    let effective_uri = if src_uri.url.starts_with("git://") {
+        let has_proxy = config.proxy_url.is_some() || get_git_proxy_from_env().is_some();
+        if has_proxy {
+            let https_url = src_uri.url.replace("git://", "https://");
+            info!("Converting git:// to https:// for proxy compatibility: {}", https_url);
+            // Create a modified SourceUri with https:// URL
+            let mut modified = src_uri.clone();
+            modified.url = https_url;
+            modified
+        } else {
+            src_uri.clone()
+        }
+    } else {
+        src_uri.clone()
+    };
+
+    let repo_name = extract_repo_name(&effective_uri.url)?;
     let dest_dir = downloads_dir.join("git").join(&repo_name);
 
     // Create parent directory
@@ -210,7 +228,7 @@ fn fetch_git(src_uri: &SourceUri, downloads_dir: &Path, config: &FetchConfig) ->
     if dest_dir.join(".git").exists() || dest_dir.join("HEAD").exists() {
         info!("Repository exists, updating: {}", dest_dir.display());
         // Try to update, but if it fails with proxy error, use existing repo
-        match update_git_repo(&dest_dir, src_uri, config) {
+        match update_git_repo(&dest_dir, &effective_uri, config) {
             Ok(path) => Ok(path),
             Err(e) => {
                 let is_proxy_error = matches!(&e, FetchError::GitError(ge)
@@ -218,7 +236,7 @@ fn fetch_git(src_uri: &SourceUri, downloads_dir: &Path, config: &FetchConfig) ->
                 if is_proxy_error {
                     warn!("git2 update failed with proxy error, using existing repo: {}", e);
                     // Try git CLI pull as fallback
-                    if let Err(pull_err) = update_git_repo_cli(&dest_dir, src_uri) {
+                    if let Err(pull_err) = update_git_repo_cli(&dest_dir, &effective_uri) {
                         warn!("git CLI pull also failed, using existing repo as-is: {}", pull_err);
                     }
                     Ok(dest_dir.clone())
@@ -228,10 +246,10 @@ fn fetch_git(src_uri: &SourceUri, downloads_dir: &Path, config: &FetchConfig) ->
             }
         }
     } else {
-        info!("Cloning repository: {} -> {}", src_uri.url, dest_dir.display());
+        info!("Cloning repository: {} -> {}", effective_uri.url, dest_dir.display());
 
         // Try pure Rust git2 first, fall back to git CLI on proxy errors
-        match clone_git_repo(src_uri, &dest_dir, config) {
+        match clone_git_repo(&effective_uri, &dest_dir, config) {
             Ok(()) => Ok(dest_dir),
             Err(e) => {
                 // Check if it's a proxy-related error
@@ -240,7 +258,7 @@ fn fetch_git(src_uri: &SourceUri, downloads_dir: &Path, config: &FetchConfig) ->
 
                 if is_proxy_error {
                     warn!("git2 failed with proxy error, falling back to git CLI: {}", e);
-                    clone_git_repo_cli(src_uri, &dest_dir)?;
+                    clone_git_repo_cli(&effective_uri, &dest_dir)?;
                     Ok(dest_dir)
                 } else {
                     Err(e)
@@ -654,16 +672,27 @@ fn fetch_http(
 
     // Set proxy if configured or from environment
     if let Some(ref proxy_url) = config.proxy_url {
+        info!("Using configured proxy: {}...", &proxy_url[..80.min(proxy_url.len())]);
         if let Ok(proxy) = ureq::Proxy::new(proxy_url) {
             agent_builder = agent_builder.proxy(proxy);
+        } else {
+            warn!("Failed to parse configured proxy URL");
         }
     } else {
         // Auto-detect from environment
         if let Some(proxy_url) = get_proxy_for_url(&src_uri.url) {
-            if let Ok(proxy) = ureq::Proxy::new(&proxy_url) {
-                agent_builder = agent_builder.proxy(proxy);
-                debug!("Using proxy: {}", proxy_url);
+            info!("Auto-detected proxy from environment: {}...", &proxy_url[..80.min(proxy_url.len())]);
+            match ureq::Proxy::new(&proxy_url) {
+                Ok(proxy) => {
+                    agent_builder = agent_builder.proxy(proxy);
+                    info!("Proxy configured successfully");
+                }
+                Err(e) => {
+                    warn!("Failed to parse proxy URL: {:?}", e);
+                }
             }
+        } else {
+            info!("No proxy detected for URL");
         }
     }
 
