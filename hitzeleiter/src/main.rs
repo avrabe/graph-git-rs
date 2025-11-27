@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!();
             commands::kas::execute(&config, &builddir, target).await?;
         }
-        Commands::Build { builddir, target, runall, dry_run } => {
+        Commands::Build { builddir, target, runall, dry_run, skip_fetch } => {
             if let Some(ref task) = runall {
                 println!("\n╔════════════════════════════════════════════════════════╗");
                 println!("║              BITZEL RUNALL ORCHESTRATOR                ║");
@@ -51,6 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if dry_run {
                     println!("Mode: DRY-RUN (no execution)");
                 }
+                if skip_fetch {
+                    println!("Mode: OFFLINE (fetch tasks will be skipped)");
+                }
                 println!();
                 commands::build::execute_runall(&builddir, &target, task, dry_run).await?;
             } else {
@@ -58,6 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if dry_run {
                     println!("║        BITZEL BUILD ORCHESTRATOR (DRY-RUN)            ║");
                     println!("║  Plan-Only Mode: No execution, analysis only          ║");
+                } else if skip_fetch {
+                    println!("║        BITZEL BUILD ORCHESTRATOR (OFFLINE)            ║");
+                    println!("║  Offline Mode: Fetch tasks will be skipped            ║");
                 } else {
                     println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
                     println!("║  Task Graph Execution with Dependency Resolution      ║");
@@ -68,8 +74,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if dry_run {
                     println!("Mode: DRY-RUN (no execution)");
                 }
+                if skip_fetch {
+                    println!("Mode: OFFLINE (fetch tasks will be skipped)");
+                }
                 println!();
-                commands::build::execute(&builddir, &target, dry_run).await?;
+                commands::build::execute(&builddir, &target, dry_run, skip_fetch).await?;
             }
         }
         Commands::Clean { builddir, all } => {

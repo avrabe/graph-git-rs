@@ -35,6 +35,7 @@ pub async fn execute(
     build_dir: &Path,
     target: &str,
     dry_run: bool,
+    skip_fetch: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let start_time = Instant::now();
 
@@ -42,6 +43,11 @@ pub async fn execute(
         println!("╔════════════════════════════════════════════════════════╗");
         println!("║       🏎️  BITZEL FERRARI BUILD (DRY-RUN) 🏎️           ║");
         println!("║  Plan-Only Mode: No execution, analysis only          ║");
+        println!("╚════════════════════════════════════════════════════════╝");
+    } else if skip_fetch {
+        println!("╔════════════════════════════════════════════════════════╗");
+        println!("║       🏎️  BITZEL FERRARI BUILD (OFFLINE) 🏎️           ║");
+        println!("║  Offline Mode: Fetch tasks will be skipped            ║");
         println!("╚════════════════════════════════════════════════════════╝");
     } else {
         println!("╔════════════════════════════════════════════════════════╗");
@@ -54,6 +60,9 @@ pub async fn execute(
     println!("Build directory: {:?}", build_dir);
     if dry_run {
         println!("Mode: DRY-RUN (no execution)");
+    }
+    if skip_fetch {
+        println!("Mode: OFFLINE (fetch tasks will be skipped)");
     }
     println!();
 
@@ -288,6 +297,13 @@ pub async fn execute(
             let task_key = format!("{}:{}", exec_task.recipe_name, exec_task.task_name);
 
             if let Some(spec) = build_plan.task_specs.get(&task_key) {
+                // Skip fetch tasks in offline mode
+                if skip_fetch && (exec_task.task_name == "fetch" || exec_task.task_name == "do_fetch") {
+                    println!("  ⏭️  {} (skipped - offline mode)", task_key);
+                    completed += 1;
+                    continue;
+                }
+
                 // Mark task as started in monitor
                 monitor.task_started(&task_key);
                 println!("  ▶️  {}", task_key);
