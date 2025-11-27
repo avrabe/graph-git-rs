@@ -91,6 +91,22 @@
 - [ ] `file busybox` shows ARM aarch64 executable
 - [ ] Binary runs in qemu-aarch64
 
+**Network/Proxy Support (November 2025):**
+- [x] Added TLS certificate handling via `native-certs` feature (uses OS cert store)
+- [x] Git protocol conversion: `git://` → `https://` for proxy compatibility
+- [x] HTTP proxy auto-detection from environment variables (`HTTPS_PROXY`, `https_proxy`)
+- [x] Added `--skip-fetch` flag for offline/network-less builds
+- [x] Git CLI fallback when git2 fails with authentication errors
+
+**SRC_URI Resolution (November 2025):**
+- [x] Extract `${PV}` from recipe filename (e.g., `busybox_1.35.0.bb` → PV=1.35.0)
+- [x] Resolve SRC_URI from include files (e.g., `libxcrypt.inc`)
+- [x] Expand `${PV}` and `${BPN}` in include directives
+
+**Known Issues:**
+- Some external servers (e.g., busybox.net) may return HTTP 503 intermittently
+  - This is a server-side issue, not a code problem (curl exhibits same behavior)
+
 ---
 
 ## Phase 2: Architectural Upgrades (Future)
@@ -231,7 +247,7 @@
 | **Unpack** | `convenient-bitbake/src/fetcher.rs:111` | ✓ Wired to executor |
 | **Patch** | `convenient-bitbake/src/executor/executor.rs:495` | ✓ Implemented |
 | **Sysroot** | `convenient-bitbake/src/sysroot.rs` | ✓ Complete |
-| **Build cmd** | `hitzeleiter/src/commands/build.rs` | Needs testing |
+| **Build cmd** | `hitzeleiter/src/commands/build.rs` | ✓ --skip-fetch, --dry-run |
 | **Query cmd** | `hitzeleiter/src/commands/query.rs` | ✓ Works |
 | **Signature cache** | `convenient-bitbake/src/signature_cache.rs` | ✓ Works |
 | **Build orchestrator** | `convenient-bitbake/src/build_orchestrator.rs` | ✓ Core logic |
