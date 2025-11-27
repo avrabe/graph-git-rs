@@ -433,7 +433,11 @@ pub async fn execute(
                 bb_vars.insert("base_libdir".to_string(), "/lib".to_string());
                 bb_vars.insert("bindir_crossscripts".to_string(), "/usr/bin/crossscripts".to_string());
 
-                enriched_spec.env = bb_vars;
+                // Merge bb_vars into existing env (don't overwrite recipe vars like SRC_URI)
+                // bb_vars take precedence for paths like WORKDIR, S, B, D
+                for (k, v) in bb_vars {
+                    enriched_spec.env.insert(k, v);
+                }
                 enriched_spec.workdir = work_base;
 
                 match executor.execute_task(enriched_spec) {

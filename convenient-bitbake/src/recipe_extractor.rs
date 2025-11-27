@@ -329,6 +329,31 @@ impl RecipeExtractor {
         vars
     }
 
+    /// Parse variables with include/require file resolution
+    /// This first resolves any include/require statements then parses variables
+    pub fn parse_variables_with_includes(&self, content: &str, recipe_dir: &Path) -> HashMap<String, String> {
+        // Resolve includes first
+        let recipe_name = recipe_dir.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Create a fake recipe path from the directory for include resolution
+        let recipe_path = recipe_dir.join("recipe.bb");
+
+        let resolved_content = if self.config.resolve_includes {
+            match self.resolve_includes_in_content(content, &recipe_path, &recipe_name) {
+                Ok(resolved) => resolved,
+                Err(_) => content.to_string(),
+            }
+        } else {
+            content.to_string()
+        };
+
+        // Now parse variables from the resolved content
+        self.parse_variables(&resolved_content)
+    }
+
     /// Phase 9c: Parse variable flags from content
     /// Extracts VAR[flag] = value statements
     /// Returns: HashMap<var_name, HashMap<flag_name, flag_value>>
