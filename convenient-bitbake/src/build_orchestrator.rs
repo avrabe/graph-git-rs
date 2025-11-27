@@ -464,26 +464,20 @@ impl BuildOrchestrator {
         let total_tasks = task_graph.tasks.len();
         info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
-        // Limit parallelism to avoid memory exhaustion with large task sets
-        // RustPython interpreters use significant memory, so limit to 4 threads
-        let max_threads = std::cmp::min(4, self.config.max_cpu_parallelism);
+        // WORKAROUND: Force single-threaded task spec generation due to unresolved
+        // parallel processing crash (SIGSEGV). The crash occurs with any parallelism > 1
+        // and is not caused by RustPython (which was removed) or regex compilation
+        // (which is now pre-compiled with once_cell::Lazy).
+        // TODO: Investigate the root cause of the parallel processing crash.
+        // See: convenient-bitbake/src/executor/script_preprocessor.rs for pre-compiled regexes
+        let max_threads = 1;
+        let _configured_max = std::cmp::min(num_cpus::get(), self.config.max_cpu_parallelism);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(max_threads)
             .stack_size(8 * 1024 * 1024)  // 8MB stack per thread
             .build()
             .expect("Failed to create thread pool");
-
-        // Pre-warm RustPython interpreters in rayon thread pool BEFORE parallel processing
-        // This serializes interpreter creation to avoid concurrent init_stdlib() crashes
-        info!("  Pre-warming {} RustPython interpreters...", max_threads);
-        pool.scope(|s| {
-            for _ in 0..max_threads {
-                s.spawn(|_| {
-                    crate::python_executor::prewarm_interpreter();
-                });
-            }
-        });
-        info!("  ✓ {} interpreters ready", max_threads);
+        info!("  Using {} threads for task spec generation", max_threads);
 
         // Progress tracking with atomics
         let processed = Arc::new(AtomicUsize::new(0));

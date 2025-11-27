@@ -1,26 +1,37 @@
 //! BitBake script preprocessor
 //!
 //! Handles BitBake-specific syntax before script execution:
-//! - ${@python_expression} - Inline Python evaluation using RustPython
+//! - ${@python_expression} - Inline Python evaluation using SimplePythonEvaluator (pure Rust)
 //! - ${VAR[flag]} - Variable flags conversion
 //! - Variable expansion from recipe DataStore
 //!
 //! This allows BitBake recipes to be executed as clean bash/python scripts.
+//!
+//! Note: RustPython is NOT used here due to thread-safety issues causing segfaults
+//! during parallel task spec generation. SimplePythonEvaluator handles common patterns.
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use tracing::{debug, trace};
 
-use crate::python_executor::PythonExecutor;
 use crate::simple_python_eval::SimplePythonEvaluator;
+
+// Pre-compiled regex patterns for thread-safe parallel access
+static PYTHON_EXPR_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\$\{@([^}]+)\}").expect("Invalid regex pattern")
+});
+static VAR_FLAG_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\[([a-z_]+)\]\}").expect("Invalid regex pattern")
+});
+static VAR_EXPAND_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").expect("Invalid regex pattern")
+});
 
 /// Preprocesses BitBake scripts to handle special syntax
 pub struct ScriptPreprocessor {
     /// Variables from recipe parsing (DataStore)
     datastore: HashMap<String, String>,
-
-    /// Python executor for inline expressions
-    python_executor: PythonExecutor,
 }
 
 impl ScriptPreprocessor {
@@ -28,7 +39,6 @@ impl ScriptPreprocessor {
     pub fn new(vars: HashMap<String, String>) -> Self {
         Self {
             datastore: vars,
-            python_executor: PythonExecutor::new(),
         }
     }
 
@@ -74,9 +84,8 @@ impl ScriptPreprocessor {
             return Ok(script.to_string());
         }
 
-        // Match ${@...} including nested braces
-        // This regex handles simple cases; complex nesting needs a parser
-        let re = Regex::new(r"\$\{@([^}]+)\}").map_err(|e| e.to_string())?;
+        // Use pre-compiled regex for thread-safe parallel access
+        let re = &*PYTHON_EXPR_RE;
 
         let mut result = script.to_string();
         let mut replacements = 0;
@@ -137,7 +146,8 @@ impl ScriptPreprocessor {
     /// - ${DEPENDS[depends]} → ${DEPENDS_depends}
     /// - ${SRCPV[vardeps]} → ${SRCPV_vardeps}
     fn convert_variable_flags(&self, script: &str) -> String {
-        let re = Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\[([a-z_]+)\]\}").unwrap();
+        // Use pre-compiled regex for thread-safe parallel access
+        let re = &*VAR_FLAG_RE;
 
         let mut count = 0;
         let result = re.replace_all(script, |caps: &regex::Captures| {
@@ -160,7 +170,8 @@ impl ScriptPreprocessor {
     /// Usually better to let bash do it at runtime.
     #[allow(dead_code)]
     fn expand_variables(&self, script: &str) -> String {
-        let re = Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").unwrap();
+        // Use pre-compiled regex for thread-safe parallel access
+        let re = &*VAR_EXPAND_RE;
 
         re.replace_all(script, |caps: &regex::Captures| {
             let var_name = &caps[1];
