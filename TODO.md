@@ -109,12 +109,14 @@
 - [x] Extract `${PV}` from recipe filename (e.g., `busybox_1.35.0.bb` → PV=1.35.0)
 - [x] Resolve SRC_URI from include files (e.g., `libxcrypt.inc`)
 - [x] Expand `${PV}` and `${BPN}` in include directives
+- [x] Expand inline Python expressions `${@...}` in task env vars during task spec creation
 
 **Known Issues:**
 - Some external servers (e.g., busybox.net) may return HTTP 503 intermittently
   - ✅ Now handled by automatic git mirror fallback
-- Inline Python expressions in SRC_URI (e.g., `${@["", "file://init.cfg"][...]}`) not evaluated
-  - These conditional includes need proper Python expression handling
+- ~~Inline Python expressions in SRC_URI (e.g., `${@["", "file://init.cfg"][...]}`) not evaluated~~
+  - ✅ Fixed: Python expressions now expanded in build_orchestrator.rs during task spec creation
+  - Uses SimplePythonEvaluator.expand_all_expressions() with proper nested brace handling
 
 ---
 
