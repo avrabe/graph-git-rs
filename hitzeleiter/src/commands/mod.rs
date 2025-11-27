@@ -53,6 +53,10 @@ pub enum Commands {
         /// Run specified task for target AND all dependencies (like bitbake --runall=fetch)
         #[arg(long)]
         runall: Option<String>,
+
+        /// Dry-run mode: show what would be executed without actually running tasks
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Clean build cache

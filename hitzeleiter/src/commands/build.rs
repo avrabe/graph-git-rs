@@ -34,16 +34,27 @@ use std::time::Instant;
 pub async fn execute(
     build_dir: &Path,
     target: &str,
+    dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let start_time = Instant::now();
 
-    println!("╔════════════════════════════════════════════════════════╗");
-    println!("║           🏎️  BITZEL FERRARI BUILD  🏎️                ║");
-    println!("║  Full-Featured Bazel-Inspired BitBake Build System    ║");
-    println!("╚════════════════════════════════════════════════════════╝");
+    if dry_run {
+        println!("╔════════════════════════════════════════════════════════╗");
+        println!("║       🏎️  BITZEL FERRARI BUILD (DRY-RUN) 🏎️           ║");
+        println!("║  Plan-Only Mode: No execution, analysis only          ║");
+        println!("╚════════════════════════════════════════════════════════╝");
+    } else {
+        println!("╔════════════════════════════════════════════════════════╗");
+        println!("║           🏎️  BITZEL FERRARI BUILD  🏎️                ║");
+        println!("║  Full-Featured Bazel-Inspired BitBake Build System    ║");
+        println!("╚════════════════════════════════════════════════════════╝");
+    }
     println!();
     println!("Target: {}", target);
     println!("Build directory: {:?}", build_dir);
+    if dry_run {
+        println!("Mode: DRY-RUN (no execution)");
+    }
     println!();
 
     // ========== Load Build Environment ==========
@@ -180,6 +191,67 @@ pub async fn execute(
     println!();
 
     // ========== Execute Tasks (Sequential for now) ==========
+    if dry_run {
+        println!("📋 EXECUTION PLAN (would execute in this order):");
+        println!();
+
+        let mut task_num = 0;
+        for &task_id in &exec_graph.execution_order {
+            if let Some(exec_task) = exec_graph.tasks.get(&task_id) {
+                task_num += 1;
+                let task_key = format!("{}:{}", exec_task.recipe_name, exec_task.task_name);
+
+                if let Some(spec) = build_plan.task_specs.get(&task_key) {
+                    println!("  {}. {}", task_num, task_key);
+                    println!("     Network: {:?}", spec.network_policy);
+                    println!("     Timeout: {}s", spec.timeout.as_secs());
+
+                    // Show dependencies
+                    if !exec_task.depends_on.is_empty() {
+                        print!("     Depends on: ");
+                        let dep_names: Vec<_> = exec_task.depends_on.iter()
+                            .filter_map(|dep_id| exec_graph.tasks.get(dep_id))
+                            .map(|t| format!("{}:{}", t.recipe_name, t.task_name))
+                            .collect();
+                        println!("{}", dep_names.join(", "));
+                    }
+
+                    // Show what the task would do
+                    match exec_task.task_name.as_str() {
+                        "fetch" => println!("     Would: Download sources"),
+                        "unpack" => println!("     Would: Extract archive to workdir"),
+                        "patch" => println!("     Would: Apply patches"),
+                        "configure" => println!("     Would: Run configure script"),
+                        "compile" => println!("     Would: Compile source code"),
+                        "install" => println!("     Would: Install into image directory"),
+                        "package" => println!("     Would: Create packages"),
+                        _ => println!("     Would: Execute task script"),
+                    }
+                    println!();
+                } else {
+                    println!("  {}. {} (no TaskSpec)", task_num, task_key);
+                    println!();
+                }
+            }
+        }
+
+        // Summary
+        let total_duration = start_time.elapsed();
+        println!("╔════════════════════════════════════════════════════════╗");
+        println!("║            DRY-RUN COMPLETE ✓                          ║");
+        println!("╚════════════════════════════════════════════════════════╝");
+        println!();
+        println!("📊 Summary:");
+        println!("  Total tasks:    {}", exec_graph.tasks.len());
+        println!("  Target:         {}:{}", recipe.name, target_task_name);
+        println!("  Analysis time:  {:.2}s", total_duration.as_secs_f64());
+        println!();
+        println!("✓ Ready to execute with: hitzeleiter build -b {:?} {}", build_dir, target);
+        println!();
+
+        return Ok(());
+    }
+
     println!("🚀 Executing task graph...");
     println!();
 
@@ -465,6 +537,7 @@ pub async fn execute_runall(
     build_dir: &Path,
     target: &str,
     task_name: &str,
+    dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use convenient_bitbake::executor::fetch_task;
     use convenient_bitbake::executor::rust_fetcher::FetchConfig;
@@ -541,6 +614,67 @@ pub async fn execute_runall(
 
     println!("  ✓ Found {} recipes in dependency tree", all_recipe_ids.len());
     println!();
+
+    // ========== Dry-run: Show what would be executed ==========
+    if dry_run {
+        println!("📋 EXECUTION PLAN (would run {} for each recipe):", normalized_task);
+        println!();
+
+        let mut recipe_num = 0;
+        let mut has_src_uri = 0;
+        let mut no_src_uri = 0;
+
+        for rid in &all_recipe_ids {
+            if let Some(recipe) = build_plan.recipe_graph.get_recipe(*rid) {
+                recipe_num += 1;
+
+                let fetch_task_key = format!("{}:fetch", recipe.name);
+                let do_fetch_task_key = format!("{}:do_fetch", recipe.name);
+
+                let task_spec = build_plan.task_specs.get(&fetch_task_key)
+                    .or_else(|| build_plan.task_specs.get(&do_fetch_task_key));
+
+                if let Some(spec) = task_spec {
+                    if spec.env.contains_key("SRC_URI") {
+                        let src_uri = spec.env.get("SRC_URI").map(|s| s.as_str()).unwrap_or("");
+                        let truncated = if src_uri.len() > 60 {
+                            format!("{}...", &src_uri[..60])
+                        } else {
+                            src_uri.to_string()
+                        };
+                        println!("  {}. {} - would fetch: {}", recipe_num, recipe.name, truncated);
+                        has_src_uri += 1;
+                    } else {
+                        println!("  {}. {} - would skip (no SRC_URI)", recipe_num, recipe.name);
+                        no_src_uri += 1;
+                    }
+                } else {
+                    println!("  {}. {} - would skip (no task spec)", recipe_num, recipe.name);
+                    no_src_uri += 1;
+                }
+            }
+        }
+
+        // Summary
+        let total_duration = start_time.elapsed();
+        println!();
+        println!("╔════════════════════════════════════════════════════════╗");
+        println!("║            DRY-RUN COMPLETE ✓                          ║");
+        println!("╚════════════════════════════════════════════════════════╝");
+        println!();
+        println!("📊 Summary:");
+        println!("  Task:           {}", normalized_task);
+        println!("  Target:         {}", target);
+        println!("  Total recipes:  {}", all_recipe_ids.len());
+        println!("  Would fetch:    {}", has_src_uri);
+        println!("  Would skip:     {}", no_src_uri);
+        println!("  Analysis time:  {:.2}s", total_duration.as_secs_f64());
+        println!();
+        println!("✓ Ready to execute with: hitzeleiter build -b {:?} {} --runall={}", build_dir, target, task_name);
+        println!();
+
+        return Ok(());
+    }
 
     // ========== Execute Task for All Recipes ==========
     println!("🚀 Running {} for {} recipes...", normalized_task, all_recipe_ids.len());
