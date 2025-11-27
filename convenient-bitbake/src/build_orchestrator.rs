@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 /// Configuration for build orchestration
 pub struct OrchestratorConfig {
@@ -589,8 +589,22 @@ impl BuildOrchestrator {
                 recipe_vars.entry("KERNEL_VERSION".to_string()).or_insert_with(|| "5.15".to_string());
                 recipe_vars.entry("KERNEL_IMAGETYPE".to_string()).or_insert_with(|| "Image".to_string());
 
-                // Clone recipe_vars for task environment before moving into preprocessor
-                let env_vars = recipe_vars.clone();
+                // Clone recipe_vars for task environment, then expand Python expressions in values
+                let mut env_vars = recipe_vars.clone();
+
+                // Expand Python expressions in environment variables (especially SRC_URI)
+                // This uses the same SimplePythonEvaluator as script preprocessing
+                let evaluator = crate::simple_python_eval::SimplePythonEvaluator::new(env_vars.clone());
+                for (key, value) in env_vars.iter_mut() {
+                    if value.contains("${@") {
+                        // Expand Python expressions in this value
+                        let expanded = evaluator.expand_all_expressions(value);
+                        if expanded != *value {
+                            trace!("Expanded env var {}: {} -> {}", key, value, expanded);
+                            *value = expanded;
+                        }
+                    }
+                }
 
                 let preprocessor = ScriptPreprocessor::new(recipe_vars);
 
