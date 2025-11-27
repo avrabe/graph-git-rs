@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!();
             commands::kas::execute(&config, &builddir, target).await?;
         }
-        Commands::Build { builddir, target, runall } => {
+        Commands::Build { builddir, target, runall, dry_run } => {
             if let Some(ref task) = runall {
                 println!("\n╔════════════════════════════════════════════════════════╗");
                 println!("║              BITZEL RUNALL ORCHESTRATOR                ║");
@@ -48,17 +48,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("Build directory: {:?}", builddir);
                 println!("Target: {}", target);
                 println!("Task: {} (for all dependencies)", task);
+                if dry_run {
+                    println!("Mode: DRY-RUN (no execution)");
+                }
                 println!();
-                commands::build::execute_runall(&builddir, &target, task).await?;
+                commands::build::execute_runall(&builddir, &target, task, dry_run).await?;
             } else {
                 println!("\n╔════════════════════════════════════════════════════════╗");
-                println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
-                println!("║  Task Graph Execution with Dependency Resolution      ║");
+                if dry_run {
+                    println!("║        BITZEL BUILD ORCHESTRATOR (DRY-RUN)            ║");
+                    println!("║  Plan-Only Mode: No execution, analysis only          ║");
+                } else {
+                    println!("║              BITZEL BUILD ORCHESTRATOR                 ║");
+                    println!("║  Task Graph Execution with Dependency Resolution      ║");
+                }
                 println!("╚════════════════════════════════════════════════════════╝\n");
                 println!("Build directory: {:?}", builddir);
                 println!("Target: {}", target);
+                if dry_run {
+                    println!("Mode: DRY-RUN (no execution)");
+                }
                 println!();
-                commands::build::execute(&builddir, &target).await?;
+                commands::build::execute(&builddir, &target, dry_run).await?;
             }
         }
         Commands::Clean { builddir, all } => {

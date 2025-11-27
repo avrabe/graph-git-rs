@@ -16,7 +16,7 @@
 | Query parser was hacky | High | **FIXED** ✓ (Logos lexer) |
 | Core pipeline incomplete | High | **IN PROGRESS** |
 | 50+ unwrap() in production code | Medium | **FIXED** ✓ (convenient-git) |
-| No dry-run support for builds | Medium | **TODO** |
+| No dry-run support for builds | Medium | **FIXED** ✓ (--dry-run flag) |
 
 ### Gap to State-of-the-Art
 | Feature | Buck2/Bazel | This Project | Gap |
