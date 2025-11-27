@@ -117,6 +117,81 @@ impl SimplePythonEvaluator {
         None
     }
 
+    /// Expand all ${@...} Python expressions in a string
+    /// This handles nested brackets/braces correctly and returns the fully expanded string
+    pub fn expand_all_expressions(&self, input: &str) -> String {
+        let mut result = input.to_string();
+
+        // Keep expanding until no more ${@ patterns found
+        while let Some(start) = result.find("${@") {
+            // Find the matching closing brace
+            let rest = &result[start..];
+            if let Some(end) = Self::find_matching_brace(rest) {
+                let expr = &rest[..end + 1];
+
+                // Try to evaluate the expression
+                if let Some(evaluated) = self.evaluate(expr) {
+                    debug!("Expanded Python expression: {} -> {}", expr, evaluated);
+                    result = result.replace(expr, &evaluated);
+                } else {
+                    // Can't evaluate - replace with empty string to avoid downstream errors
+                    debug!("Could not evaluate Python expression: {}, removing", expr);
+                    result = result.replace(expr, "");
+                }
+            } else {
+                // No matching brace found, break to avoid infinite loop
+                break;
+            }
+        }
+
+        result
+    }
+
+    /// Find the matching closing brace for ${@...} expressions
+    /// Returns the BYTE index of the closing brace relative to the start of the string
+    fn find_matching_brace(s: &str) -> Option<usize> {
+        let mut brace_depth: i32 = 0;
+        let mut bracket_depth: i32 = 0;
+        let mut paren_depth: i32 = 0;
+        let mut in_string = false;
+        let mut string_char = ' ';
+
+        let mut iter = s.char_indices().peekable();
+
+        while let Some((byte_idx, c)) = iter.next() {
+            // Handle escape sequences in strings
+            if in_string && c == '\\' {
+                iter.next(); // Skip the escaped character
+                continue;
+            }
+
+            // Handle string literals
+            if (c == '"' || c == '\'') && !in_string {
+                in_string = true;
+                string_char = c;
+            } else if c == string_char && in_string {
+                in_string = false;
+            } else if !in_string {
+                match c {
+                    '{' => brace_depth += 1,
+                    '[' => bracket_depth += 1,
+                    '(' => paren_depth += 1,
+                    '}' => {
+                        brace_depth -= 1;
+                        if brace_depth == 0 && bracket_depth == 0 && paren_depth == 0 {
+                            return Some(byte_idx);
+                        }
+                    }
+                    ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                    ')' => paren_depth = paren_depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        }
+
+        None
+    }
+
     /// Phase 9d: Evaluate string literal with method calls
     /// Example: 'hello-world'.startswith('hello') -> "True"
     fn eval_string_literal_with_methods(&self, expr: &str) -> Option<String> {
