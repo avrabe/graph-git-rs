@@ -17,6 +17,8 @@
 | Core pipeline incomplete | High | **IN PROGRESS** |
 | 50+ unwrap() in production code | Medium | **FIXED** ✓ (convenient-git) |
 | No dry-run support for builds | Medium | **FIXED** ✓ (--dry-run flag) |
+| Parallel task spec gen crashes | High | **FIXED** ✓ (8MB stack threads) |
+| SRC_URI Python expressions | Medium | **FIXED** ✓ (expand at task spec creation) |
 
 ### Gap to State-of-the-Art
 | Feature | Buck2/Bazel | This Project | Gap |
