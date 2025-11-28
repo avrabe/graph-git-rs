@@ -121,7 +121,9 @@ impl InteractiveExecutor {
         // Execute in waves
         while completed.len() < task_graph.tasks.len() {
             // Check control state
-            let control = *self.control.lock().unwrap();
+            let control = self.control.lock()
+                .map(|guard| *guard)
+                .unwrap_or(ExecutionControl::Continue);
             match control {
                 ExecutionControl::Stop => {
                     println!("\n⚠️  Execution stopped by user");
@@ -133,7 +135,9 @@ impl InteractiveExecutor {
                 }
                 ExecutionControl::Debug => {
                     self.enter_debugger(task_graph, &completed);
-                    *self.control.lock().unwrap() = ExecutionControl::Continue;
+                    if let Ok(mut guard) = self.control.lock() {
+                        *guard = ExecutionControl::Continue;
+                    }
                     continue;
                 }
                 ExecutionControl::Continue => {}
@@ -244,7 +248,9 @@ impl InteractiveExecutor {
 
         match input.trim() {
             "n" => {
-                *self.control.lock().unwrap() = ExecutionControl::Stop;
+                if let Ok(mut guard) = self.control.lock() {
+                    *guard = ExecutionControl::Stop;
+                }
             }
             "s" => {
                 self.monitor.print_tasks();
@@ -290,7 +296,9 @@ impl InteractiveExecutor {
                     break;
                 }
                 "q" => {
-                    *self.control.lock().unwrap() = ExecutionControl::Stop;
+                    if let Ok(mut guard) = self.control.lock() {
+                        *guard = ExecutionControl::Stop;
+                    }
                     break;
                 }
                 _ => {
@@ -329,7 +337,9 @@ impl InteractiveExecutor {
         std::io::stdin().read_line(&mut input).ok();
 
         if input.trim() == "q" {
-            *self.control.lock().unwrap() = ExecutionControl::Stop;
+            if let Ok(mut guard) = self.control.lock() {
+                *guard = ExecutionControl::Stop;
+            }
         }
     }
 
@@ -373,23 +383,31 @@ pub struct ExecutionControlHandle {
 impl ExecutionControlHandle {
     /// Pause execution
     pub fn pause(&self) {
-        *self.control.lock().unwrap() = ExecutionControl::Pause;
+        if let Ok(mut guard) = self.control.lock() {
+            *guard = ExecutionControl::Pause;
+        }
     }
 
     /// Resume execution
     pub fn resume(&self) {
         self.paused.store(false, Ordering::SeqCst);
-        *self.control.lock().unwrap() = ExecutionControl::Continue;
+        if let Ok(mut guard) = self.control.lock() {
+            *guard = ExecutionControl::Continue;
+        }
     }
 
     /// Stop execution
     pub fn stop(&self) {
-        *self.control.lock().unwrap() = ExecutionControl::Stop;
+        if let Ok(mut guard) = self.control.lock() {
+            *guard = ExecutionControl::Stop;
+        }
     }
 
     /// Enter debugger
     pub fn debug(&self) {
-        *self.control.lock().unwrap() = ExecutionControl::Debug;
+        if let Ok(mut guard) = self.control.lock() {
+            *guard = ExecutionControl::Debug;
+        }
     }
 
     /// Check if paused

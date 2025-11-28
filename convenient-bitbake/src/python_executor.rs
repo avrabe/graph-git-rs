@@ -31,8 +31,10 @@ mod bb_utils {
     ) -> PyResult<PyObjectRef> {
         // Get the DataStore from 'd'
         if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
-            // Get the variable value
-            if let Some(value) = datastore.inner.lock().unwrap().get_var(var.as_str(), true) {
+            // Get the variable value with proper error handling for lock
+            let mut inner_guard = datastore.inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?;
+            if let Some(value) = inner_guard.get_var(var.as_str(), true) {
                 // Check if item is in the value (space-separated)
                 let items: Vec<&str> = value.split_whitespace().collect();
                 if items.contains(&item.as_str()) {
@@ -54,7 +56,9 @@ mod bb_utils {
     #[pyfunction]
     fn meson_array(var: PyStrRef, d: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
         if let Some(datastore) = d.downcast_ref::<bitbake_internal::DataStore>() {
-            if let Some(value) = datastore.inner.lock().unwrap().get_var(var.as_str(), true) {
+            let mut inner_guard = datastore.inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?;
+            if let Some(value) = inner_guard.get_var(var.as_str(), true) {
                 // Split value by whitespace and create a Python list
                 let items: Vec<PyObjectRef> = value
                     .split_whitespace()
@@ -88,7 +92,7 @@ mod bb_utils {
             let arch = datastore
                 .inner
                 .lock()
-                .unwrap()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
                 .get_var(arch_var.as_str(), true)
                 .unwrap_or_else(|| "unknown".to_string());
 
@@ -121,7 +125,7 @@ mod bb_utils {
             let os = datastore
                 .inner
                 .lock()
-                .unwrap()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
                 .get_var(os_var.as_str(), true)
                 .unwrap_or_else(|| "linux".to_string());
 
@@ -152,7 +156,7 @@ mod bb_utils {
             let arch = datastore
                 .inner
                 .lock()
-                .unwrap()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
                 .get_var(&arch_var, true)
                 .unwrap_or_else(|| "unknown".to_string());
 
@@ -184,14 +188,14 @@ mod bb_utils {
             let init_system = datastore
                 .inner
                 .lock()
-                .unwrap()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
                 .get_var("INIT_SYSTEM", true)
                 .unwrap_or_else(|| "sysvinit".to_string());
 
             let distro_features = datastore
                 .inner
                 .lock()
-                .unwrap()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
                 .get_var("DISTRO_FEATURES", true)
                 .unwrap_or_default();
 
@@ -245,7 +249,9 @@ mod bitbake_internal {
             let name_str = name.as_str();
             let expand_val = expand.unwrap_or(true);
 
-            let result = self.inner.lock().unwrap().get_var(name_str, expand_val);
+            let result = self.inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
+                .get_var(name_str, expand_val);
 
             match result {
                 Some(value) => Ok(vm.ctx.new_str(value).into()),
@@ -254,26 +260,34 @@ mod bitbake_internal {
         }
 
         #[pymethod]
-        fn setVar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
-            self.inner.lock().unwrap().set_var(name.as_str().to_string(), value.as_str().to_string());
+        fn setVar(&self, name: PyStrRef, value: PyStrRef, vm: &VirtualMachine) -> PyResult<()> {
+            self.inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
+                .set_var(name.as_str().to_string(), value.as_str().to_string());
             Ok(())
         }
 
         #[pymethod]
-        fn appendVar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
-            self.inner.lock().unwrap().append_var(name.as_str().to_string(), value.as_str().to_string());
+        fn appendVar(&self, name: PyStrRef, value: PyStrRef, vm: &VirtualMachine) -> PyResult<()> {
+            self.inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
+                .append_var(name.as_str().to_string(), value.as_str().to_string());
             Ok(())
         }
 
         #[pymethod]
-        fn prependVar(&self, name: PyStrRef, value: PyStrRef, _vm: &VirtualMachine) -> PyResult<()> {
-            self.inner.lock().unwrap().prepend_var(name.as_str().to_string(), value.as_str().to_string());
+        fn prependVar(&self, name: PyStrRef, value: PyStrRef, vm: &VirtualMachine) -> PyResult<()> {
+            self.inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
+                .prepend_var(name.as_str().to_string(), value.as_str().to_string());
             Ok(())
         }
 
         #[pymethod]
         fn expand(&self, value: PyStrRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-            let expanded = self.inner.lock().unwrap().expand_value(value.as_str());
+            let expanded = self.inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock".to_string()))?
+                .expand_value(value.as_str());
             Ok(vm.ctx.new_str(expanded).into())
         }
     }
@@ -314,11 +328,15 @@ fn get_cached_interpreter() -> Arc<Interpreter> {
         if cache_mut.is_none() {
             // CRITICAL: Serialize interpreter creation across threads
             // RustPython's init_stdlib() may crash if called concurrently
-            let _lock = get_creation_lock().lock().unwrap();
+            let _lock = get_creation_lock().lock().unwrap_or_else(|poisoned| {
+                // Recover from poisoned mutex - another thread panicked while holding the lock
+                // This is safe because we're just protecting interpreter creation
+                poisoned.into_inner()
+            });
 
             // Double-check after acquiring lock (in case another thread created it)
-            if cache_mut.is_some() {
-                return cache_mut.as_ref().unwrap().clone();
+            if let Some(interp) = cache_mut.as_ref() {
+                return interp.clone();
             }
 
             // First access in this thread - create and cache the interpreter
@@ -362,7 +380,9 @@ fn get_cached_interpreter() -> Arc<Interpreter> {
             *cache_mut = Some(Arc::new(interp));
         }
         // Clone the Arc (cheap - just increments reference count)
-        cache_mut.as_ref().unwrap().clone()
+        // SAFETY: cache_mut is guaranteed to be Some here - either it was Some at the start,
+        // or we just set it to Some above
+        cache_mut.as_ref().expect("Interpreter cache should be initialized").clone()
     })
 }
 
@@ -631,7 +651,9 @@ impl PythonExecutor {
 
         // Populate with initial variables
         for (key, value) in initial_vars {
-            inner.lock().unwrap().set_initial(key.clone(), value.clone());
+            inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock during initialization".to_string()))?
+                .set_initial(key.clone(), value.clone());
         }
 
         // Import our module first to ensure type registration
@@ -753,7 +775,9 @@ bb = _BB()
 
         // Populate with initial variables
         for (key, value) in initial_vars {
-            inner.lock().unwrap().set_initial(key.clone(), value.clone());
+            inner.lock()
+                .map_err(|_| vm.new_runtime_error("Failed to acquire DataStore lock during initialization".to_string()))?
+                .set_initial(key.clone(), value.clone());
         }
 
         // Import our module first to ensure type registration
@@ -830,8 +854,19 @@ bb = _BB()
                 // Extract final state from inner DataStore
                 // Try to unwrap Arc, if it fails (still has references), clone the data
                 let result = match Arc::try_unwrap(inner) {
-                    Ok(mutex) => mutex.into_inner().unwrap().into_result(),
-                    Err(arc) => arc.lock().unwrap().clone().into_result(),
+                    Ok(mutex) => {
+                        // into_inner can only fail if the mutex is poisoned
+                        mutex.into_inner()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .into_result()
+                    }
+                    Err(arc) => {
+                        // Still has references, clone the data
+                        arc.lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .clone()
+                            .into_result()
+                    }
                 };
                 Ok(result)
             }

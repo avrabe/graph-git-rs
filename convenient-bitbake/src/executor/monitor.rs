@@ -185,14 +185,15 @@ impl TaskMonitor {
 
     /// Register a new task
     pub fn register_task(&self, task_id: String, recipe: String, task_name: String) {
-        let mut inner = self.inner.lock().unwrap();
-        let info = TaskInfo::new(task_id.clone(), recipe, task_name);
-        inner.tasks.insert(task_id, info);
+        if let Ok(mut inner) = self.inner.lock() {
+            let info = TaskInfo::new(task_id.clone(), recipe, task_name);
+            inner.tasks.insert(task_id, info);
+        }
     }
 
     /// Mark task as running
     pub fn task_started(&self, task_id: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let Ok(mut inner) = self.inner.lock() else { return };
         let elapsed = inner.start_time.elapsed().as_millis() as u64;
 
         if let Some(task) = inner.tasks.get_mut(task_id) {
@@ -217,7 +218,7 @@ impl TaskMonitor {
 
     /// Mark task as completed
     pub fn task_completed(&self, task_id: &str, output: &TaskOutput, cached: bool) {
-        let mut inner = self.inner.lock().unwrap();
+        let Ok(mut inner) = self.inner.lock() else { return };
         let elapsed = inner.start_time.elapsed().as_millis() as u64;
 
         if let Some(task) = inner.tasks.get_mut(task_id) {
@@ -261,7 +262,7 @@ impl TaskMonitor {
 
     /// Mark task as failed
     pub fn task_failed(&self, task_id: &str, error: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let Ok(mut inner) = self.inner.lock() else { return };
         let elapsed = inner.start_time.elapsed().as_millis() as u64;
 
         if let Some(task) = inner.tasks.get_mut(task_id) {
@@ -293,7 +294,9 @@ impl TaskMonitor {
 
     /// Get current statistics
     pub fn get_stats(&self) -> BuildStats {
-        let inner = self.inner.lock().unwrap();
+        let Ok(inner) = self.inner.lock() else {
+            return BuildStats::default();
+        };
         let mut stats = BuildStats::default();
 
         stats.total_tasks = inner.tasks.len();
@@ -350,14 +353,16 @@ impl TaskMonitor {
 
     /// Get all task info
     pub fn get_all_tasks(&self) -> Vec<TaskInfo> {
-        let inner = self.inner.lock().unwrap();
-        inner.tasks.values().cloned().collect()
+        self.inner.lock()
+            .map(|inner| inner.tasks.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Get task info by ID
     pub fn get_task(&self, task_id: &str) -> Option<TaskInfo> {
-        let inner = self.inner.lock().unwrap();
-        inner.tasks.get(task_id).cloned()
+        self.inner.lock()
+            .ok()
+            .and_then(|inner| inner.tasks.get(task_id).cloned())
     }
 
     /// Print human-readable task list
