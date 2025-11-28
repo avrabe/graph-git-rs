@@ -63,8 +63,10 @@ rustpython = { version = "0.3" }
 rustpython-vm = { version = "0.3" }
 
 # brush-shell for executing shell scripts in-process (Rust-based bash interpreter)
-brush-core = "0.4.0"
-brush-parser = "0.3.0"
+# Using git source to get all brush crates from the same version
+brush-core = { git = "https://github.com/reubeno/brush.git" }
+brush-parser = { git = "https://github.com/reubeno/brush.git" }
+brush-builtins = { git = "https://github.com/reubeno/brush.git" }
 
 [features]
 default = ["async-executor"]

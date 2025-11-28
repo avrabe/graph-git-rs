@@ -27,6 +27,7 @@ pub mod retry;
 pub mod bbhelpers;
 pub mod rust_shell_executor;
 pub mod package_ops;
+pub mod bb_builtins;
 
 // External executor abstraction
 pub mod external;
