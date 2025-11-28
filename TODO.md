@@ -113,6 +113,23 @@
 - [x] Expand `${PV}` and `${BPN}` in include directives
 - [x] Expand inline Python expressions `${@...}` in task env vars during task spec creation
 
+**Package Operations (November 2025):**
+- [x] `populate_packages()` - Pure Rust package splitting (-dev, -dbg, -doc, -locale, -staticdev)
+- [x] `chrpath` functionality using goblin crate for ELF RPATH manipulation:
+  - `get_rpath()` - Read RPATH/RUNPATH from ELF binaries
+  - `delete_rpath()` - Remove RPATH entries
+  - `replace_rpath()` - Modify RPATH (within size constraints)
+  - `list_rpath()` - Display RPATH like chrpath -l
+- [x] `kernel_do_install()` - Kernel image and module installation
+- [x] `module_do_install()` - Out-of-tree kernel module installation
+- [x] Executor integration for do_package and kernel tasks
+
+**Parallelism (November 2025):**
+- [x] Fixed parallel task spec generation crash (SIGSEGV)
+  - Root cause: Stack overflow in rayon threads (2MB default)
+  - Solution: Custom ThreadPool with 8MB stacks per thread
+- [x] Full parallel processing enabled using rayon par_iter()
+
 **Known Issues:**
 - Some external servers (e.g., busybox.net) may return HTTP 503 intermittently
   - ✅ Now handled by automatic git mirror fallback
