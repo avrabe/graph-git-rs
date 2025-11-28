@@ -574,7 +574,8 @@ impl BuildOrchestrator {
                 recipe_vars.entry("HOST_SYS".to_string()).or_insert_with(|| "aarch64-poky-linux".to_string());
                 recipe_vars.entry("BUILD_SYS".to_string()).or_insert_with(|| "x86_64-linux".to_string());
                 recipe_vars.entry("AUTOTOOLS_AUXDIR".to_string()).or_insert_with(|| "${S}/build-aux".to_string());
-                recipe_vars.entry("SRCREV".to_string()).or_insert_with(|| "INVALID".to_string());
+                // Note: SRCREV should come from recipe parsing, not set to a dummy value
+                // If missing, git fetcher will use HEAD/default branch
                 recipe_vars.entry("baselib".to_string()).or_insert_with(|| "lib".to_string());
                 recipe_vars.entry("prefix".to_string()).or_insert_with(|| "/usr".to_string());
                 recipe_vars.entry("bindir".to_string()).or_insert_with(|| "/usr/bin".to_string());
@@ -678,33 +679,6 @@ impl BuildOrchestrator {
         }
 
         Ok(specs)
-    }
-
-    /// Collect recipe variables for preprocessing
-    fn collect_recipe_vars(&self, recipe_name: &str, build_dir: &Path) -> HashMap<String, String> {
-        let mut vars = HashMap::new();
-
-        // Recipe metadata
-        vars.insert("PN".to_string(), recipe_name.to_string());
-        vars.insert("PV".to_string(), "1.0".to_string());
-        vars.insert("PR".to_string(), "r0".to_string());
-
-        // Directory paths (will be overridden by executor with actual paths)
-        let workdir = build_dir.join("tmp").join(recipe_name);
-        vars.insert("WORKDIR".to_string(), workdir.to_string_lossy().to_string());
-        vars.insert("S".to_string(), workdir.join("src").to_string_lossy().to_string());
-        vars.insert("B".to_string(), workdir.join("build").to_string_lossy().to_string());
-        vars.insert("D".to_string(), workdir.join("image").to_string_lossy().to_string());
-
-        // Other common variables (matching prelude.sh defaults)
-        vars.insert("TMPDIR".to_string(), build_dir.join("tmp").to_string_lossy().to_string());
-        vars.insert("PTEST_PATH".to_string(), "/usr/lib/ptest".to_string());
-        vars.insert("TESTDIR".to_string(), workdir.join("tests").to_string_lossy().to_string());
-
-        // TODO: Extract actual variable values from recipe parsing
-        // For now, using defaults
-
-        vars
     }
 
     /// Create a task script from implementation code with helper functions

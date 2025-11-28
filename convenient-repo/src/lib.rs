@@ -257,7 +257,7 @@ impl<'a> ProjectsIterator<'a> {
             Some(ref list) => {
                 for remote in list {
                     if remote.name == remote_name {
-                        return Some(remote.fetch.clone().unwrap_or_else(|| "TODO".to_string()));
+                        return remote.fetch.clone();
                     }
                 }
                 None
@@ -265,33 +265,33 @@ impl<'a> ProjectsIterator<'a> {
             None => None,
         }
     }
-    fn get_remote_or_default_or_todo(&mut self, remote_name: &Option<String>) -> String {
+    fn get_remote_or_default(&mut self, remote_name: &Option<String>) -> String {
         match remote_name {
             Some(name) => name.to_string(),
             None => match self.manifest.default {
                 Some(ref default) => match default.remote {
                     Some(ref name) => name.clone(),
-                    None => "TODO".to_string(),
+                    None => "origin".to_string(), // Git default
                 },
-                None => "TODO".to_string(),
+                None => "origin".to_string(), // Git default
             },
         }
     }
 
-    fn get_revision_or_default_or_todo(&mut self, remote: &Project) -> String {
+    fn get_revision_or_default(&mut self, remote: &Project) -> String {
         match remote.revision {
             Some(ref revision) => revision.clone(),
             None => match self.manifest.default {
                 Some(ref default) => match default.revision {
                     Some(ref revision) => revision.clone(),
-                    None => "TODO".to_string(),
+                    None => "HEAD".to_string(), // Git default - use current HEAD
                 },
-                None => "TODO".to_string(),
+                None => "HEAD".to_string(), // Git default
             },
         }
     }
 
-    fn get_dest_branch_or_default_or_todo(&mut self, remote: &Project) -> Option<String> {
+    fn get_dest_branch_or_default(&mut self, remote: &Project) -> Option<String> {
         match remote.dest_branch {
             Some(ref dest_branch) => Some(dest_branch.clone()),
             None => match self.manifest.default {
@@ -322,13 +322,13 @@ impl<'a> Iterator for ProjectsIterator<'a> {
                 if self.index < list.len() {
                     let p: &Project = &list[self.index];
                     let name = p.name.clone();
-                    let remote = self.get_remote_or_default_or_todo(&p.remote);
+                    let remote = self.get_remote_or_default(&p.remote);
                     let git_uri = self
                         .get_git_uri(&remote)
-                        .unwrap_or_else(|| "TODO".to_string());
+                        .unwrap_or_default(); // Empty string if no URI found
                     let relative_path = self.is_relative(git_uri.clone());
-                    let revision = self.get_revision_or_default_or_todo(p);
-                    let dest_branch = self.get_dest_branch_or_default_or_todo(p);
+                    let revision = self.get_revision_or_default(p);
+                    let dest_branch = self.get_dest_branch_or_default(p);
                     let result = ConvenientProject {
                         name,
                         git_uri,
