@@ -10,9 +10,11 @@ use crate::{
 };
 use crate::executor::types::{NetworkPolicy, ResourceLimits};
 use crate::executor::ScriptPreprocessor;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{info, trace, warn};
@@ -468,45 +470,43 @@ impl BuildOrchestrator {
         let total_tasks = task_graph.tasks.len();
         info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
-        // WORKAROUND: Force single-threaded task spec generation due to unresolved
-        // parallel processing crash (SIGSEGV). Testing shows:
-        // - Single-threaded (max_threads=1): Works reliably
-        // - 2 threads: Crashes at ~75-80%
-        // - 16 threads: Crashes at ~40-50%
-        //
-        // Root cause is NOT:
-        // - RustPython (removed from this code path)
-        // - Regex compilation (pre-compiled with once_cell::Lazy)
-        //
-        // Possible causes (to investigate):
-        // - Deep recursion in SimplePythonEvaluator causing stack issues
-        // - Race condition in rayon's work-stealing
-        // - Memory allocation contention
-        //
-        // TODO: Consider migrating to tokio or std::thread as per parallelism.md
-        // for better control over thread behavior.
-        let max_threads = 1;
-        info!("  Using {} thread for task spec generation (single-threaded workaround)", max_threads);
+        // Create a custom rayon thread pool with larger stacks (8MB instead of default 2MB)
+        // This prevents stack overflow from deep recursion in SimplePythonEvaluator
+        let num_threads = num_cpus::get();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .stack_size(8 * 1024 * 1024)  // 8MB stack per thread
+            .thread_name(|idx| format!("task-spec-{}", idx))
+            .build()
+            .map_err(|e| format!("Failed to create thread pool: {}", e))?;
 
-        // Progress tracking
-        let mut processed = 0usize;
-        let mut preprocess_total_time = 0u64;
-        let mut last_report = Instant::now();
+        info!("  Using {} threads with 8MB stacks for task spec generation", num_threads);
 
-        // Sequential processing for stability
-        let specs: Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> = {
+        // Thread-safe progress tracking
+        let processed = AtomicUsize::new(0);
+        let preprocess_total_time = AtomicUsize::new(0);
+        let last_report = Mutex::new(Instant::now());
+
+        // Parallel processing with custom thread pool
+        let specs: Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> = pool.install(|| {
             task_graph.tasks.values()
             .collect::<Vec<_>>()
-            .iter()
+            .par_iter()
             .map(|task| {
-                processed += 1;
+                let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
 
-                // Report progress every 3000 tasks or every 2 seconds
-                if processed % 3000 == 0 || last_report.elapsed().as_secs() >= 2 {
-                    let pct = (processed as f64 / total_tasks as f64) * 100.0;
-                    info!("  Progress: {}/{} tasks ({:.1}%)", processed, total_tasks, pct);
-                    last_report = Instant::now();
+                // Report progress every 3000 tasks or every 2 seconds (thread-safe)
+                if current % 3000 == 0 {
+                    let pct = (current as f64 / total_tasks as f64) * 100.0;
+                    info!("  Progress: {}/{} tasks ({:.1}%)", current, total_tasks, pct);
+                } else if let Ok(mut last) = last_report.try_lock() {
+                    if last.elapsed().as_secs() >= 2 {
+                        let pct = (current as f64 / total_tasks as f64) * 100.0;
+                        info!("  Progress: {}/{} tasks ({:.1}%)", current, total_tasks, pct);
+                        *last = Instant::now();
+                    }
                 }
+
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
             // Get helper functions for this recipe (both explicit helpers and other task functions)
@@ -626,14 +626,19 @@ impl BuildOrchestrator {
                 };
 
                 let elapsed = preprocess_start.elapsed();
-                preprocess_total_time += elapsed.as_micros() as u64;
+                preprocess_total_time.fetch_add(elapsed.as_micros() as usize, Ordering::Relaxed);
 
                 (result, env_vars)
             };
 
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
-            fs::create_dir_all(&task_workdir)
-                .map_err(|e| format!("Failed to create workdir: {}", e))?;
+            // Use std::fs::create_dir_all which handles concurrent creation safely
+            if let Err(e) = fs::create_dir_all(&task_workdir) {
+                // Only fail if directory doesn't exist after the call
+                if !task_workdir.exists() {
+                    return Err(format!("Failed to create workdir {}: {}", task_workdir.display(), e).into());
+                }
+            }
 
             // Output file - executor will prepend /work/outputs/ for relative paths
             let output_file = format!("{}.done", task.task_name);
@@ -664,12 +669,12 @@ impl BuildOrchestrator {
             Ok((task_key, spec))
         })
         .collect::<Result<HashMap<_, _>, _>>()
-        };  // Close sequential block
+        });  // Close parallel block
 
         let specs = specs?;
 
-        let total_preprocess_micros = preprocess_total_time;
-        if total_preprocess_micros > 0 {
+        let total_preprocess_micros = preprocess_total_time.load(Ordering::Relaxed) as u64;
+        if total_preprocess_micros > 0 && total_tasks > 0 {
             let total_time = Duration::from_micros(total_preprocess_micros);
             let avg_micros = total_preprocess_micros / total_tasks as u64;
             info!(
