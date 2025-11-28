@@ -42,6 +42,9 @@ xz2 = "0.1"
 hex = "0.4"
 md-5 = "0.10"
 
+# ELF manipulation for chrpath functionality
+goblin = "0.8"
+
 # Linux namespaces for native sandboxing (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "0.29", features = ["mount", "sched", "process", "fs", "user", "signal"] }
