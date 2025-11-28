@@ -7,6 +7,41 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
+
+// Pre-compiled regexes for task extraction
+static SHELL_FUNC_REGEX: OnceLock<Regex> = OnceLock::new();
+static PYTHON_FUNC_REGEX: OnceLock<Regex> = OnceLock::new();
+static FAKEROOT_FUNC_REGEX: OnceLock<Regex> = OnceLock::new();
+static HELPER_FUNC_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_shell_func_regex() -> &'static Regex {
+    SHELL_FUNC_REGEX.get_or_init(|| {
+        Regex::new(r"^(do_\w+)(\:[a-zA-Z_]+)?\s*\(\s*\)\s*\{")
+            .expect("Invalid regex pattern for shell function")
+    })
+}
+
+fn get_python_func_regex() -> &'static Regex {
+    PYTHON_FUNC_REGEX.get_or_init(|| {
+        Regex::new(r"^python\s+(do_\w+)(\:[a-zA-Z_]+)?\s*\(\s*\)\s*\{")
+            .expect("Invalid regex pattern for python function")
+    })
+}
+
+fn get_fakeroot_func_regex() -> &'static Regex {
+    FAKEROOT_FUNC_REGEX.get_or_init(|| {
+        Regex::new(r"^fakeroot\s+(do_\w+)(\:[a-zA-Z_]+)?\s*\(\s*\)\s*\{")
+            .expect("Invalid regex pattern for fakeroot function")
+    })
+}
+
+fn get_helper_func_regex() -> &'static Regex {
+    HELPER_FUNC_REGEX.get_or_init(|| {
+        Regex::new(r"^([a-z_][a-z0-9_]*)\s*\(\s*\)\s*\{")
+            .expect("Invalid regex pattern for helper function")
+    })
+}
 
 /// Type of task implementation
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,16 +85,8 @@ fn normalize_task_name(name: &str) -> String {
 }
 
 /// Extractor for task implementations
-pub struct TaskExtractor {
-    /// Regex for shell functions: do_taskname() {
-    shell_func_regex: Regex,
-    /// Regex for python functions: python do_taskname() {
-    python_func_regex: Regex,
-    /// Regex for fakeroot shell functions: fakeroot do_taskname() {
-    fakeroot_func_regex: Regex,
-    /// Regex for helper shell functions: funcname() {
-    helper_func_regex: Regex,
-}
+/// Uses pre-compiled static regexes for efficiency
+pub struct TaskExtractor;
 
 impl Default for TaskExtractor {
     fn default() -> Self {
@@ -69,33 +96,7 @@ impl Default for TaskExtractor {
 
 impl TaskExtractor {
     pub fn new() -> Self {
-        // Match: do_taskname() { or do_taskname:append() {
-        let shell_func_regex = Regex::new(
-            r"^(do_\w+)(\:[a-zA-Z_]+)?\s*\(\s*\)\s*\{"
-        ).unwrap();
-
-        // Match: python do_taskname() { or python do_taskname:prepend() {
-        let python_func_regex = Regex::new(
-            r"^python\s+(do_\w+)(\:[a-zA-Z_]+)?\s*\(\s*\)\s*\{"
-        ).unwrap();
-
-        // Match: fakeroot do_taskname() {
-        let fakeroot_func_regex = Regex::new(
-            r"^fakeroot\s+(do_\w+)(\:[a-zA-Z_]+)?\s*\(\s*\)\s*\{"
-        ).unwrap();
-
-        // Match: any shell function that's not a task: funcname() {
-        // Exclude do_* (tasks), python/fakeroot (handled above), and python functions
-        let helper_func_regex = Regex::new(
-            r"^([a-z_][a-z0-9_]*)\s*\(\s*\)\s*\{"
-        ).unwrap();
-
-        Self {
-            shell_func_regex,
-            python_func_regex,
-            fakeroot_func_regex,
-            helper_func_regex,
-        }
+        Self
     }
 
     /// Extract all implementations (tasks and helpers) from recipe content
@@ -109,8 +110,11 @@ impl TaskExtractor {
             let line = lines[i].trim();
 
             // Try to match shell task function (do_*)
-            if let Some(caps) = self.shell_func_regex.captures(line) {
-                let raw_task_name = caps.get(1).unwrap().as_str();
+            if let Some(caps) = get_shell_func_regex().captures(line) {
+                let Some(raw_task_name) = caps.get(1).map(|m| m.as_str()) else {
+                    i += 1;
+                    continue;
+                };
                 let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
@@ -135,8 +139,11 @@ impl TaskExtractor {
             }
 
             // Try to match python task function
-            if let Some(caps) = self.python_func_regex.captures(line) {
-                let raw_task_name = caps.get(1).unwrap().as_str();
+            if let Some(caps) = get_python_func_regex().captures(line) {
+                let Some(raw_task_name) = caps.get(1).map(|m| m.as_str()) else {
+                    i += 1;
+                    continue;
+                };
                 let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
@@ -161,8 +168,11 @@ impl TaskExtractor {
             }
 
             // Try to match fakeroot task function
-            if let Some(caps) = self.fakeroot_func_regex.captures(line) {
-                let raw_task_name = caps.get(1).unwrap().as_str();
+            if let Some(caps) = get_fakeroot_func_regex().captures(line) {
+                let Some(raw_task_name) = caps.get(1).map(|m| m.as_str()) else {
+                    i += 1;
+                    continue;
+                };
                 let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
@@ -191,8 +201,11 @@ impl TaskExtractor {
             if !line.starts_with("do_")
                 && !line.starts_with("python ")
                 && !line.starts_with("fakeroot ")
-                && let Some(caps) = self.helper_func_regex.captures(line) {
-                    let func_name = caps.get(1).unwrap().as_str().to_string();
+                && let Some(caps) = get_helper_func_regex().captures(line) {
+                    let Some(func_name) = caps.get(1).map(|m| m.as_str().to_string()) else {
+                        i += 1;
+                        continue;
+                    };
                     let (code, end_line) = self.extract_function_body(&lines, i);
 
                     helpers.insert(func_name.clone(), TaskImplementation {
@@ -223,8 +236,11 @@ impl TaskExtractor {
             let line = lines[i].trim();
 
             // Try to match shell function
-            if let Some(caps) = self.shell_func_regex.captures(line) {
-                let raw_task_name = caps.get(1).unwrap().as_str();
+            if let Some(caps) = get_shell_func_regex().captures(line) {
+                let Some(raw_task_name) = caps.get(1).map(|m| m.as_str()) else {
+                    i += 1;
+                    continue;
+                };
                 let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
@@ -249,8 +265,11 @@ impl TaskExtractor {
             }
 
             // Try to match python function
-            if let Some(caps) = self.python_func_regex.captures(line) {
-                let raw_task_name = caps.get(1).unwrap().as_str();
+            if let Some(caps) = get_python_func_regex().captures(line) {
+                let Some(raw_task_name) = caps.get(1).map(|m| m.as_str()) else {
+                    i += 1;
+                    continue;
+                };
                 let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 
@@ -275,8 +294,11 @@ impl TaskExtractor {
             }
 
             // Try to match fakeroot function
-            if let Some(caps) = self.fakeroot_func_regex.captures(line) {
-                let raw_task_name = caps.get(1).unwrap().as_str();
+            if let Some(caps) = get_fakeroot_func_regex().captures(line) {
+                let Some(raw_task_name) = caps.get(1).map(|m| m.as_str()) else {
+                    i += 1;
+                    continue;
+                };
                 let task_name = normalize_task_name(raw_task_name);
                 let override_suffix = caps.get(2).map(|m| m.as_str().to_string());
 

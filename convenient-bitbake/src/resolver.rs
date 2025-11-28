@@ -4,6 +4,17 @@
 use crate::BitbakeRecipe;
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+// Pre-compiled regex for variable expansion
+static VAR_EXPANSION_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_var_regex() -> &'static Regex {
+    VAR_EXPANSION_REGEX.get_or_init(|| {
+        Regex::new(r"\$\{([^}]+)\}")
+            .expect("Invalid regex pattern for variable expansion")
+    })
+}
 
 /// Simple variable resolver that expands ${VAR} references
 /// Good for 80%+ of real-world cases
@@ -31,8 +42,7 @@ impl SimpleResolver {
             let bpn = if pn.contains('-') {
                 // Try to split on '-' and take everything before the last part if it looks like a version
                 let parts: Vec<&str> = pn.split('-').collect();
-                if parts.len() > 1 {
-                    let last = parts.last().unwrap();
+                if let Some(last) = parts.last() {
                     // Check if last part looks like a version (starts with digit)
                     if last.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                         parts[..parts.len() - 1].join("-")
@@ -69,12 +79,8 @@ impl SimpleResolver {
         }
 
         // Add BP (base package = ${BPN}-${PV})
-        if variables.contains_key("BPN") && variables.contains_key("PV") {
-            let bp = format!(
-                "{}-{}",
-                variables.get("BPN").unwrap(),
-                variables.get("PV").unwrap()
-            );
+        if let (Some(bpn), Some(pv)) = (variables.get("BPN"), variables.get("PV")) {
+            let bp = format!("{}-{}", bpn, pv);
             variables.entry("BP".to_string()).or_insert(bp);
         }
 
@@ -108,7 +114,7 @@ impl SimpleResolver {
     /// Resolve a string by expanding all ${VAR} references
     /// Performs iterative expansion up to MAX_DEPTH iterations
     pub fn resolve(&self, input: &str) -> String {
-        let var_regex = Regex::new(r"\$\{([^}]+)\}").unwrap();
+        let var_regex = get_var_regex();
         let mut result = input.to_string();
         let mut depth = 0;
         const MAX_DEPTH: usize = 10;
@@ -121,13 +127,14 @@ impl SimpleResolver {
             let caps: Vec<_> = var_regex.captures_iter(&before).collect();
 
             for cap in caps {
-                let full_match = cap.get(0).unwrap().as_str();
-                let var_name = cap.get(1).unwrap().as_str();
+                // Both groups are guaranteed to exist after a successful regex match
+                let Some(full_match) = cap.get(0).map(|m| m.as_str()) else { continue };
+                let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { continue };
 
                 // Handle special syntax like ${VAR:-default}
                 let (actual_var, default) = if var_name.contains(":-") {
                     let parts: Vec<&str> = var_name.splitn(2, ":-").collect();
-                    (parts[0], Some(parts[1]))
+                    (parts[0], parts.get(1).copied())
                 } else {
                     (var_name, None)
                 };

@@ -259,11 +259,12 @@ impl Pipeline {
                 move |_| {
                     let count = progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     // Report progress every 100 recipes or every 2 seconds
-                    let mut last = last_report.lock().unwrap();
-                    if count % 100 == 0 || last.elapsed().as_secs() >= 2 {
-                        let pct = (count as f64 / total_recipes as f64) * 100.0;
-                        info!("  Progress: {}/{} recipes parsed ({:.1}%)", count, total_recipes, pct);
-                        *last = std::time::Instant::now();
+                    if let Ok(mut last) = last_report.lock() {
+                        if count % 100 == 0 || last.elapsed().as_secs() >= 2 {
+                            let pct = (count as f64 / total_recipes as f64) * 100.0;
+                            info!("  Progress: {}/{} recipes parsed ({:.1}%)", count, total_recipes, pct);
+                            *last = std::time::Instant::now();
+                        }
                     }
                 }
             })
