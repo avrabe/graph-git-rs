@@ -87,7 +87,9 @@ impl<'a> QueryParser<'a> {
 
     /// Parse a function call
     fn parse_function_call(&mut self) -> Result<QueryExpr, ParseError> {
-        let func_tok = self.advance().unwrap();
+        let func_tok = self.advance().ok_or_else(|| {
+            ParseError::new("expected function name", self.source.len()..self.source.len(), self.source)
+        })?;
         let func_name = func_tok.text.clone();
         let func_span = func_tok.span.clone();
 
@@ -155,11 +157,18 @@ impl<'a> QueryParser<'a> {
 
         match tok.kind {
             TokenKind::Number => {
-                let tok = self.advance().unwrap();
-                Ok(QueryArg::Number(tok.number_value().unwrap()))
+                let tok = self.advance().ok_or_else(|| {
+                    ParseError::new("expected number", self.source.len()..self.source.len(), self.source)
+                })?;
+                let value = tok.number_value().ok_or_else(|| {
+                    ParseError::new("invalid number format", tok.span.clone(), self.source)
+                })?;
+                Ok(QueryArg::Number(value))
             }
             TokenKind::DoubleQuotedString | TokenKind::SingleQuotedString => {
-                let tok = self.advance().unwrap();
+                let tok = self.advance().ok_or_else(|| {
+                    ParseError::new("expected string", self.source.len()..self.source.len(), self.source)
+                })?;
                 Ok(QueryArg::String(tok.string_value()))
             }
             _ => {
@@ -260,7 +269,9 @@ impl<'a> QueryParser<'a> {
 
         match tok.kind {
             TokenKind::Ident => {
-                let tok = self.advance().unwrap();
+                let tok = self.advance().ok_or_else(|| {
+                    ParseError::new("expected identifier", self.source.len()..self.source.len(), self.source)
+                })?;
                 Ok(tok.text)
             }
             TokenKind::Star => {
@@ -280,7 +291,10 @@ impl<'a> QueryParser<'a> {
     fn build_deps(&self, args: Vec<QueryArg>, span: std::ops::Range<usize>) -> Result<QueryExpr, ParseError> {
         match args.len() {
             1 => {
-                let expr = args.into_iter().next().unwrap().into_expr().ok_or_else(|| {
+                let arg = args.into_iter().next().ok_or_else(|| {
+                    ParseError::new("deps() requires an argument", span.clone(), self.source)
+                })?;
+                let expr = arg.into_expr().ok_or_else(|| {
                     ParseError::new("deps() argument must be a target expression", span.clone(), self.source)
                 })?;
                 Ok(QueryExpr::Deps {
@@ -290,10 +304,16 @@ impl<'a> QueryParser<'a> {
             }
             2 => {
                 let mut iter = args.into_iter();
-                let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+                let first = iter.next().ok_or_else(|| {
+                    ParseError::new("deps() requires arguments", span.clone(), self.source)
+                })?;
+                let expr = first.into_expr().ok_or_else(|| {
                     ParseError::new("deps() first argument must be a target expression", span.clone(), self.source)
                 })?;
-                let depth = iter.next().unwrap().into_number().ok_or_else(|| {
+                let second = iter.next().ok_or_else(|| {
+                    ParseError::new("deps() requires a second argument", span.clone(), self.source)
+                })?;
+                let depth = second.into_number().ok_or_else(|| {
                     ParseError::new("deps() second argument must be a number", span.clone(), self.source)
                 })?;
                 Ok(QueryExpr::Deps {
@@ -318,10 +338,16 @@ impl<'a> QueryParser<'a> {
             ));
         }
         let mut iter = args.into_iter();
-        let universe = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let first = iter.next().ok_or_else(|| {
+            ParseError::new("rdeps() requires arguments", span.clone(), self.source)
+        })?;
+        let universe = first.into_expr().ok_or_else(|| {
             ParseError::new("rdeps() first argument must be a target expression", span.clone(), self.source)
         })?;
-        let target = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let second = iter.next().ok_or_else(|| {
+            ParseError::new("rdeps() requires a second argument", span.clone(), self.source)
+        })?;
+        let target = second.into_expr().ok_or_else(|| {
             ParseError::new("rdeps() second argument must be a target expression", span.clone(), self.source)
         })?;
         Ok(QueryExpr::ReverseDeps {
@@ -339,10 +365,16 @@ impl<'a> QueryParser<'a> {
             ));
         }
         let mut iter = args.into_iter();
-        let from = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let first = iter.next().ok_or_else(|| {
+            ParseError::new("somepath() requires arguments", span.clone(), self.source)
+        })?;
+        let from = first.into_expr().ok_or_else(|| {
             ParseError::new("somepath() first argument must be a target expression", span.clone(), self.source)
         })?;
-        let to = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let second = iter.next().ok_or_else(|| {
+            ParseError::new("somepath() requires a second argument", span.clone(), self.source)
+        })?;
+        let to = second.into_expr().ok_or_else(|| {
             ParseError::new("somepath() second argument must be a target expression", span.clone(), self.source)
         })?;
         Ok(QueryExpr::SomePath {
@@ -360,10 +392,16 @@ impl<'a> QueryParser<'a> {
             ));
         }
         let mut iter = args.into_iter();
-        let from = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let first = iter.next().ok_or_else(|| {
+            ParseError::new("allpaths() requires arguments", span.clone(), self.source)
+        })?;
+        let from = first.into_expr().ok_or_else(|| {
             ParseError::new("allpaths() first argument must be a target expression", span.clone(), self.source)
         })?;
-        let to = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let second = iter.next().ok_or_else(|| {
+            ParseError::new("allpaths() requires a second argument", span.clone(), self.source)
+        })?;
+        let to = second.into_expr().ok_or_else(|| {
             ParseError::new("allpaths() second argument must be a target expression", span.clone(), self.source)
         })?;
         Ok(QueryExpr::AllPaths {
@@ -381,10 +419,16 @@ impl<'a> QueryParser<'a> {
             ));
         }
         let mut iter = args.into_iter();
-        let pattern = iter.next().unwrap().into_string().ok_or_else(|| {
+        let first = iter.next().ok_or_else(|| {
+            ParseError::new("kind() requires arguments", span.clone(), self.source)
+        })?;
+        let pattern = first.into_string().ok_or_else(|| {
             ParseError::new("kind() first argument must be a string pattern", span.clone(), self.source)
         })?;
-        let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let second = iter.next().ok_or_else(|| {
+            ParseError::new("kind() requires a second argument", span.clone(), self.source)
+        })?;
+        let expr = second.into_expr().ok_or_else(|| {
             ParseError::new("kind() second argument must be a target expression", span.clone(), self.source)
         })?;
         Ok(QueryExpr::Kind {
@@ -402,10 +446,16 @@ impl<'a> QueryParser<'a> {
             ));
         }
         let mut iter = args.into_iter();
-        let pattern = iter.next().unwrap().into_string().ok_or_else(|| {
+        let first = iter.next().ok_or_else(|| {
+            ParseError::new("filter() requires arguments", span.clone(), self.source)
+        })?;
+        let pattern = first.into_string().ok_or_else(|| {
             ParseError::new("filter() first argument must be a string pattern", span.clone(), self.source)
         })?;
-        let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let second = iter.next().ok_or_else(|| {
+            ParseError::new("filter() requires a second argument", span.clone(), self.source)
+        })?;
+        let expr = second.into_expr().ok_or_else(|| {
             ParseError::new("filter() second argument must be a target expression", span.clone(), self.source)
         })?;
         Ok(QueryExpr::Filter {
@@ -423,13 +473,22 @@ impl<'a> QueryParser<'a> {
             ));
         }
         let mut iter = args.into_iter();
-        let name = iter.next().unwrap().into_string().ok_or_else(|| {
+        let first = iter.next().ok_or_else(|| {
+            ParseError::new("attr() requires arguments", span.clone(), self.source)
+        })?;
+        let name = first.into_string().ok_or_else(|| {
             ParseError::new("attr() first argument must be a string", span.clone(), self.source)
         })?;
-        let value = iter.next().unwrap().into_string().ok_or_else(|| {
+        let second = iter.next().ok_or_else(|| {
+            ParseError::new("attr() requires a second argument", span.clone(), self.source)
+        })?;
+        let value = second.into_string().ok_or_else(|| {
             ParseError::new("attr() second argument must be a string", span.clone(), self.source)
         })?;
-        let expr = iter.next().unwrap().into_expr().ok_or_else(|| {
+        let third = iter.next().ok_or_else(|| {
+            ParseError::new("attr() requires a third argument", span.clone(), self.source)
+        })?;
+        let expr = third.into_expr().ok_or_else(|| {
             ParseError::new("attr() third argument must be a target expression", span.clone(), self.source)
         })?;
         Ok(QueryExpr::Attr {
@@ -456,7 +515,10 @@ impl<'a> QueryParser<'a> {
                 self.source,
             ));
         }
-        let expr = args.into_iter().next().unwrap().into_expr().ok_or_else(|| {
+        let arg = args.into_iter().next().ok_or_else(|| {
+            ParseError::new(format!("{func_name}() requires an argument"), span.clone(), self.source)
+        })?;
+        let expr = arg.into_expr().ok_or_else(|| {
             ParseError::new(format!("{func_name}() argument must be a target expression"), span.clone(), self.source)
         })?;
         Ok(constructor(Box::new(expr)))
@@ -489,7 +551,14 @@ impl<'a> QueryParser<'a> {
     fn expect(&mut self, kind: TokenKind) -> Result<Token, ParseError> {
         if let Some(tok) = self.peek() {
             if tok.kind == kind {
-                return Ok(self.advance().unwrap());
+                // We just peeked successfully, so advance should succeed
+                return self.advance().ok_or_else(|| {
+                    ParseError::new(
+                        format!("expected '{kind}', but token disappeared"),
+                        self.source.len()..self.source.len(),
+                        self.source,
+                    )
+                });
             }
             return Err(ParseError::new(
                 format!("expected '{}', found '{}'", kind, tok.text),
