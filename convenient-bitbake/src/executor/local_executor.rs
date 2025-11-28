@@ -232,8 +232,9 @@ impl ExternalExecutor for LocalExecutor {
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
 
-        // Spawn the message loop
-        let start_time = self.start_time.unwrap();
+        // Spawn the message loop - start_time is guaranteed to be set above
+        let start_time = self.start_time
+            .ok_or_else(|| ExecutorError::InvalidState("start_time not initialized".into()))?;
         let handle = tokio::spawn(async move {
             Self::run_message_loop(executor, msg_rx, resp_tx, shutdown_rx, start_time).await;
         });
