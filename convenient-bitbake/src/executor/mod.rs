@@ -26,6 +26,7 @@ pub mod fetch_task;
 pub mod retry;
 pub mod bbhelpers;
 pub mod rust_shell_executor;
+pub mod package_ops;
 
 // External executor abstraction
 pub mod external;
@@ -59,6 +60,13 @@ pub use rust_fetcher::{
 pub use fetch_task::{execute_fetch_task, FetchTaskResult};
 pub use retry::{RetryPolicy, execute_with_retry, execute_with_retry_sync};
 pub use rust_shell_executor::{RustShellExecutor, RustShellResult, execute_with_bitbake_env, create_bitbake_prelude};
+pub use package_ops::{
+    populate_packages, kernel_do_install, module_do_install,
+    get_rpath, delete_rpath, replace_rpath, list_rpath,
+    PackageSplitConfig, PackageSplitResult,
+    KernelInstallConfig, KernelInstallResult,
+    ModuleInstallConfig, PackageError, PackageResult,
+};
 
 // External executor types
 pub use external::{

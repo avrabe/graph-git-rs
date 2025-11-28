@@ -73,7 +73,7 @@ impl TaskExecutor {
         self.stats.cache_misses += 1;
 
         // 3. Execute based on task type and execution mode
-        // Special handling for do_fetch - use pure Rust fetcher
+        // Special handling for pure Rust implementations
         let (result_stdout, result_stderr, result_exit_code, output_files, duration) =
             if spec.name == "do_fetch" || spec.name == "fetch" {
                 info!("Using pure Rust fetcher for fetch task (no host tools)");
@@ -84,6 +84,12 @@ impl TaskExecutor {
             } else if spec.name == "do_patch" || spec.name == "patch" {
                 info!("Using patch task handler");
                 self.execute_patch_task(&spec)?
+            } else if spec.name == "do_package" || spec.name == "do_populate_sysroot" {
+                info!("Using pure Rust package splitter");
+                self.execute_package_task(&spec)?
+            } else if spec.name.starts_with("do_install") && spec.name.contains("kernel") {
+                info!("Using pure Rust kernel installer");
+                self.execute_kernel_install_task(&spec)?
             } else {
                 match spec.execution_mode {
                     ExecutionMode::DirectRust => {
@@ -653,6 +659,186 @@ impl TaskExecutor {
             patches_applied,
             duration
         );
+
+        Ok((stdout, stderr, exit_code, output_files, duration))
+    }
+
+    /// Execute package task using pure Rust package splitter
+    ///
+    /// This splits installed files into proper packages (-dev, -dbg, -doc, etc.)
+    fn execute_package_task(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
+        use super::package_ops::{populate_packages, PackageSplitConfig};
+        use std::fmt::Write;
+
+        let start = Instant::now();
+
+        info!("Executing package task with pure Rust package splitter");
+
+        // Get required directories from environment
+        let pn = spec.env.get("PN").cloned().unwrap_or_else(|| spec.recipe.clone());
+        let pv = spec.env.get("PV").cloned().unwrap_or_else(|| "1.0".to_string());
+        let destdir = spec.env.get("D")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("image"));
+        let pkgdest = spec.env.get("PKGDEST")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("packages-split"));
+
+        info!("PN: {}, PV: {}", pn, pv);
+        info!("D (destdir): {}", destdir.display());
+        info!("PKGDEST: {}", pkgdest.display());
+
+        let config = PackageSplitConfig {
+            pn: pn.clone(),
+            pv: pv.clone(),
+            destdir,
+            pkgdest: pkgdest.clone(),
+            package_files: HashMap::new(),
+        };
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        match populate_packages(&config) {
+            Ok(result) => {
+                let _ = writeln!(stdout, "[NOTE] Package split complete: {} files", result.total_files);
+                for (pkg_name, files) in &result.packages {
+                    let _ = writeln!(stdout, "  {}: {} files", pkg_name, files.len());
+                }
+                for warning in &result.warnings {
+                    let _ = writeln!(stderr, "[WARN] {}", warning);
+                }
+            }
+            Err(e) => {
+                let _ = writeln!(stderr, "[ERROR] Package split failed: {}", e);
+                exit_code = 1;
+            }
+        }
+
+        // Hash output packages
+        let mut output_files = HashMap::new();
+        if pkgdest.exists() {
+            for entry in walkdir::WalkDir::new(&pkgdest)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+                .filter(|e| e.file_type().is_file())
+            {
+                let path = entry.path();
+                if let Ok(contents) = std::fs::read(path) {
+                    let hash = ContentHash::from_bytes(&contents);
+                    if let Ok(rel_path) = path.strip_prefix(&pkgdest) {
+                        output_files.insert(rel_path.to_path_buf(), hash);
+                    }
+                }
+            }
+        }
+
+        // Create completion marker
+        let outputs_dir = spec.workdir.join("outputs");
+        std::fs::create_dir_all(&outputs_dir)?;
+        let marker_path = outputs_dir.join("do_package.done");
+        std::fs::write(&marker_path, "Package split complete\n")?;
+
+        let duration = start.elapsed().as_millis() as u64;
+        info!("Package task completed in {}ms", duration);
+
+        Ok((stdout, stderr, exit_code, output_files, duration))
+    }
+
+    /// Execute kernel installation task
+    fn execute_kernel_install_task(
+        &mut self,
+        spec: &TaskSpec,
+    ) -> ExecutionResult<(String, String, i32, HashMap<PathBuf, ContentHash>, u64)> {
+        use super::package_ops::{kernel_do_install, KernelInstallConfig};
+        use std::fmt::Write;
+
+        let start = Instant::now();
+
+        info!("Executing kernel install task");
+
+        // Get required paths from environment
+        let kernel_src = spec.env.get("S")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("src"));
+        let destdir = spec.env.get("D")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("image"));
+        let deploydir = spec.env.get("DEPLOYDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| spec.workdir.join("deploy"));
+        let kernel_version = spec.env.get("KERNEL_VERSION")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+        let kernel_imagetype = spec.env.get("KERNEL_IMAGETYPE")
+            .cloned()
+            .unwrap_or_else(|| "Image".to_string());
+
+        info!("Kernel source: {}", kernel_src.display());
+        info!("Kernel version: {}", kernel_version);
+        info!("Kernel image type: {}", kernel_imagetype);
+
+        let config = KernelInstallConfig {
+            kernel_src,
+            destdir: destdir.clone(),
+            kernel_version,
+            kernel_imagetype,
+            deploydir,
+        };
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
+        match kernel_do_install(&config) {
+            Ok(result) => {
+                if let Some(ref img) = result.kernel_image {
+                    let _ = writeln!(stdout, "[NOTE] Kernel image installed: {}", img.display());
+                }
+                let _ = writeln!(stdout, "[NOTE] Installed {} kernel modules", result.modules.len());
+                let _ = writeln!(stdout, "[NOTE] Installed {} device trees", result.dtbs.len());
+                for warning in &result.warnings {
+                    let _ = writeln!(stderr, "[WARN] {}", warning);
+                }
+            }
+            Err(e) => {
+                let _ = writeln!(stderr, "[ERROR] Kernel install failed: {}", e);
+                exit_code = 1;
+            }
+        }
+
+        // Hash installed files
+        let mut output_files = HashMap::new();
+        if destdir.exists() {
+            for entry in walkdir::WalkDir::new(&destdir)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+                .filter(|e| e.file_type().is_file())
+            {
+                let path = entry.path();
+                if let Ok(contents) = std::fs::read(path) {
+                    let hash = ContentHash::from_bytes(&contents);
+                    if let Ok(rel_path) = path.strip_prefix(&destdir) {
+                        output_files.insert(rel_path.to_path_buf(), hash);
+                    }
+                }
+            }
+        }
+
+        // Create completion marker
+        let outputs_dir = spec.workdir.join("outputs");
+        std::fs::create_dir_all(&outputs_dir)?;
+        let marker_path = outputs_dir.join("do_install_kernel.done");
+        std::fs::write(&marker_path, "Kernel install complete\n")?;
+
+        let duration = start.elapsed().as_millis() as u64;
+        info!("Kernel install task completed in {}ms", duration);
 
         Ok((stdout, stderr, exit_code, output_files, duration))
     }
