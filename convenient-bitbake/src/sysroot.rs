@@ -182,7 +182,13 @@ impl HardlinkTreeBuilder {
 
         for entry in WalkDir::new(src) {
             let entry = entry?;
-            let rel_path = entry.path().strip_prefix(src).unwrap();
+            // strip_prefix only fails if src is not a prefix of entry.path(),
+            // which can't happen since we're walking from src
+            let rel_path = entry.path().strip_prefix(src)
+                .map_err(|_| SysrootError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("path {} is not under {}", entry.path().display(), src.display())
+                )))?;
             let dst_path = dst.join(rel_path);
 
             if entry.file_type().is_dir() {
@@ -366,7 +372,13 @@ pub fn generate_sysroot_manifest(
 
         if entry.file_type().is_file() {
             // Store relative path
-            let rel_path = entry.path().strip_prefix(sysroot_dir).unwrap();
+            // strip_prefix only fails if sysroot_dir is not a prefix of entry.path(),
+            // which can't happen since we're walking from sysroot_dir
+            let rel_path = entry.path().strip_prefix(sysroot_dir)
+                .map_err(|_| SysrootError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("path {} is not under {}", entry.path().display(), sysroot_dir.display())
+                )))?;
             manifest.add_file(rel_path.to_path_buf());
         }
     }

@@ -135,7 +135,8 @@ impl EnhancedTaskSignature {
         if self.signature.is_none() {
             self.compute();
         }
-        self.signature.as_ref().unwrap()
+        // SAFETY: compute() always sets signature to Some, and we just called it above if it was None
+        self.signature.as_ref().expect("signature should be set after compute()")
     }
 }
 

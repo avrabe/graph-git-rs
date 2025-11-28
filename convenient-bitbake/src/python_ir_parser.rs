@@ -4,64 +4,81 @@
 use crate::python_ir::{PythonIRBuilder, PythonIR, ValueId};
 use regex::Regex;
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+// Pre-compiled regexes for Python IR parsing
+static SETVAR_LITERAL_REGEX: OnceLock<Regex> = OnceLock::new();
+static GETVAR_SIMPLE_REGEX: OnceLock<Regex> = OnceLock::new();
+static GETVAR_EXPAND_REGEX: OnceLock<Regex> = OnceLock::new();
+static APPENDVAR_LITERAL_REGEX: OnceLock<Regex> = OnceLock::new();
+static PREPENDVAR_LITERAL_REGEX: OnceLock<Regex> = OnceLock::new();
+static CONTAINS_PATTERN_REGEX: OnceLock<Regex> = OnceLock::new();
+static STRING_METHOD_PATTERN_REGEX: OnceLock<Regex> = OnceLock::new();
+static IF_STATEMENT_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_setvar_literal_regex() -> &'static Regex {
+    SETVAR_LITERAL_REGEX.get_or_init(|| {
+        Regex::new(r#"d\.setVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#)
+            .expect("Invalid regex pattern for setvar_literal")
+    })
+}
+
+fn get_getvar_simple_regex() -> &'static Regex {
+    GETVAR_SIMPLE_REGEX.get_or_init(|| {
+        Regex::new(r#"d\.getVar\s*\(\s*['"]([^'"]+)['"]\s*\)"#)
+            .expect("Invalid regex pattern for getvar_simple")
+    })
+}
+
+fn get_getvar_expand_regex() -> &'static Regex {
+    GETVAR_EXPAND_REGEX.get_or_init(|| {
+        Regex::new(r#"d\.getVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:expand\s*=\s*)?(True|1)\s*\)"#)
+            .expect("Invalid regex pattern for getvar_expand")
+    })
+}
+
+fn get_appendvar_literal_regex() -> &'static Regex {
+    APPENDVAR_LITERAL_REGEX.get_or_init(|| {
+        Regex::new(r#"d\.appendVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#)
+            .expect("Invalid regex pattern for appendvar_literal")
+    })
+}
+
+fn get_prependvar_literal_regex() -> &'static Regex {
+    PREPENDVAR_LITERAL_REGEX.get_or_init(|| {
+        Regex::new(r#"d\.prependVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#)
+            .expect("Invalid regex pattern for prependvar_literal")
+    })
+}
+
+fn get_contains_pattern_regex() -> &'static Regex {
+    CONTAINS_PATTERN_REGEX.get_or_init(|| {
+        Regex::new(r#"bb\.utils\.contains\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*(?:['"]([^'"]*)['"']|([A-Za-z_0-9]+))\s*,\s*(?:['"]([^'"]*)['"']|([A-Za-z_0-9]+))\s*,\s*d\s*\)"#)
+            .expect("Invalid regex pattern for contains_pattern")
+    })
+}
+
+fn get_string_method_pattern_regex() -> &'static Regex {
+    STRING_METHOD_PATTERN_REGEX.get_or_init(|| {
+        Regex::new(r"(\w+)\.(startswith|endswith|find|rfind|upper|lower|strip|replace)\s*\(([^)]*)\)")
+            .expect("Invalid regex pattern for string_method_pattern")
+    })
+}
+
+fn get_if_statement_regex() -> &'static Regex {
+    IF_STATEMENT_REGEX.get_or_init(|| {
+        Regex::new(r"^\s*if\s+(.+):\s*$")
+            .expect("Invalid regex pattern for if_statement")
+    })
+}
 
 /// Parser for converting Python code to IR
-pub struct PythonIRParser {
-    /// Regex patterns for common operations
-    setvar_literal: Regex,
-    getvar_simple: Regex,
-    getvar_expand: Regex,
-    appendvar_literal: Regex,
-    prependvar_literal: Regex,
-    contains_pattern: Regex,
-    string_method_pattern: Regex,
-    if_statement: Regex,
-}
+/// Uses pre-compiled static regexes for efficiency
+pub struct PythonIRParser;
 
 impl PythonIRParser {
     pub fn new() -> Self {
-        Self {
-            // d.setVar('VAR', 'literal') or d.setVar("VAR", "literal")
-            setvar_literal: Regex::new(
-                r#"d\.setVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#
-            ).unwrap(),
-
-            // d.getVar('VAR') - simple read
-            getvar_simple: Regex::new(
-                r#"d\.getVar\s*\(\s*['"]([^'"]+)['"]\s*\)"#
-            ).unwrap(),
-
-            // d.getVar('VAR', True) or d.getVar('VAR', expand=True) or d.getVar('VAR', 1)
-            getvar_expand: Regex::new(
-                r#"d\.getVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:expand\s*=\s*)?(True|1)\s*\)"#
-            ).unwrap(),
-
-            // d.appendVar('VAR', 'literal')
-            appendvar_literal: Regex::new(
-                r#"d\.appendVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#
-            ).unwrap(),
-
-            // d.prependVar('VAR', 'literal')
-            prependvar_literal: Regex::new(
-                r#"d\.prependVar\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]\s*\)"#
-            ).unwrap(),
-
-            // bb.utils.contains('VAR', 'item', true_val, false_val, d)
-            // true_val and false_val can be either quoted strings or unquoted literals (True, False, 1, 0, etc.)
-            contains_pattern: Regex::new(
-                r#"bb\.utils\.contains\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*(?:['"]([^'"]*)['"']|([A-Za-z_0-9]+))\s*,\s*(?:['"]([^'"]*)['"']|([A-Za-z_0-9]+))\s*,\s*d\s*\)"#
-            ).unwrap(),
-
-            // String methods: var.startswith('prefix'), var.endswith('suffix'), etc.
-            string_method_pattern: Regex::new(
-                r"(\w+)\.(startswith|endswith|find|rfind|upper|lower|strip|replace)\s*\(([^)]*)\)"
-            ).unwrap(),
-
-            // if condition: (simple single-line if detection)
-            if_statement: Regex::new(
-                r"^\s*if\s+(.+):\s*$"
-            ).unwrap(),
-        }
+        Self
     }
 
     /// Parse Python code into IR
@@ -139,21 +156,21 @@ impl PythonIRParser {
         let condition = if_line[3..if_line.len()-1].trim();
 
         // Try to parse bb.utils.contains as condition
-        if let Some(cap) = self.contains_pattern.captures(condition) {
-            let var_name = cap.get(1).unwrap().as_str();
-            let item = cap.get(2).unwrap().as_str();
+        if let Some(cap) = get_contains_pattern_regex().captures(condition) {
+            let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { return (false, 0) };
+            let Some(item) = cap.get(2).map(|m| m.as_str()) else { return (false, 0) };
 
             // true_val can be in group 3 (quoted) or group 4 (unquoted)
             let true_str = cap.get(3)
                 .or_else(|| cap.get(4))
-                .unwrap()
-                .as_str();
+                .map(|m| m.as_str())
+                .unwrap_or("True");
 
             // false_val can be in group 5 (quoted) or group 6 (unquoted)
             let false_str = cap.get(5)
                 .or_else(|| cap.get(6))
-                .unwrap()
-                .as_str();
+                .map(|m| m.as_str())
+                .unwrap_or("False");
 
             // Create contains check
             let true_val = builder.string_literal(true_str);
@@ -227,36 +244,36 @@ impl PythonIRParser {
         // Try to match various patterns
 
         // 1. d.setVar('VAR', 'literal')
-        if let Some(cap) = self.setvar_literal.captures(line) {
-            let var_name = cap.get(1).unwrap().as_str();
-            let value_str = cap.get(2).unwrap().as_str();
+        if let Some(cap) = get_setvar_literal_regex().captures(line) {
+            let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { return false };
+            let Some(value_str) = cap.get(2).map(|m| m.as_str()) else { return false };
             let value = builder.string_literal(value_str);
             builder.setvar(var_name, value);
             return true;
         }
 
         // 2. d.appendVar('VAR', 'literal')
-        if let Some(cap) = self.appendvar_literal.captures(line) {
-            let var_name = cap.get(1).unwrap().as_str();
-            let value_str = cap.get(2).unwrap().as_str();
+        if let Some(cap) = get_appendvar_literal_regex().captures(line) {
+            let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { return false };
+            let Some(value_str) = cap.get(2).map(|m| m.as_str()) else { return false };
             let value = builder.string_literal(value_str);
             builder.appendvar(var_name, value);
             return true;
         }
 
         // 3. d.prependVar('VAR', 'literal')
-        if let Some(cap) = self.prependvar_literal.captures(line) {
-            let var_name = cap.get(1).unwrap().as_str();
-            let value_str = cap.get(2).unwrap().as_str();
+        if let Some(cap) = get_prependvar_literal_regex().captures(line) {
+            let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { return false };
+            let Some(value_str) = cap.get(2).map(|m| m.as_str()) else { return false };
             let value = builder.string_literal(value_str);
             builder.prependvar(var_name, value);
             return true;
         }
 
         // 4. bb.utils.contains('VAR', 'item', 'true_val', 'false_val', d)
-        if let Some(cap) = self.contains_pattern.captures(line) {
-            let var_name = cap.get(1).unwrap().as_str();
-            let item = cap.get(2).unwrap().as_str();
+        if let Some(cap) = get_contains_pattern_regex().captures(line) {
+            let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { return false };
+            let Some(item) = cap.get(2).map(|m| m.as_str()) else { return false };
 
             // True value can be a string literal (group 3) or identifier (group 4)
             let true_str = cap.get(3)
@@ -285,11 +302,11 @@ impl PythonIRParser {
                 let rhs = line[eq_pos + 1..].trim();
 
                 // Check if it's expand mode
-                let expand = self.getvar_expand.is_match(rhs);
+                let expand = get_getvar_expand_regex().is_match(rhs);
 
                 // Extract the variable name from d.getVar('VAR', ...)
-                if let Some(cap) = self.getvar_simple.captures(rhs) {
-                    let var_name = cap.get(1).unwrap().as_str();
+                if let Some(cap) = get_getvar_simple_regex().captures(rhs) {
+                    let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { return false };
                     let value = if expand {
                         builder.getvar_with_expand(var_name, true)
                     } else {
@@ -307,11 +324,12 @@ impl PythonIRParser {
                 let lhs = line[..eq_pos].trim();
                 let rhs = line[eq_pos + 1..].trim();
 
-                if let Some(cap) = self.contains_pattern.captures(rhs) {
-                    let var_name = cap.get(1).unwrap().as_str();
-                    let item = cap.get(2).unwrap().as_str();
-                    let true_str = cap.get(3).unwrap().as_str();
-                    let false_str = cap.get(4).unwrap().as_str();
+                if let Some(cap) = get_contains_pattern_regex().captures(rhs) {
+                    let Some(var_name) = cap.get(1).map(|m| m.as_str()) else { return false };
+                    let Some(item) = cap.get(2).map(|m| m.as_str()) else { return false };
+                    // These groups may not exist, use defaults
+                    let true_str = cap.get(3).map(|m| m.as_str()).unwrap_or("True");
+                    let false_str = cap.get(4).map(|m| m.as_str()).unwrap_or("False");
 
                     let true_val = builder.string_literal(true_str);
                     let false_val = builder.string_literal(false_str);
@@ -375,9 +393,9 @@ impl PythonIRParser {
         // Simple patterns for inline expressions
 
         // 1. bb.utils.contains('VAR', 'item', 'true', 'false', d)
-        if let Some(cap) = self.contains_pattern.captures(expr) {
-            let var_name = cap.get(1).unwrap().as_str();
-            let item = cap.get(2).unwrap().as_str();
+        if let Some(cap) = get_contains_pattern_regex().captures(expr) {
+            let var_name = cap.get(1).map(|m| m.as_str())?;
+            let item = cap.get(2).map(|m| m.as_str())?;
 
             // True value can be a string literal (group 3) or identifier (group 4)
             let true_str = cap.get(3)
@@ -397,15 +415,15 @@ impl PythonIRParser {
         }
 
         // 2. d.getVar('VAR', True/expand=True) - with expansion
-        if let Some(cap) = self.getvar_expand.captures(expr) {
-            let var_name = cap.get(1).unwrap().as_str();
+        if let Some(cap) = get_getvar_expand_regex().captures(expr) {
+            let var_name = cap.get(1).map(|m| m.as_str())?;
             builder.getvar_with_expand(var_name, true);
             return Some(builder.build());
         }
 
         // 3. d.getVar('VAR') - simple read without expansion
-        if let Some(cap) = self.getvar_simple.captures(expr) {
-            let var_name = cap.get(1).unwrap().as_str();
+        if let Some(cap) = get_getvar_simple_regex().captures(expr) {
+            let var_name = cap.get(1).map(|m| m.as_str())?;
             builder.getvar(var_name);
             return Some(builder.build());
         }
