@@ -130,6 +130,21 @@
   - Solution: Custom ThreadPool with 8MB stacks per thread
 - [x] Full parallel processing enabled using rayon par_iter()
 
+**In-Process Shell Execution (November 2025):**
+- [x] Integrated brush-shell for in-process bash script execution
+- [x] Custom BitBake builtins implemented as native Rust:
+  - `bb_note`, `bbnote` - Info-level logging
+  - `bb_warn`, `bbwarn` - Warning-level logging
+  - `bb_error`, `bberror` - Error-level logging
+  - `bb_fatal`, `bbfatal`, `bbfatal_log` - Fatal errors with exit
+  - `bb_debug`, `bbdebug` - Debug-level logging
+  - `bb_plain`, `bbplain` - Plain output
+  - `bbdirs` - Directory creation utility
+  - `oe_runmake` - Make execution with PARALLEL_MAKE support
+- [x] All logging routed through tracing framework for centralized collection
+- [x] Variable tracking (reads/writes) during script execution
+- [x] Exit code propagation from scripts
+
 **Known Issues:**
 - Some external servers (e.g., busybox.net) may return HTTP 503 intermittently
   - ✅ Now handled by automatic git mirror fallback
