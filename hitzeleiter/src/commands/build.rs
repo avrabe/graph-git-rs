@@ -19,17 +19,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-// TODO: Re-enable Python expression expansion when needed
-// /// Expand BitBake script with full Python support
-// #[allow(dead_code)]
-// fn expand_script(
-//     script: &str,
-//     env: &HashMap<String, String>,
-// ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-//     let evaluator = SimplePythonEvaluator::new(env.clone());
-//     ... (code commented out for now)
-// }
-
 /// Execute build with full BuildOrchestrator pipeline
 pub async fn execute(
     build_dir: &Path,
@@ -383,7 +372,7 @@ pub async fn execute(
                                     // Unpack to workdir
                                     let work_base = tmpdir.join("work")
                                         .join(&exec_task.recipe_name)
-                                        .join("1.0");  // TODO: Use actual PV
+                                        .join(&recipe_version);
 
                                     match fetcher::unpack_source(&archive_path, &work_base) {
                                         Ok(()) => {
