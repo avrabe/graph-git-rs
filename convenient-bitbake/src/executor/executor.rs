@@ -221,10 +221,12 @@ impl TaskExecutor {
         info!("Executing with RustShell (in-process bash interpreter)");
 
         // Execute using RustShell with BitBake environment
+        // Extract version from environment variables (PV = Package Version)
+        let version = spec.env.get("PV").map(|s| s.as_str());
         let result = super::rust_shell_executor::execute_with_bitbake_env(
             &spec.script,
             &spec.recipe,
-            None, // TODO: Extract version from spec
+            version,
             &spec.workdir,
             &spec.env,
         )?;

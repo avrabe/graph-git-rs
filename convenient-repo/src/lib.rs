@@ -3,10 +3,30 @@ use std::default::Default;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
+use thiserror::Error;
 use tracing::{debug, info, warn};
 use url::Url;
 use xmlem::display::Config;
 use xmlem::Document;
+
+/// Errors that can occur when working with repo manifests
+#[derive(Error, Debug)]
+pub enum RepoError {
+    #[error("Invalid URL: {0}")]
+    InvalidUrl(String, #[source] url::ParseError),
+
+    #[error("URL join failed: {0}")]
+    UrlJoinFailed(String),
+
+    #[error("XML serialization failed: {0}")]
+    SerializationFailed(String),
+
+    #[error("XML parsing failed: {0}")]
+    XmlParsingFailed(String),
+
+    #[error("IO error")]
+    IoError(#[from] std::io::Error),
+}
 
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename = "manifest")]
@@ -167,25 +187,31 @@ pub struct ConvenientProject {
 }
 
 impl ConvenientProject {
-    pub fn git_url(&self, manifest_git_url: String) -> String {
-        let mut url = Url::parse(&manifest_git_url).unwrap();
+    pub fn git_url(&self, manifest_git_url: String) -> Result<String, RepoError> {
+        let mut url = Url::parse(&manifest_git_url)
+            .map_err(|e| RepoError::InvalidUrl(manifest_git_url.clone(), e))?;
+
         if self.relative_path.unwrap_or(false) {
             if self.git_uri.ends_with('/') {
-                url = url.join(self.git_uri.as_str()).unwrap();
-            } else {
                 url = url
-                    .join(format!("{}/{}", self.git_uri, self.name).as_str())
-                    .unwrap();
+                    .join(self.git_uri.as_str())
+                    .map_err(|_| RepoError::UrlJoinFailed(self.git_uri.clone()))?;
+            } else {
+                let path = format!("{}/{}", self.git_uri, self.name);
+                url = url
+                    .join(&path)
+                    .map_err(|_| RepoError::UrlJoinFailed(path))?;
             }
             info!("New url for {}: {} # {}", self.name, url, self.git_uri);
 
-            url.to_string()
+            Ok(url.to_string())
         } else {
+            let path = format!("{}/{}", self.git_uri, self.name);
             url = url
-                .join(format!("{}/{}", self.git_uri, self.name).as_str())
-                .unwrap();
+                .join(&path)
+                .map_err(|_| RepoError::UrlJoinFailed(path))?;
             info!("New url for {}: {} # {}", self.name, url, self.git_uri);
-            url.to_string()
+            Ok(url.to_string())
         }
     }
 
@@ -369,8 +395,8 @@ impl Manifest {
 ///
 /// # Returns
 ///
-/// The pretty printed XML string representation of the Manifest
-pub fn to_string(manifest: &Manifest) -> String {
+/// The pretty printed XML string representation of the Manifest, or an error
+pub fn to_string(manifest: &Manifest) -> Result<String, RepoError> {
     let cleanup = vec![
         "<remote/>",
         "<default/>",
@@ -405,7 +431,8 @@ pub fn to_string(manifest: &Manifest) -> String {
         "upstream=\"\"",
         "alias=\"\"",
     ];
-    let mut result = quick_xml::se::to_string(&manifest).unwrap();
+    let mut result = quick_xml::se::to_string(&manifest)
+        .map_err(|e| RepoError::SerializationFailed(e.to_string()))?;
     for i in cleanup {
         result = result.replace(i, "");
     }
@@ -414,18 +441,28 @@ pub fn to_string(manifest: &Manifest) -> String {
     result = result.replace("  ", " ");
     result = result.replace(" >", ">");
     result = result.replace(" >", ">");
-    let doc = Document::from_str(&result).unwrap();
+    let doc = Document::from_str(&result)
+        .map_err(|_| RepoError::XmlParsingFailed(result.clone()))?;
     let config = Config::default_pretty();
-    doc.to_string_pretty_with_config(&config)
+    Ok(doc.to_string_pretty_with_config(&config))
 }
 
-pub fn find_repo_manifest(path: &Path) -> Vec<Manifest> {
+pub fn find_repo_manifest(path: &Path) -> Result<Vec<Manifest>, RepoError> {
     let mut kas_manifests = Vec::<Manifest>::new();
 
-    for entry in path.read_dir().unwrap() {
+    let entries = path.read_dir()?;
+    for entry in entries {
         match entry {
             Ok(entry) => {
-                if entry.file_type().unwrap().is_dir() {
+                let file_type = match entry.file_type() {
+                    Ok(ft) => ft,
+                    Err(e) => {
+                        warn!("Failed to get file type for {}: {}", entry.path().display(), e);
+                        continue;
+                    }
+                };
+
+                if file_type.is_dir() {
                     continue;
                 }
 
@@ -459,7 +496,7 @@ pub fn find_repo_manifest(path: &Path) -> Vec<Manifest> {
             }
         };
     }
-    kas_manifests
+    Ok(kas_manifests)
 }
 
 #[cfg(test)]
@@ -525,7 +562,7 @@ mod tests {
         let item: Manifest = from_str(src).unwrap();
         //assert_eq!(item, should_be);
         print!("{:?}", item);
-        let reserialized_item = to_string(&item);
+        let reserialized_item = to_string(&item).unwrap();
         let reserialized_item = reserialized_item.trim();
         assert_eq!(src, reserialized_item);
     }
@@ -549,7 +586,7 @@ mod tests {
             info!(
                 "{:?}, {}, {}",
                 i,
-                i.git_url("http://foo/gogo/".to_string()),
+                i.git_url("http://foo/gogo/".to_string()).unwrap(),
                 i.dest_branch()
             );
         }
@@ -563,7 +600,7 @@ mod tests {
     #[test]
     fn test_find_manifest() {
         let d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let result = find_repo_manifest(&d);
+        let result = find_repo_manifest(&d).unwrap();
         assert_eq!(result.len(), 1);
 
         //let reserialized_item = to_string(&item).unwrap();
