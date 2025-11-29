@@ -76,6 +76,7 @@ Practical how-to guides.
 
 Technical analysis and evaluations.
 
+- [Technical Debt Analysis](analysis/technical-debt-analysis.md) - Comprehensive technical debt assessment
 - [Code Review](analysis/code-review.md) - Comprehensive code review
 - [Performance](analysis/performance.md) - Performance analysis
 - [Python Challenges](analysis/python-challenges.md) - Python execution challenges
