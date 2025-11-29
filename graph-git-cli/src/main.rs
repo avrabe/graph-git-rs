@@ -1,7 +1,7 @@
 use clap::{crate_version, Parser};
 use convenient_bitbake::Bitbake;
 use convenient_git::{GitRepository, RefsKind};
-use convenient_kas::KasManifest;
+use convenient_kas::find_kas_files;
 use convenient_repo::find_repo_manifest;
 use graph_git::{
     delete_node_and_references_to_node, delete_references_to_node, merge_link, merge_node,
@@ -411,79 +411,73 @@ fn find_kas_manifests_in_directory(
 ) {
     let branch_name = branch.name.as_str();
     span!(parent: parent_span, Level::INFO, "kas", value=branch_name).in_scope(|| {
-        // perform some work in the context of `my_span`...
+        let Some(repo) = git_repository.repo.as_ref() else {
+            error!("No git repository");
+            return;
+        };
+        let Some(workdir) = repo.workdir() else {
+            error!("No workdir for repository");
+            return;
+        };
 
-        let kas_manifests = KasManifest::find_kas_manifest(
-            git_repository.repo.as_ref().unwrap().workdir().unwrap(),
-        );
-        info!("Found {} kas manifest(s)", kas_manifests.len());
-        for kas in kas_manifests {
-            collector.push(merge_node(node_kas_manifest(
-                kas.path.as_str(),
-                branch.oid.as_str(),
-            )));
+        let kas_files = find_kas_files(workdir);
+        info!("Found {} kas file(s)", kas_files.len());
+
+        for kas_file in kas_files {
+            let kas_path = kas_file
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+
+            collector.push(merge_node(node_kas_manifest(kas_path, branch.oid.as_str())));
             collector.push(merge_link(
                 node_commit(branch.oid.as_str()),
-                node_kas_manifest(kas.path.as_str(), branch.oid.as_str()),
+                node_kas_manifest(kas_path, branch.oid.as_str()),
                 "contains".to_string(),
             ));
-            for (kas_repository_name, kas_repository) in kas.manifest.repos {
-                let mut git_repo: String = String::new();
-                // if no repo was given. Assume the current repo
-                git_repo.push_str(&git_repository.git_url);
-                match kas_repository {
-                    Some(repository) => {
-                        match repository.url {
-                            Some(url) => {
-                                queue.add(url.clone());
-                                collector.push(merge_node(node_repository(url.as_str())));
-                                git_repo.replace_range(.., url.as_str());
-                                info!(
-                                    "Found kas {} repository {}",
-                                    kas_repository_name,
-                                    url.as_str()
-                                );
-                            }
-                            None => {
-                                error!("Error: {}", kas_repository_name);
-                            }
-                        };
-                        match repository.refspec {
-                            Some(refspec) => {
-                                collector
-                                    .push(merge_node(node_reference(refspec.as_str(), &git_repo)));
-                                collector.push(merge_link(
-                                    node_repository(&git_repo),
-                                    node_reference(refspec.as_str(), &git_repo),
-                                    "has".to_string(),
-                                ));
-                                collector.push(merge_link(
-                                    node_kas_manifest(kas.path.as_str(), branch.oid.as_str()),
-                                    node_reference(refspec.as_str(), &git_repo),
-                                    "refers".to_string(),
-                                ));
-                                info!(
-                                    "Found kas {} refspec {}",
-                                    kas_repository_name,
-                                    refspec.as_str()
-                                );
-                            }
-                            None => {
-                                error!(
-                                    "Error: {}. Need to find a way for default refspec.",
-                                    kas_repository_name
-                                );
-                            }
-                        };
-                    }
 
-                    None => {
-                        error!("Error: {}", kas_repository_name);
-                    }
+            for (repo_name, kas_repo) in &kas_file.config.repos {
+                let mut git_repo = git_repository.git_url.clone();
+
+                // Handle repository URL
+                if let Some(url) = &kas_repo.url {
+                    queue.add(url.clone());
+                    collector.push(merge_node(node_repository(url.as_str())));
+                    git_repo = url.clone();
+                    info!("Found kas {} repository {}", repo_name, url);
+                }
+
+                // Handle refspec (branch, tag, commit, or explicit refspec)
+                let refspec = kas_repo
+                    .refspec
+                    .as_ref()
+                    .or(kas_repo.branch.as_ref())
+                    .or(kas_repo.tag.as_ref())
+                    .or(kas_repo.commit.as_ref());
+
+                if let Some(ref_value) = refspec {
+                    collector.push(merge_node(node_reference(ref_value.as_str(), &git_repo)));
+                    collector.push(merge_link(
+                        node_repository(&git_repo),
+                        node_reference(ref_value.as_str(), &git_repo),
+                        "has".to_string(),
+                    ));
+                    collector.push(merge_link(
+                        node_kas_manifest(kas_path, branch.oid.as_str()),
+                        node_reference(ref_value.as_str(), &git_repo),
+                        "refers".to_string(),
+                    ));
+                    info!("Found kas {} refspec {}", repo_name, ref_value);
+                } else if kas_repo.url.is_some() {
+                    warn!(
+                        "Repository {} has URL but no refspec/branch/tag/commit",
+                        repo_name
+                    );
                 }
             }
         }
-    }); // --> Subscriber::exit(my_span)
+    });
 }
 
 fn find_bitbake_manifests_on_branch(
