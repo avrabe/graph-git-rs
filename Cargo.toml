@@ -2,13 +2,13 @@
 resolver = "2"
 
 members = [
-    "graph-git",
     "convenient-bitbake",
     "convenient-git",
     "convenient-kas",
     "convenient-repo",
-    "graph-git-cli",
-    "accuracy-measurement", "convenient-graph", "convenient-cache", "hitzeleiter",
+    "convenient-graph",
+    "convenient-cache",
+    "hitzeleiter",
 ]
 
 [profile.release]
