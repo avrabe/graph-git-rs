@@ -98,11 +98,28 @@ pub struct KasFile {
 }
 
 impl KasFile {
-    /// Load and parse kas file with checksum
+    /// Load and parse kas file with checksum (async)
     pub async fn load(path: impl AsRef<Path>) -> Result<Self, KasError> {
         let path = path.as_ref();
         let content = tokio::fs::read_to_string(path)
             .await
+            .map_err(|e| KasError::IoError(path.to_path_buf(), e.to_string()))?;
+
+        let checksum = Self::calculate_checksum(&content);
+        let config: KasConfig = serde_yaml::from_str(&content)
+            .map_err(|e| KasError::ParseError(path.to_path_buf(), e.to_string()))?;
+
+        Ok(Self {
+            path: path.to_path_buf(),
+            config,
+            checksum,
+        })
+    }
+
+    /// Load and parse kas file with checksum (sync)
+    pub fn load_sync(path: impl AsRef<Path>) -> Result<Self, KasError> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
             .map_err(|e| KasError::IoError(path.to_path_buf(), e.to_string()))?;
 
         let checksum = Self::calculate_checksum(&content);
@@ -346,6 +363,49 @@ pub enum KasError {
     /// Invalid repository configuration
     #[error("Invalid repository configuration: {0}")]
     InvalidRepo(String),
+}
+
+/// Find all kas configuration files in a directory (sync)
+///
+/// Searches for .yml and .yaml files in the given directory and attempts
+/// to parse them as kas configurations. Non-kas YAML files are silently ignored.
+///
+/// # Arguments
+///
+/// * `path` - The directory to search for kas files
+///
+/// # Returns
+///
+/// A vector of successfully parsed `KasFile` instances
+pub fn find_kas_files(path: &Path) -> Vec<KasFile> {
+    let mut kas_files = Vec::new();
+
+    let entries = match path.read_dir() {
+        Ok(e) => e,
+        Err(_) => return kas_files,
+    };
+
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+
+        // Only process files
+        if !entry_path.is_file() {
+            continue;
+        }
+
+        // Only process .yml and .yaml files
+        let extension = entry_path.extension().and_then(|e| e.to_str());
+        if !matches!(extension, Some("yml") | Some("yaml")) {
+            continue;
+        }
+
+        // Try to parse as kas file
+        if let Ok(kas_file) = KasFile::load_sync(&entry_path) {
+            kas_files.push(kas_file);
+        }
+    }
+
+    kas_files
 }
 
 #[cfg(test)]
