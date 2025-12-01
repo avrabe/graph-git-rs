@@ -10,7 +10,7 @@ license = "MIT"
 git2 = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
-thiserror = "1.0"
+thiserror = "2.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
