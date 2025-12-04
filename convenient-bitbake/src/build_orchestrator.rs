@@ -470,17 +470,21 @@ impl BuildOrchestrator {
         let total_tasks = task_graph.tasks.len();
         info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
-        // Create a custom rayon thread pool with larger stacks (8MB instead of default 2MB)
+        // Create a custom rayon thread pool with larger stacks (16MB instead of default 2MB)
         // This prevents stack overflow from deep recursion in SimplePythonEvaluator
-        let num_threads = num_cpus::get();
+        // and file:// URI resolution
+        let num_threads = std::env::var("HITZELEITER_THREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| num_cpus::get());
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .stack_size(8 * 1024 * 1024)  // 8MB stack per thread
+            .stack_size(16 * 1024 * 1024)  // 16MB stack per thread
             .thread_name(|idx| format!("task-spec-{}", idx))
             .build()
             .map_err(|e| format!("Failed to create thread pool: {}", e))?;
 
-        info!("  Using {} threads with 8MB stacks for task spec generation", num_threads);
+        info!("  Using {} threads with 16MB stacks for task spec generation", num_threads);
 
         // Thread-safe progress tracking
         let processed = AtomicUsize::new(0);
@@ -874,13 +878,22 @@ touch \"outputs/{output_filename}\"\n"
         for layer in &build_context.layers {
             // Try recipes-*/<category>/<recipe_name>/
             let layer_path = &layer.layer_dir;
-            let recipes_pattern = layer_path.join("recipes-*");
 
-            if let Ok(recipe_dirs) = glob::glob(&recipes_pattern.to_string_lossy()) {
-                for recipe_category in recipe_dirs.flatten() {
-                    let candidate = recipe_category.join(recipe_name);
-                    if candidate.exists() && candidate.is_dir() {
-                        return Some(candidate);
+            // Use read_dir instead of glob for thread safety
+            if let Ok(entries) = std::fs::read_dir(layer_path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    // Check if directory name starts with "recipes-"
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            if name.starts_with("recipes-") {
+                                // Check if recipe_name directory exists in this category
+                                let candidate = path.join(recipe_name);
+                                if candidate.exists() && candidate.is_dir() {
+                                    return Some(candidate);
+                                }
+                            }
+                        }
                     }
                 }
             }
