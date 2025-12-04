@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 /// Configuration for build orchestration
 pub struct OrchestratorConfig {

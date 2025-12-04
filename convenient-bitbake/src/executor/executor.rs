@@ -468,7 +468,7 @@ impl TaskExecutor {
         // that were resolved during task spec generation using FILESPATH search
         let mut copied_files = 0;
         for (filename, source_path) in &spec.file_resources {
-            let dest = workdir.join(filename);
+            let dest = spec.workdir.join(filename);
 
             match std::fs::copy(source_path, &dest) {
                 Ok(_) => {
