@@ -542,7 +542,7 @@ impl BuildOrchestrator {
 
             // NEW: Preprocess script to handle BitBake syntax (${@python_expr}, ${VAR[flag]}, etc.)
             // Also prepare environment variables for task execution
-            let (script, task_env) = {
+            let result_tuple = {
                 let preprocess_start = Instant::now();
 
                 // Get recipe variables from parsed recipes, or use defaults
@@ -607,7 +607,8 @@ impl BuildOrchestrator {
                     }
                 }
 
-                let preprocessor = ScriptPreprocessor::new(recipe_vars);
+                let preprocess_start = Instant::now();
+                let preprocessor = ScriptPreprocessor::new(recipe_vars.clone());
 
                 let result = match preprocessor.preprocess(&raw_script) {
                     Ok(processed) => {
@@ -628,9 +629,20 @@ impl BuildOrchestrator {
                 let elapsed = preprocess_start.elapsed();
                 preprocess_total_time.fetch_add(elapsed.as_micros() as usize, Ordering::Relaxed);
 
-                (result, env_vars)
+                // Resolve file:// URIs for fetch/unpack tasks BEFORE returning from block
+                // This makes file:// resources available without runtime filesystem access
+                let file_resources = if task.task_name == "do_fetch" || task.task_name == "do_unpack" {
+                    self.resolve_file_uris(&task.recipe_name, &recipe_vars, build_context)
+                } else {
+                    HashMap::new()
+                };
+
+                (result, env_vars, file_resources)
             };
 
+            let (script, task_env, file_resources) = result_tuple;
+
+            // Work directory already created before parallel loop
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
             // Use std::fs::create_dir_all which handles concurrent creation safely
             if let Err(e) = fs::create_dir_all(&task_workdir) {
@@ -660,6 +672,7 @@ impl BuildOrchestrator {
                 workdir: task_workdir,
                 env: task_env,  // Use recipe variables as task environment
                 outputs: vec![PathBuf::from(&output_file)],
+                file_resources,  // Resolved file:// paths from SRC_URI
                 timeout: Some(Duration::from_secs(300)),
                 execution_mode,
                 network_policy,
@@ -775,5 +788,104 @@ bb_note '[PLACEHOLDER] {task_name}'\n\
 mkdir -p outputs\n\
 touch \"outputs/{output_filename}\"\n"
         )
+    }
+
+    /// Resolve file:// URIs from SRC_URI using FILESPATH search
+    ///
+    /// This searches recipe directories for local files referenced in SRC_URI.
+    /// Search order follows BitBake's FILESPATH:
+    /// 1. ${FILE_DIRNAME}/${BP}/ (recipe_dir/busybox-1.35.0/)
+    /// 2. ${FILE_DIRNAME}/${BPN}/ (recipe_dir/busybox/)
+    /// 3. ${FILE_DIRNAME}/files/ (recipe_dir/files/)
+    /// 4. ${FILE_DIRNAME}/${BPN}-${MACHINE}/ (recipe_dir/busybox-qemuarm64/)
+    fn resolve_file_uris(
+        &self,
+        recipe_name: &str,
+        recipe_vars: &HashMap<String, String>,
+        build_context: &BuildContext,
+    ) -> HashMap<String, PathBuf> {
+        let mut file_resources = HashMap::new();
+
+        // Get SRC_URI - if not present, nothing to do
+        let src_uri = match recipe_vars.get("SRC_URI") {
+            Some(uri) => uri,
+            None => return file_resources,
+        };
+
+        // Get variables needed for FILESPATH
+        let bpn = recipe_vars.get("BPN")
+            .or_else(|| recipe_vars.get("PN"))
+            .cloned()
+            .unwrap_or_else(|| recipe_name.to_string());
+        let pv = recipe_vars.get("PV").cloned().unwrap_or_else(|| "unknown".to_string());
+        let bp = format!("{}-{}", bpn, pv);
+        let machine = build_context.machine.as_deref().unwrap_or("unknown");
+
+        // Find recipe file in layers to get FILE_DIRNAME
+        let recipe_dir = self.find_recipe_directory(&bpn, build_context);
+        if recipe_dir.is_none() {
+            debug!("Could not find recipe directory for {}", recipe_name);
+            return file_resources;
+        }
+        let recipe_dir = recipe_dir.unwrap();
+
+        // Parse file:// URIs from SRC_URI
+        for part in src_uri.split_whitespace() {
+            if let Some(file_uri) = part.strip_prefix("file://") {
+                // Remove any parameters (;param=value)
+                let filename = file_uri.split(';').next().unwrap_or(file_uri);
+                if filename.is_empty() {
+                    continue;
+                }
+
+                // Search FILESPATH for the file
+                let search_paths = vec![
+                    recipe_dir.join(&bp),           // ${FILE_DIRNAME}/${BP}/
+                    recipe_dir.join(&bpn),          // ${FILE_DIRNAME}/${BPN}/
+                    recipe_dir.join("files"),       // ${FILE_DIRNAME}/files/
+                    recipe_dir.join(format!("{}-{}", bpn, machine)), // ${FILE_DIRNAME}/${BPN}-${MACHINE}/
+                ];
+
+                for search_dir in &search_paths {
+                    let candidate = search_dir.join(filename);
+                    if candidate.exists() && candidate.is_file() {
+                        debug!("Resolved file://{} → {}", filename, candidate.display());
+                        file_resources.insert(filename.to_string(), candidate);
+                        break;
+                    }
+                }
+
+                if !file_resources.contains_key(filename) {
+                    debug!("Could not resolve file://{} in FILESPATH for {}", filename, recipe_name);
+                }
+            }
+        }
+
+        if !file_resources.is_empty() {
+            info!("Resolved {} file:// URIs for {}", file_resources.len(), recipe_name);
+        }
+
+        file_resources
+    }
+
+    /// Find recipe directory by searching all layers
+    fn find_recipe_directory(&self, recipe_name: &str, build_context: &BuildContext) -> Option<PathBuf> {
+        // Search layers in priority order
+        for layer in &build_context.layers {
+            // Try recipes-*/<category>/<recipe_name>/
+            let layer_path = &layer.layer_dir;
+            let recipes_pattern = layer_path.join("recipes-*");
+
+            if let Ok(recipe_dirs) = glob::glob(&recipes_pattern.to_string_lossy()) {
+                for recipe_category in recipe_dirs.flatten() {
+                    let candidate = recipe_category.join(recipe_name);
+                    if candidate.exists() && candidate.is_dir() {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
+
+        None
     }
 }

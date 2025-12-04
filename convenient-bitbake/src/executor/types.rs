@@ -261,6 +261,11 @@ pub struct TaskSpec {
     /// Declared outputs (relative to workdir)
     pub outputs: Vec<PathBuf>,
 
+    /// Resolved file:// URI paths (filename -> absolute path)
+    /// These are local files from SRC_URI resolved during task spec generation
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub file_resources: HashMap<String, PathBuf>,
+
     /// Timeout (in seconds, for serialization compatibility)
     #[serde(
         serialize_with = "serialize_duration",

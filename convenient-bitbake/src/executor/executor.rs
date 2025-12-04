@@ -463,6 +463,41 @@ impl TaskExecutor {
             );
         }
 
+        // Copy file:// files from resolved paths to WORKDIR
+        // These are local files (defconfig, patches, scripts) from recipe directories
+        // that were resolved during task spec generation using FILESPATH search
+        let mut copied_files = 0;
+        for (filename, source_path) in &spec.file_resources {
+            let dest = workdir.join(filename);
+
+            match std::fs::copy(source_path, &dest) {
+                Ok(_) => {
+                    let _ = writeln!(
+                        stdout,
+                        "[NOTE] Copied file:// resource: {} -> {}",
+                        filename,
+                        dest.display()
+                    );
+                    copied_files += 1;
+                    debug!("Copied file:// resource {} from {}", filename, source_path.display());
+                }
+                Err(e) => {
+                    let _ = writeln!(
+                        stderr,
+                        "[ERROR] Failed to copy file:// resource {}: {e}",
+                        filename
+                    );
+                    warn!("Failed to copy file:// resource {} from {}: {e}",
+                          filename, source_path.display());
+                }
+            }
+        }
+
+        if copied_files > 0 {
+            let _ = writeln!(stdout, "[NOTE] Copied {} local files to WORKDIR", copied_files);
+            info!("Copied {} file:// resources to WORKDIR", copied_files);
+        }
+
         // Hash unpacked files and store in CAS
         let mut output_files = HashMap::new();
         if s_dir.exists() {
