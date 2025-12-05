@@ -723,7 +723,7 @@ pub async fn execute_runall(
                     if spec.env.contains_key("SRC_URI") {
                         let fetch_config = FetchConfig::default();
 
-                        match fetch_task::execute_fetch_task(&spec.env, &dl_dir, Some(&fetch_config)) {
+                        match fetch_task::execute_fetch_task(&spec.env, &dl_dir, Some(&fetch_config), &spec.file_resources) {
                             Ok(result) => {
                                 if result.downloaded_files.is_empty() && result.warnings.is_empty() {
                                     println!("⏭️  skipped (no sources)");
