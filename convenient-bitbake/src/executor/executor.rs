@@ -306,8 +306,8 @@ impl TaskExecutor {
         // Build fetch config from environment
         let fetch_config = self.build_fetch_config(&spec.env);
 
-        // Execute the fetch task
-        match fetch_task::execute_fetch_task(&spec.env, &dl_dir, Some(&fetch_config)) {
+        // Execute the fetch task with resolved file:// paths
+        match fetch_task::execute_fetch_task(&spec.env, &dl_dir, Some(&fetch_config), &spec.file_resources) {
             Ok(result) => {
                 let duration = start.elapsed().as_millis() as u64;
 
