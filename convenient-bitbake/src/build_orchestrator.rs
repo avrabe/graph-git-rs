@@ -470,21 +470,23 @@ impl BuildOrchestrator {
         let total_tasks = task_graph.tasks.len();
         info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
-        // Create a custom rayon thread pool with larger stacks (16MB instead of default 2MB)
+        // Create a custom rayon thread pool with larger stacks (64MB instead of default 2MB)
         // This prevents stack overflow from deep recursion in SimplePythonEvaluator
         // and file:// URI resolution
+        // Default to 1 thread to avoid race condition crashes (segfault at ~18-43% with >1 threads)
+        // Users can try HITZELEITER_THREADS=2 or higher, but may encounter crashes
         let num_threads = std::env::var("HITZELEITER_THREADS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| num_cpus::get());
+            .unwrap_or(1);
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .stack_size(16 * 1024 * 1024)  // 16MB stack per thread
+            .stack_size(64 * 1024 * 1024)  // 64MB stack per thread for deep SimplePythonEvaluator recursion
             .thread_name(|idx| format!("task-spec-{}", idx))
             .build()
             .map_err(|e| format!("Failed to create thread pool: {}", e))?;
 
-        info!("  Using {} threads with 16MB stacks for task spec generation", num_threads);
+        info!("  Using {} threads with 64MB stacks for task spec generation", num_threads);
 
         // Thread-safe progress tracking
         let processed = AtomicUsize::new(0);
@@ -669,13 +671,7 @@ impl BuildOrchestrator {
             // Auto-detect execution mode from script (using preprocessed script)
             let execution_mode = crate::executor::determine_execution_mode(&script);
 
-            // Resolve file:// URIs for fetch/unpack tasks
-            // This makes file:// resources available without runtime filesystem access
-            let file_resources = if task.task_name == "do_fetch" || task.task_name == "do_unpack" {
-                self.resolve_file_uris(&task.recipe_name, &task_env, build_context)
-            } else {
-                HashMap::new()
-            };
+            // file_resources already computed earlier at line 638-642
 
             let spec = TaskSpec {
                 name: task.task_name.clone(),
