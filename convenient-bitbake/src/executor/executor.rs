@@ -470,6 +470,20 @@ impl TaskExecutor {
         for (filename, source_path) in &spec.file_resources {
             let dest = spec.workdir.join(filename);
 
+            // Create parent directory if it doesn't exist (for paths like share/dot.bashrc)
+            if let Some(parent) = dest.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    let _ = writeln!(
+                        stderr,
+                        "[ERROR] Failed to create directory {}: {e}",
+                        parent.display()
+                    );
+                    warn!("Failed to create directory {} for file:// resource {}: {e}",
+                          parent.display(), filename);
+                    continue;
+                }
+            }
+
             match std::fs::copy(source_path, &dest) {
                 Ok(_) => {
                     let _ = writeln!(
@@ -961,6 +975,36 @@ impl TaskExecutor {
         let sandbox_root_abs = sandbox_root.canonicalize()
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&sandbox_root));
         let work_dir = sandbox_root_abs.join("work");
+
+        // Copy files from spec.workdir to sandbox work directory
+        // This is needed because fetch/unpack tasks write to spec.workdir (original WORKDIR),
+        // but sandboxed tasks need files in their sandbox-specific work directory
+        if spec.workdir.exists() {
+            use std::io::Write;
+            for entry in walkdir::WalkDir::new(&spec.workdir)
+                .follow_links(false)
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+            {
+                if entry.file_type().is_file() {
+                    let src_path = entry.path();
+                    let rel_path = src_path.strip_prefix(&spec.workdir)
+                        .unwrap_or(src_path);
+                    let dest_path = work_dir.join(rel_path);
+
+                    // Create parent directory if needed
+                    if let Some(parent) = dest_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+
+                    // Copy file
+                    if let Err(e) = std::fs::copy(src_path, &dest_path) {
+                        debug!("Failed to copy {} to sandbox: {}", src_path.display(), e);
+                    }
+                }
+            }
+        }
+
         sandbox_spec.env.insert(
             "WORKDIR".to_string(),
             work_dir.to_string_lossy().to_string(),

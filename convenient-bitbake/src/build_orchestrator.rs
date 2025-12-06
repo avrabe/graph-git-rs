@@ -589,6 +589,13 @@ impl BuildOrchestrator {
                 // These are essential for recipes to work correctly
                 recipe_vars.entry("baselib".to_string()).or_insert_with(|| "lib".to_string());
 
+                // Date/time variables (from bitbake.conf)
+                // DATE := "${@time.strftime('%Y%m%d',time.gmtime())}"
+                let now = chrono::Utc::now();
+                recipe_vars.entry("DATE".to_string()).or_insert_with(|| now.format("%Y%m%d").to_string());
+                recipe_vars.entry("TIME".to_string()).or_insert_with(|| now.format("%H%M%S").to_string());
+                recipe_vars.entry("DATETIME".to_string()).or_insert_with(|| now.format("%Y%m%d%H%M%S").to_string());
+
                 // Path prefixes (from meta/conf/bitbake.conf)
                 recipe_vars.entry("base_prefix".to_string()).or_insert_with(|| "".to_string());
                 recipe_vars.entry("prefix".to_string()).or_insert_with(|| "/usr".to_string());
