@@ -7,7 +7,7 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-quick-xml = { version = "0.37.2", features = ["serde", "serialize"] }
+quick-xml = { version = "0.38.4", features = ["serde", "serialize"] }
 serde = { workspace = true }
 thiserror = "2.0"
 tracing = { workspace = true }

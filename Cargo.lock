@@ -364,7 +364,7 @@ dependencies = [
 [[package]]
 name = "brush-builtins"
 version = "0.1.0"
-source = "git+https://github.com/reubeno/brush.git#1b94d7e49476774461103e34b9e9f417342ec9bc"
+source = "git+https://github.com/reubeno/brush.git?rev=f3e4c9c#f3e4c9cb16599ba208cf4e4e18c91a8a67a1fabb"
 dependencies = [
  "brush-core",
  "brush-parser",
@@ -388,7 +388,7 @@ dependencies = [
 [[package]]
 name = "brush-core"
 version = "0.4.0"
-source = "git+https://github.com/reubeno/brush.git#1b94d7e49476774461103e34b9e9f417342ec9bc"
+source = "git+https://github.com/reubeno/brush.git?rev=f3e4c9c#f3e4c9cb16599ba208cf4e4e18c91a8a67a1fabb"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -404,7 +404,7 @@ dependencies = [
  "getrandom 0.3.4",
  "homedir",
  "hostname",
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
  "itertools 0.14.0",
  "nix 0.30.1",
  "normalize-path",
@@ -424,7 +424,7 @@ dependencies = [
 [[package]]
 name = "brush-parser"
 version = "0.3.0"
-source = "git+https://github.com/reubeno/brush.git#1b94d7e49476774461103e34b9e9f417342ec9bc"
+source = "git+https://github.com/reubeno/brush.git?rev=f3e4c9c#f3e4c9cb16599ba208cf4e4e18c91a8a67a1fabb"
 dependencies = [
  "bon",
  "cached",
@@ -695,7 +695,7 @@ dependencies = [
  "nix 0.29.0",
  "num_cpus",
  "once_cell",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rayon",
  "regex",
  "rowan",
@@ -706,7 +706,7 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -780,7 +780,7 @@ dependencies = [
 name = "convenient-repo"
 version = "0.1.0"
 dependencies = [
- "quick-xml",
+ "quick-xml 0.38.4",
  "serde",
  "thiserror 2.0.17",
  "tracing",
@@ -1482,7 +1482,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http",
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
  "slab",
  "tokio",
  "tokio-util",
@@ -1523,9 +1523,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 
 [[package]]
 name = "heck"
@@ -1935,12 +1935,12 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.12.0"
+version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6717a8d2a5a929a1a2eb43a12812498ed141a0bcfb7e8f7844fbdbe4303bba9f"
+checksum = "0ad4bb2b565bca0645f4d68c5c9af97fba094e9791da685bf83cb5f3ce74acf2"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -2778,7 +2778,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset",
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
 ]
 
 [[package]]
@@ -3081,6 +3081,15 @@ name = "quick-xml"
 version = "0.37.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
 dependencies = [
  "memchr",
  "serde",
@@ -3504,7 +3513,7 @@ checksum = "964cbc9d7870b4d092eecd66049ab0cd93fb5f3f40a408f78bf4415a5d25d3a3"
 dependencies = [
  "ahash",
  "bitflags 2.10.0",
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
  "itertools 0.11.0",
  "log",
  "num-complex",
@@ -3788,7 +3797,7 @@ dependencies = [
  "glob",
  "half",
  "hex",
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
  "is-macro",
  "itertools 0.11.0",
  "libc",
@@ -4035,7 +4044,7 @@ version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
 dependencies = [
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
  "itoa",
  "ryu",
  "serde",
@@ -4601,7 +4610,7 @@ version = "0.23.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6485ef6d0d9b5d0ec17244ff7eb05310113c3f316f2d14200d4de56b3cb98f8d"
 dependencies = [
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
  "toml_datetime",
  "toml_parser",
  "winnow",
@@ -5880,11 +5889,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10701b2c202cc7923986cfba2e1ffe51bde4758655d65b81f4b9d6ffdc54226a"
 dependencies = [
  "cssparser",
- "indexmap 2.12.0",
+ "indexmap 2.12.1",
  "once_cell",
  "precomputed-hash",
  "qname",
- "quick-xml",
+ "quick-xml 0.37.5",
  "selectors",
  "slotmap",
  "tracing",
