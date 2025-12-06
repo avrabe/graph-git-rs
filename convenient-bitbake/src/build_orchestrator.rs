@@ -668,6 +668,12 @@ impl BuildOrchestrator {
                     }
                 }
 
+                // Expand all variable references in environment variables
+                // This ensures that variables like dirs755="${sysconfdir} ${localstatedir}"
+                // are fully expanded before being passed to shell scripts
+                use crate::executor::script_preprocessor::expand_env_variables;
+                expand_env_variables(&mut env_vars);
+
                 let preprocess_start = Instant::now();
                 let preprocessor = ScriptPreprocessor::new(recipe_vars.clone());
 
@@ -692,7 +698,8 @@ impl BuildOrchestrator {
 
                 // Resolve file:// URIs for fetch/unpack tasks BEFORE returning from block
                 // This makes file:// resources available without runtime filesystem access
-                let file_resources = if task.task_name == "do_fetch" || task.task_name == "do_unpack" {
+                let file_resources = if task.task_name == "fetch" || task.task_name == "unpack"
+                    || task.task_name == "do_fetch" || task.task_name == "do_unpack" {
                     self.resolve_file_uris(&task.recipe_name, &recipe_vars, build_context)
                 } else {
                     HashMap::new()

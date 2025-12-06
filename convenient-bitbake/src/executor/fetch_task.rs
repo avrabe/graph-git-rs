@@ -78,9 +78,15 @@ pub fn execute_fetch_task(
 
             // Look up resolved path
             if let Some(resolved_path) = file_resources.get(filename) {
-                // Copy to DL_DIR
+                // Copy to DL_DIR, creating parent directories if needed
                 let dest = dl_dir.join(filename);
                 if !dest.exists() {
+                    // Create parent directory if it doesn't exist (for paths like share/dot.bashrc)
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| FetchError::FileError(format!("Failed to create directory {}: {}", parent.display(), e)))?;
+                    }
+
                     info!("Copying file:// resource: {} -> {}", resolved_path.display(), dest.display());
                     std::fs::copy(resolved_path, &dest)
                         .map_err(|e| FetchError::FileError(format!("Failed to copy {}: {}", filename, e)))?;
