@@ -580,21 +580,76 @@ impl BuildOrchestrator {
                 recipe_vars.entry("HOST_SYS".to_string()).or_insert_with(|| "aarch64-poky-linux".to_string());
                 recipe_vars.entry("BUILD_SYS".to_string()).or_insert_with(|| "x86_64-linux".to_string());
                 recipe_vars.entry("AUTOTOOLS_AUXDIR".to_string()).or_insert_with(|| "${S}/build-aux".to_string());
-                // Note: SRCREV should come from recipe parsing, not set to a dummy value
-                // If missing, git fetcher will use HEAD/default branch
+                recipe_vars.entry("INIT_SYSTEM".to_string()).or_insert_with(|| "sysvinit".to_string());
+                recipe_vars.entry("DISTRO_FEATURES".to_string()).or_insert_with(|| "sysvinit".to_string());
+                recipe_vars.entry("KERNEL_VERSION".to_string()).or_insert_with(|| "5.15".to_string());
+                recipe_vars.entry("KERNEL_IMAGETYPE".to_string()).or_insert_with(|| "Image".to_string());
+
+                // Add BitBake standard directory variables from bitbake.conf
+                // These are essential for recipes to work correctly
                 recipe_vars.entry("baselib".to_string()).or_insert_with(|| "lib".to_string());
+
+                // Path prefixes (from meta/conf/bitbake.conf)
+                recipe_vars.entry("base_prefix".to_string()).or_insert_with(|| "".to_string());
                 recipe_vars.entry("prefix".to_string()).or_insert_with(|| "/usr".to_string());
+                recipe_vars.entry("exec_prefix".to_string()).or_insert_with(|| "/usr".to_string());
+                recipe_vars.entry("root_prefix".to_string()).or_insert_with(|| "".to_string());  // Assumes no usrmerge
+
+                // Base paths
+                recipe_vars.entry("base_bindir".to_string()).or_insert_with(|| "/bin".to_string());
+                recipe_vars.entry("base_sbindir".to_string()).or_insert_with(|| "/sbin".to_string());
+                recipe_vars.entry("base_libdir".to_string()).or_insert_with(|| "/lib".to_string());
+                recipe_vars.entry("nonarch_base_libdir".to_string()).or_insert_with(|| "/lib".to_string());
+
+                // Architecture independent paths
+                recipe_vars.entry("sysconfdir".to_string()).or_insert_with(|| "/etc".to_string());
+                recipe_vars.entry("servicedir".to_string()).or_insert_with(|| "/srv".to_string());
+                recipe_vars.entry("sharedstatedir".to_string()).or_insert_with(|| "/com".to_string());
+                recipe_vars.entry("localstatedir".to_string()).or_insert_with(|| "/var".to_string());
+                recipe_vars.entry("datadir".to_string()).or_insert_with(|| "/usr/share".to_string());
+                recipe_vars.entry("infodir".to_string()).or_insert_with(|| "/usr/share/info".to_string());
+                recipe_vars.entry("mandir".to_string()).or_insert_with(|| "/usr/share/man".to_string());
+                recipe_vars.entry("docdir".to_string()).or_insert_with(|| "/usr/share/doc".to_string());
+                recipe_vars.entry("nonarch_libdir".to_string()).or_insert_with(|| "/usr/lib".to_string());
+
+                // Architecture dependent paths
                 recipe_vars.entry("bindir".to_string()).or_insert_with(|| "/usr/bin".to_string());
                 recipe_vars.entry("sbindir".to_string()).or_insert_with(|| "/usr/sbin".to_string());
                 recipe_vars.entry("libdir".to_string()).or_insert_with(|| "/usr/lib".to_string());
                 recipe_vars.entry("libexecdir".to_string()).or_insert_with(|| "/usr/libexec".to_string());
                 recipe_vars.entry("includedir".to_string()).or_insert_with(|| "/usr/include".to_string());
-                recipe_vars.entry("datadir".to_string()).or_insert_with(|| "/usr/share".to_string());
-                recipe_vars.entry("sharedstatedir".to_string()).or_insert_with(|| "/var/lib".to_string());
-                recipe_vars.entry("INIT_SYSTEM".to_string()).or_insert_with(|| "sysvinit".to_string());
-                recipe_vars.entry("DISTRO_FEATURES".to_string()).or_insert_with(|| "sysvinit".to_string());
-                recipe_vars.entry("KERNEL_VERSION".to_string()).or_insert_with(|| "5.15".to_string());
-                recipe_vars.entry("KERNEL_IMAGETYPE".to_string()).or_insert_with(|| "Image".to_string());
+                recipe_vars.entry("oldincludedir".to_string()).or_insert_with(|| "/usr/include".to_string());
+                recipe_vars.entry("localedir".to_string()).or_insert_with(|| "/usr/lib/locale".to_string());
+
+                // Systemd paths
+                recipe_vars.entry("systemd_unitdir".to_string()).or_insert_with(|| "/lib/systemd".to_string());
+                recipe_vars.entry("systemd_system_unitdir".to_string()).or_insert_with(|| "/lib/systemd/system".to_string());
+                recipe_vars.entry("systemd_user_unitdir".to_string()).or_insert_with(|| "/usr/lib/systemd/user".to_string());
+
+                // Root home directory
+                recipe_vars.entry("ROOT_HOME".to_string()).or_insert_with(|| "/home/root".to_string());
+
+                // Work directory variables - CRITICAL for install tasks
+                // D = destination/install directory (${WORKDIR}/image)
+                let d_path = workdir.join("image");
+                recipe_vars.entry("D".to_string()).or_insert_with(|| d_path.to_string_lossy().to_string());
+
+                // BP = Base Package name with version (e.g., busybox-1.35.0)
+                let bpn = recipe_vars.get("BPN")
+                    .or_else(|| recipe_vars.get("PN"))
+                    .cloned()
+                    .unwrap_or_else(|| task.recipe_name.clone());
+                let pv = recipe_vars.get("PV").cloned().unwrap_or_else(|| "1.0".to_string());
+                let bp = format!("{}-{}", bpn, pv);
+                recipe_vars.entry("BP".to_string()).or_insert_with(|| bp.clone());
+                recipe_vars.entry("BPN".to_string()).or_insert_with(|| bpn);
+
+                // S = Source directory (${WORKDIR}/${BP})
+                let s_path = workdir.join(&bp);
+                recipe_vars.entry("S".to_string()).or_insert_with(|| s_path.to_string_lossy().to_string());
+
+                // B = Build directory (usually same as S)
+                recipe_vars.entry("B".to_string()).or_insert_with(|| s_path.to_string_lossy().to_string());
 
                 // Clone recipe_vars for task environment, then expand Python expressions in values
                 let mut env_vars = recipe_vars.clone();
