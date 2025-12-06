@@ -34,6 +34,7 @@ pub struct FetchTaskResult {
 /// * `recipe_vars` - Recipe variables including SRC_URI, SRC_URI[md5sum], etc.
 /// * `dl_dir` - Download directory (DL_DIR)
 /// * `config` - Optional fetch configuration
+/// * `file_resources` - Pre-resolved file:// URI paths (filename -> absolute path)
 ///
 /// # Returns
 ///
@@ -42,6 +43,7 @@ pub fn execute_fetch_task(
     recipe_vars: &HashMap<String, String>,
     dl_dir: &Path,
     config: Option<&FetchConfig>,
+    file_resources: &HashMap<String, PathBuf>,
 ) -> FetchResult<FetchTaskResult> {
     info!("Executing fetch task");
     debug!("DL_DIR: {}", dl_dir.display());
@@ -64,7 +66,42 @@ pub fn execute_fetch_task(
     for uri in &uris {
         info!("Fetching: {}", uri.url);
 
-        match rust_fetcher::fetch_source(uri, dl_dir, config) {
+        // For file:// URIs, use pre-resolved paths instead of runtime resolution
+        let path = if matches!(uri.scheme, UriScheme::File) {
+            // Extract filename from file:// URI
+            let filename = uri.url
+                .strip_prefix("file://")
+                .unwrap_or(&uri.url)
+                .split(';')
+                .next()
+                .unwrap_or("");
+
+            // Look up resolved path
+            if let Some(resolved_path) = file_resources.get(filename) {
+                // Copy to DL_DIR, creating parent directories if needed
+                let dest = dl_dir.join(filename);
+                if !dest.exists() {
+                    // Create parent directory if it doesn't exist (for paths like share/dot.bashrc)
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| FetchError::FileError(format!("Failed to create directory {}: {}", parent.display(), e)))?;
+                    }
+
+                    info!("Copying file:// resource: {} -> {}", resolved_path.display(), dest.display());
+                    std::fs::copy(resolved_path, &dest)
+                        .map_err(|e| FetchError::FileError(format!("Failed to copy {}: {}", filename, e)))?;
+                }
+                Ok(dest)
+            } else {
+                warnings.push(format!("Local file not found in file_resources: {}", filename));
+                continue;
+            }
+        } else {
+            // For non-file:// URIs, use the normal fetcher
+            rust_fetcher::fetch_source(uri, dl_dir, config)
+        };
+
+        match path {
             Ok(path) => {
                 // Verify checksum if provided
                 let uri_key = extract_uri_key(&uri.url);
@@ -95,12 +132,7 @@ pub fn execute_fetch_task(
                 downloaded_files.push(path);
             }
             Err(e) => {
-                // For file:// URIs, we might not find local patches - just warn
-                if matches!(uri.scheme, UriScheme::File) {
-                    warnings.push(format!("Local file not found: {} ({})", uri.url, e));
-                } else {
-                    return Err(e);
-                }
+                return Err(e);
             }
         }
     }

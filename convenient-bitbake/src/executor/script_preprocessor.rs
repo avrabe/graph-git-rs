@@ -25,7 +25,8 @@ static VAR_FLAG_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\[([a-z_]+)\]\}").expect("Invalid regex pattern")
 });
 static VAR_EXPAND_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").expect("Invalid regex pattern")
+    // Match both uppercase and lowercase variable names (e.g., ${WORKDIR} and ${localstatedir})
+    Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").expect("Invalid regex pattern")
 });
 
 /// Preprocesses BitBake scripts to handle special syntax
@@ -184,6 +185,62 @@ impl ScriptPreprocessor {
                 caps[0].to_string()
             }
         }).to_string()
+    }
+}
+
+/// Expand all variable references in a HashMap of environment variables
+///
+/// Performs iterative expansion of ${var} references until no more expansions are possible.
+/// This ensures that variables like dirs755="${sysconfdir} ${localstatedir}" are fully
+/// expanded before being passed to shell scripts.
+///
+/// # Arguments
+/// * `vars` - Mutable HashMap of variable name -> value
+///
+/// # Example
+/// ```
+/// let mut vars = HashMap::new();
+/// vars.insert("prefix".to_string(), "/usr".to_string());
+/// vars.insert("bindir".to_string(), "${prefix}/bin".to_string());
+/// expand_env_variables(&mut vars);
+/// assert_eq!(vars.get("bindir").unwrap(), "/usr/bin");
+/// ```
+pub fn expand_env_variables(vars: &mut HashMap<String, String>) {
+    let re = &*VAR_EXPAND_RE;
+    let max_iterations = 10; // Prevent infinite loops
+
+    for _ in 0..max_iterations {
+        let mut changed = false;
+
+        // Clone the current state for lookups
+        let lookup = vars.clone();
+
+        // Expand each variable's value
+        for (_key, value) in vars.iter_mut() {
+            let original = value.clone();
+
+            let expanded = re.replace_all(&original, |caps: &regex::Captures| {
+                let var_name = &caps[1];
+
+                // Look up in current variable set
+                if let Some(replacement) = lookup.get(var_name) {
+                    replacement.clone()
+                } else {
+                    // Keep original if not found
+                    caps[0].to_string()
+                }
+            }).to_string();
+
+            if expanded != original {
+                *value = expanded;
+                changed = true;
+            }
+        }
+
+        // If no changes in this iteration, we're done
+        if !changed {
+            break;
+        }
     }
 }
 
