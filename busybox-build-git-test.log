@@ -1,0 +1,7 @@
+error: unexpected argument '--kas-file' found
+
+  tip: to pass '--kas-file' as a value, use '-- --kas-file'
+
+Usage: hitzeleiter build <TARGET>
+
+For more information, try '--help'.
