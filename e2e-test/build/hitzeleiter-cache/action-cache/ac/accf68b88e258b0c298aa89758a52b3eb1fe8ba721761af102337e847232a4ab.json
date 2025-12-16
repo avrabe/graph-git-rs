@@ -1,0 +1,8 @@
+{
+  "signature": "accf68b88e258b0c298aa89758a52b3eb1fe8ba721761af102337e847232a4ab",
+  "output_files": {},
+  "stdout": "[NOTE] Fetch completed: 1 files downloaded (4096 bytes)\n  Downloaded: e2e-test/build/tmp/work/qemuarm64/libxcrypt/unknown/downloads/git/libxcrypt\n",
+  "stderr": "Local file not found: file://fix_cflags_handling.patch (File operation failed: No such file or directory (os error 2))\nLocal file not found: file://0001-Make-BuildCommon.pm-compatible-with-latest-perl.patch (File operation failed: No such file or directory (os error 2))\nLocal file not found: file://0002-Remove-smartmatch-usage-from-gen-crypt-h.patch (File operation failed: No such file or directory (os error 2))",
+  "exit_code": 0,
+  "duration_ms": 1272
+}

@@ -1,0 +1,10 @@
+{
+  "signature": "3aae856dcb40b105f459e5429332f01ff709833cee2a86fd828af4ea728c19e6",
+  "output_files": {
+    "/work/outputs/configure.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 114
+}

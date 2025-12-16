@@ -1,0 +1,10 @@
+{
+  "signature": "cb2efd64ffcaba047a5931abf2cb58a63d2653387104785963e4335763fee50f",
+  "output_files": {
+    "/work/outputs/listtasks.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] listtasks\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 119
+}

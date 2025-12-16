@@ -1,0 +1,5 @@
+# Minimal busybox configuration
+CONFIG_DESKTOP=y
+CONFIG_EXTRA_COMPAT=y
+CONFIG_FEATURE_DEVPTS=y
+CONFIG_LFS=y

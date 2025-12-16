@@ -1,0 +1,10 @@
+{
+  "signature": "152ac691ef59abe5b72657693d5857314e4a3903ab4661a9b132a2773fc2a45f",
+  "output_files": {
+    "/work/outputs/clean.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] clean\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 72
+}

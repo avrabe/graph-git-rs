@@ -1,0 +1,10 @@
+{
+  "signature": "45b8302af12f7574f41dc1fda433d4ee2c5489394f1748f9e65ba7b08ba9f5e2",
+  "output_files": {
+    "/work/outputs/cleanall.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] cleanall\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 71
+}

@@ -1,0 +1,10 @@
+{
+  "signature": "b5c81868452ec5e508861f0d2f283fe0299e716888c810da3b158a66afe1bc4b",
+  "output_files": {
+    "/work/outputs/cleansstate.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] cleansstate\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 72
+}

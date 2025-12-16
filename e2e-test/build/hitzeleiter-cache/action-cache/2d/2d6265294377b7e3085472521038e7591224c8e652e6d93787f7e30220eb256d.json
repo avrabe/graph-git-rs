@@ -1,0 +1,8 @@
+{
+  "signature": "2d6265294377b7e3085472521038e7591224c8e652e6d93787f7e30220eb256d",
+  "output_files": {},
+  "stdout": "[NOTE] Fetch completed: 1 files downloaded (4096 bytes)\n  Downloaded: e2e-test/build/tmp/work/qemuarm64/kern-tools-native/0.3+git${SRCPV}/downloads/git/yocto-kernel-tools\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 1398
+}

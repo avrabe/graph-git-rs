@@ -1,0 +1,8 @@
+{
+  "signature": "61bfc760c039189410b305bf487e9ac646c8d25f64ed7c95d2f5a18fa4ab7ef7",
+  "output_files": {},
+  "stdout": "[NOTE] No patches found to apply\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 2
+}

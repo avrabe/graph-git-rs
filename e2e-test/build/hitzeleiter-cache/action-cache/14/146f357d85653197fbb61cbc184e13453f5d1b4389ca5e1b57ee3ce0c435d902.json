@@ -1,0 +1,10 @@
+{
+  "signature": "146f357d85653197fbb61cbc184e13453f5d1b4389ca5e1b57ee3ce0c435d902",
+  "output_files": {
+    "/work/outputs/checkuri.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] checkuri\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 121
+}

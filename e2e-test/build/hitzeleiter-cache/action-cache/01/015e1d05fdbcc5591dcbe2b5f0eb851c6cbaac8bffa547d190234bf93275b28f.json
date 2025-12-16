@@ -1,0 +1,10 @@
+{
+  "signature": "015e1d05fdbcc5591dcbe2b5f0eb851c6cbaac8bffa547d190234bf93275b28f",
+  "output_files": {
+    "/work/outputs/prepare_recipe_sysroot.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] prepare_recipe_sysroot\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 77
+}

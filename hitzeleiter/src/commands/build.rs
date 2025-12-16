@@ -204,7 +204,11 @@ pub async fn execute(
                 if let Some(spec) = build_plan.task_specs.get(&task_key) {
                     println!("  {}. {}", task_num, task_key);
                     println!("     Network: {:?}", spec.network_policy);
-                    println!("     Timeout: {}s", spec.timeout.as_secs());
+                    if let Some(timeout) = spec.timeout {
+                        println!("     Timeout: {}s", timeout.as_secs());
+                    } else {
+                        println!("     Timeout: none");
+                    }
 
                     // Show dependencies
                     if !exec_task.depends_on.is_empty() {

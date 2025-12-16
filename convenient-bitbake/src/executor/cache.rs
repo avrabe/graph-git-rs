@@ -56,11 +56,10 @@ fn atomic_write(path: &Path, data: &[u8]) -> ExecutionResult<()> {
 
 /// Acquire an exclusive lock on a file
 ///
-/// Returns a file handle that holds the lock. The lock is released when the file is dropped.
+/// Returns an owned flock that holds the lock. The lock is released when dropped.
 #[cfg(unix)]
-fn acquire_lock(path: &Path) -> ExecutionResult<File> {
-    use std::os::unix::io::AsRawFd;
-    use nix::fcntl::{flock, FlockArg};
+fn acquire_lock(path: &Path) -> ExecutionResult<nix::fcntl::Flock<File>> {
+    use nix::fcntl::{Flock, FlockArg};
 
     // Create lock directory if needed
     if let Some(parent) = path.parent() {
@@ -74,10 +73,8 @@ fn acquire_lock(path: &Path) -> ExecutionResult<File> {
         .map_err(|e| ExecutionError::CacheError(format!("Failed to create lock file: {e}")))?;
 
     // Acquire exclusive lock (blocks if already locked)
-    flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)
-        .map_err(|e| ExecutionError::CacheError(format!("Failed to acquire lock: {e}")))?;
-
-    Ok(lock_file)
+    Flock::lock(lock_file, FlockArg::LockExclusive)
+        .map_err(|(_, e)| ExecutionError::CacheError(format!("Failed to acquire lock: {e}")))
 }
 
 /// Cache configuration for garbage collection

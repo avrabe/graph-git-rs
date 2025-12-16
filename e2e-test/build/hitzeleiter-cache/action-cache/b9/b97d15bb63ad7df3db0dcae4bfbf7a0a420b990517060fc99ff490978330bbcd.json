@@ -1,0 +1,10 @@
+{
+  "signature": "b97d15bb63ad7df3db0dcae4bfbf7a0a420b990517060fc99ff490978330bbcd",
+  "output_files": {
+    "/work/outputs/package.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] package\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 73
+}

@@ -1,0 +1,10 @@
+{
+  "signature": "9554ff1d01c860fcc8707223b7ac1a5ecd6e566a6948331e6769e97b42583b87",
+  "output_files": {
+    "/work/outputs/deploy_source_date_epoch.done": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": "NOTE: [PLACEHOLDER] deploy_source_date_epoch\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 80
+}
