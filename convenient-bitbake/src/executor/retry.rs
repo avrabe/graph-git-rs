@@ -173,7 +173,8 @@ where
     }
 
     // All attempts exhausted
-    let error = last_error.unwrap();
+    let error = last_error
+        .expect("last_error must be Some after at least one retry attempt");
     tracing::error!(
         "Task '{}' failed after {} attempts: {}",
         task_name,
@@ -244,7 +245,8 @@ where
     }
 
     // All attempts exhausted
-    let error = last_error.unwrap();
+    let error = last_error
+        .expect("last_error must be Some after at least one retry attempt");
     tracing::error!(
         "Task '{}' failed after {} attempts: {}",
         task_name,

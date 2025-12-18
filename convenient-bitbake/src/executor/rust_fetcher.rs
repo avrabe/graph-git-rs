@@ -900,21 +900,25 @@ fn create_tarball_from_git(repo_path: &Path, dest_file: &Path) -> FetchResult<()
 
     // Determine the base name without compression extension
     let dest_str = dest_file.to_string_lossy();
+    let file_name = dest_file.file_name()
+        .ok_or_else(|| FetchError::InvalidUrl(
+            format!("Invalid destination path: {}", dest_file.display())
+        ))?;
     let tar_file = if dest_str.ends_with(".tar.bz2") || dest_str.ends_with(".tbz2") {
         dest_file.with_file_name(
-            dest_file.file_name().unwrap().to_string_lossy()
+            file_name.to_string_lossy()
                 .trim_end_matches(".bz2")
                 .trim_end_matches(".tbz2")
         )
     } else if dest_str.ends_with(".tar.gz") || dest_str.ends_with(".tgz") {
         dest_file.with_file_name(
-            dest_file.file_name().unwrap().to_string_lossy()
+            file_name.to_string_lossy()
                 .trim_end_matches(".gz")
                 .trim_end_matches(".tgz")
         )
     } else if dest_str.ends_with(".tar.xz") {
         dest_file.with_file_name(
-            dest_file.file_name().unwrap().to_string_lossy()
+            file_name.to_string_lossy()
                 .trim_end_matches(".xz")
         )
     } else {

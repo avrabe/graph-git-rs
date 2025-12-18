@@ -95,8 +95,12 @@ impl ScriptPreprocessor {
         let simple_eval = SimplePythonEvaluator::new(self.datastore.clone());
 
         for cap in re.captures_iter(script) {
-            let full_match = cap.get(0).unwrap().as_str();
-            let python_expr = cap.get(1).unwrap().as_str();
+            let full_match = cap.get(0)
+                .expect("regex match must have capture group 0")
+                .as_str();
+            let python_expr = cap.get(1)
+                .expect("regex pattern guarantees capture group 1")
+                .as_str();
 
             trace!("Evaluating Python expression: {}", python_expr);
 

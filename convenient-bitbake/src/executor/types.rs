@@ -236,7 +236,8 @@ impl TaskSignature {
         if self.signature.is_none() {
             self.compute();
         }
-        self.signature.as_ref().unwrap()
+        self.signature.as_ref()
+            .expect("signature must be set after compute()")
     }
 }
 

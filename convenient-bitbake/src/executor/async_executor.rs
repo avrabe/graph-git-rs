@@ -259,7 +259,10 @@ impl AsyncTaskExecutor {
             if let Some(task) = task_graph.get_task(task_id) {
                 let task_key = format!("{}:{}", task.recipe_name, task.task_name);
                 if let Some(spec) = task_specs.get(&task_key) {
-                    let mut executor = self.executor.write().unwrap();
+                    let mut executor = self.executor.write()
+                        .map_err(|e| ExecutionError::SandboxError(
+                            format!("Executor lock poisoned: {}", e)
+                        ))?;
                     let output = executor.execute_task(spec.clone())?;
                     results.insert(task_key, output);
                     completed.insert(task_id);

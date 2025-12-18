@@ -317,7 +317,8 @@ pub fn replace_rpath(path: &Path, new_rpath: &str) -> PackageResult<ChrpathResul
         ));
     }
 
-    let old_rpath_str = old_rpath.as_ref().unwrap();
+    let old_rpath_str = old_rpath.as_ref()
+        .expect("old_rpath checked to be Some above");
     let old_rpath_len = old_rpath_str.len();
 
     // New RPATH must fit in the old space
@@ -499,7 +500,10 @@ pub fn kernel_do_install(config: &KernelInstallConfig) -> PackageResult<KernelIn
                 .filter_map(|e| e.ok())
                 .filter(|e| e.path().extension().map(|ext| ext == "dtb").unwrap_or(false))
             {
-                let file_name = entry.path().file_name().unwrap();
+                let file_name = entry.path().file_name()
+                    .ok_or_else(|| PackageError::InvalidPath(
+                        format!("Invalid file path: {}", entry.path().display())
+                    ))?;
                 let dest_path = boot_dir.join(file_name);
                 fs::copy(entry.path(), &dest_path)?;
 
@@ -549,7 +553,10 @@ pub fn module_do_install(config: &ModuleInstallConfig) -> PackageResult<Vec<Path
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().map(|ext| ext == "ko").unwrap_or(false))
     {
-        let file_name = entry.path().file_name().unwrap();
+        let file_name = entry.path().file_name()
+            .ok_or_else(|| PackageError::InvalidPath(
+                format!("Invalid module path: {}", entry.path().display())
+            ))?;
         let dest_path = modules_dir.join(file_name);
         fs::copy(entry.path(), &dest_path)?;
         info!("Installed module: {}", dest_path.display());

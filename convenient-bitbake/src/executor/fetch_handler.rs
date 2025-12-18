@@ -270,9 +270,13 @@ fn fetch_http(src_uri: &SourceUri, downloads_dir: &Path) -> FetchResult<PathBuf>
 
 /// Download file using wget
 fn download_with_wget(url: &str, dest: &Path) -> FetchResult<()> {
+    let dest_str = dest.to_str()
+        .ok_or_else(|| FetchError::InvalidUrl(
+            format!("Destination path contains invalid UTF-8: {}", dest.display())
+        ))?;
     let output = Command::new("wget")
         .args([
-            "-O", dest.to_str().unwrap(),
+            "-O", dest_str,
             "--no-check-certificate",  // Some build servers use self-signed certs
             url
         ])
@@ -289,9 +293,13 @@ fn download_with_wget(url: &str, dest: &Path) -> FetchResult<()> {
 
 /// Download file using curl
 fn download_with_curl(url: &str, dest: &Path) -> FetchResult<()> {
+    let dest_str = dest.to_str()
+        .ok_or_else(|| FetchError::InvalidUrl(
+            format!("Destination path contains invalid UTF-8: {}", dest.display())
+        ))?;
     let output = Command::new("curl")
         .args([
-            "-o", dest.to_str().unwrap(),
+            "-o", dest_str,
             "-L",  // Follow redirects
             "--insecure",  // Some build servers use self-signed certs
             url
