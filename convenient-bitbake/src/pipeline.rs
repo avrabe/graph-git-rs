@@ -259,11 +259,12 @@ impl Pipeline {
                 move |_| {
                     let count = progress_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     // Report progress every 100 recipes or every 2 seconds
-                    let mut last = last_report.lock().unwrap();
-                    if count % 100 == 0 || last.elapsed().as_secs() >= 2 {
-                        let pct = (count as f64 / total_recipes as f64) * 100.0;
-                        info!("  Progress: {}/{} recipes parsed ({:.1}%)", count, total_recipes, pct);
-                        *last = std::time::Instant::now();
+                    if let Ok(mut last) = last_report.lock() {
+                        if count % 100 == 0 || last.elapsed().as_secs() >= 2 {
+                            let pct = (count as f64 / total_recipes as f64) * 100.0;
+                            info!("  Progress: {}/{} recipes parsed ({:.1}%)", count, total_recipes, pct);
+                            *last = std::time::Instant::now();
+                        }
                     }
                 }
             })
@@ -333,7 +334,7 @@ impl Pipeline {
         recipe_path: &Path,
         task_extractor: &TaskExtractor,
     ) -> (HashMap<String, TaskImplementation>, HashMap<String, TaskImplementation>) {
-        
+
 
         // Extract tasks and helpers from main recipe
         let main_impls = task_extractor.extract_all_from_content(content);
@@ -341,6 +342,18 @@ impl Pipeline {
         let mut all_helpers = main_impls.helpers.clone();
         let main_task_count = all_tasks.len();
         let main_helper_count = all_helpers.len();
+
+        // Extract recipe name and version from filename (e.g., "busybox_1.35.0.bb" -> name="busybox", version="1.35.0")
+        let file_stem = recipe_path.file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let (recipe_name, recipe_version) = if let Some(underscore_pos) = file_stem.rfind('_') {
+            let name = &file_stem[..underscore_pos];
+            let version = &file_stem[underscore_pos + 1..];
+            (name, version)
+        } else {
+            (file_stem, "")
+        };
 
         // Find all require and include directives
         let includes = Self::find_include_directives(content);
@@ -350,8 +363,13 @@ impl Pipeline {
 
         // Process each included file
         for include_path in &includes {
+            // Expand ${PV} and ${BPN} in include path
+            let expanded_path = include_path
+                .replace("${PV}", recipe_version)
+                .replace("${BPN}", recipe_name);
+
             // Try to find the include file
-            if let Some(resolved_path) = Self::resolve_include_path(include_path, recipe_dir) {
+            if let Some(resolved_path) = Self::resolve_include_path(&expanded_path, recipe_dir) {
                 // Read and parse the include file
                 if let Ok(include_content) = std::fs::read_to_string(&resolved_path) {
                     let include_impls = task_extractor.extract_all_from_content(&include_content);
@@ -374,9 +392,9 @@ impl Pipeline {
                 } else {
                     info!("✗ Failed to read include file: {:?}", resolved_path);
                 }
-            } else if include_path.ends_with(".inc") {
+            } else if expanded_path.ends_with(".inc") {
                 info!("✗ Include file not found: {} (recipe: {:?})",
-                      include_path,
+                      expanded_path,
                       recipe_path.file_name().unwrap_or(std::ffi::OsStr::new("unknown")));
             }
         }

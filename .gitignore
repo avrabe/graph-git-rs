@@ -20,3 +20,4 @@ coverage.json
 # Bazel cache (for testing)
 /bazel-cache-data
 poky-test/
+e2e-test/

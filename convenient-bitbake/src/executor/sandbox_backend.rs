@@ -26,7 +26,7 @@
 
 use super::types::{ExecutionError, ExecutionResult, SandboxSpec};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 
@@ -305,10 +305,14 @@ impl SandboxBackend {
 
         // Set environment variables, remapping /work paths to actual sandbox directory
         cmd.env_clear();
+        let work_dir_str = work_dir.to_str()
+            .ok_or_else(|| ExecutionError::SandboxError(
+                format!("Work directory path is not valid UTF-8: {}", work_dir.display())
+            ))?;
         for (key, value) in &spec.env {
             // Remap paths starting with /work to the actual sandbox work directory
             let remapped_value = if value.starts_with("/work") {
-                value.replacen("/work", work_dir.to_str().unwrap(), 1)
+                value.replacen("/work", work_dir_str, 1)
             } else {
                 value.clone()
             };

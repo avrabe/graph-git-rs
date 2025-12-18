@@ -11,7 +11,7 @@ use super::rust_fetcher::{self, FetchConfig, FetchError, FetchResult};
 use crate::{SourceUri, UriScheme};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Result of a fetch task execution
 #[derive(Debug)]
@@ -125,6 +125,7 @@ pub fn execute_fetch_task(
 /// - Line continuations with backslash
 /// - BitBake parameters (;param=value)
 /// - Variable expansion (${PV}, ${PN}, etc.)
+/// - Python expressions (${@...})
 fn parse_src_uri_list(
     src_uri_str: &str,
     vars: &HashMap<String, String>,
@@ -136,19 +137,41 @@ fn parse_src_uri_list(
         .replace("\\\n", " ")
         .replace("\\", "");
 
-    // Split by whitespace
-    for part in normalized.split_whitespace() {
+    // First, expand all Python expressions in the entire string
+    // This ensures ${@...} expressions are evaluated before whitespace splitting
+    let expanded_full = expand_variables(&normalized, vars);
+
+    // Split by whitespace (now safe because Python expressions are resolved)
+    for part in expanded_full.split_whitespace() {
         let part = part.trim();
         if part.is_empty() {
             continue;
         }
 
-        // Expand variables
-        let expanded = expand_variables(part, vars);
+        // Skip entries that still contain unexpanded expressions
+        if part.contains("${@") || part.starts_with("${") {
+            debug!("Skipping URI with unexpanded expression: {}", part);
+            continue;
+        }
+
+        // Skip entries that don't look like valid URIs
+        if !part.contains("://") {
+            // Could be a local file reference without file:// prefix
+            // Check if it looks like a filename (has extension or path separator)
+            if !part.contains('.') && !part.contains('/') {
+                debug!("Skipping invalid URI fragment: {}", part);
+                continue;
+            }
+        }
 
         // Parse URI with parameters
-        let uri = parse_single_uri(&expanded)?;
-        uris.push(uri);
+        match parse_single_uri(part) {
+            Ok(uri) => uris.push(uri),
+            Err(e) => {
+                debug!("Failed to parse URI '{}': {}", part, e);
+                // Continue with other URIs instead of failing completely
+            }
+        }
     }
 
     Ok(uris)
@@ -217,7 +240,10 @@ fn parse_single_uri(uri_str: &str) -> FetchResult<SourceUri> {
     })
 }
 
-/// Expand BitBake variables in a string
+/// Expand BitBake variables in a string (simple ${VAR} expansion only)
+///
+/// Note: Python expressions (${@...}) are already expanded in build_orchestrator.rs
+/// before the data reaches fetch_task. This function only handles simple variable expansion.
 fn expand_variables(s: &str, vars: &HashMap<String, String>) -> String {
     let mut result = s.to_string();
 

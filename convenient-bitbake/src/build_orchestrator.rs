@@ -14,10 +14,10 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 /// Configuration for build orchestration
 pub struct OrchestratorConfig {
@@ -194,12 +194,18 @@ impl BuildOrchestrator {
             }
 
             // Extract variables from recipe content for preprocessing
+            // IMPORTANT: Enable resolve_includes to get variables from .inc files
+            // (many recipes like libxcrypt only have "require foo.inc" in the .bb file)
             let extractor_for_vars = RecipeExtractor::new(ExtractionConfig {
                 extract_tasks: false,
                 use_simple_python_eval: false,
+                resolve_includes: true,  // Critical: resolve require/include statements
                 ..Default::default()
             });
-            let vars = extractor_for_vars.parse_variables(&parsed.content);
+
+            // Pass the full recipe path to extract both name and version for variable expansion
+            let vars = extractor_for_vars.parse_variables_with_includes(&parsed.content, &parsed.file.path);
+
             recipe_variables.insert(parsed.file.name.clone(), vars);
         }
 
@@ -464,51 +470,43 @@ impl BuildOrchestrator {
         let total_tasks = task_graph.tasks.len();
         info!("  Processing {} tasks in parallel (CPU-bound)...", total_tasks);
 
-        // Limit parallelism to avoid memory exhaustion with large task sets
-        // RustPython interpreters use significant memory, so limit to 4 threads
-        let max_threads = std::cmp::min(4, self.config.max_cpu_parallelism);
+        // Create a custom rayon thread pool with larger stacks (8MB instead of default 2MB)
+        // This prevents stack overflow from deep recursion in SimplePythonEvaluator
+        let num_threads = num_cpus::get();
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(max_threads)
+            .num_threads(num_threads)
             .stack_size(8 * 1024 * 1024)  // 8MB stack per thread
+            .thread_name(|idx| format!("task-spec-{}", idx))
             .build()
-            .expect("Failed to create thread pool");
+            .map_err(|e| format!("Failed to create thread pool: {}", e))?;
 
-        // Pre-warm RustPython interpreters in rayon thread pool BEFORE parallel processing
-        // This serializes interpreter creation to avoid concurrent init_stdlib() crashes
-        info!("  Pre-warming {} RustPython interpreters...", max_threads);
-        pool.scope(|s| {
-            for _ in 0..max_threads {
-                s.spawn(|_| {
-                    crate::python_executor::prewarm_interpreter();
-                });
-            }
-        });
-        info!("  ✓ {} interpreters ready", max_threads);
+        info!("  Using {} threads with 8MB stacks for task spec generation", num_threads);
 
-        // Progress tracking with atomics
-        let processed = Arc::new(AtomicUsize::new(0));
-        let preprocess_total_time = Arc::new(AtomicU64::new(0));
-        let last_report = Arc::new(Mutex::new(Instant::now()));
+        // Thread-safe progress tracking
+        let processed = AtomicUsize::new(0);
+        let preprocess_total_time = AtomicUsize::new(0);
+        let last_report = Mutex::new(Instant::now());
 
-        // Use our custom thread pool for parallel processing
-        // This runs the parallel work in the pool with limited threads and larger stack
-        let specs: Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> =
-            pool.install(|| {
+        // Parallel processing with custom thread pool
+        let specs: Result<HashMap<String, TaskSpec>, Box<dyn std::error::Error + Send + Sync>> = pool.install(|| {
             task_graph.tasks.values()
             .collect::<Vec<_>>()
             .par_iter()
             .map(|task| {
-                let count = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
 
-                // Report progress every 500 tasks or every 2 seconds
-                if count % 500 == 0 {
-                    let mut last = last_report.lock().unwrap();
+                // Report progress every 3000 tasks or every 2 seconds (thread-safe)
+                if current % 3000 == 0 {
+                    let pct = (current as f64 / total_tasks as f64) * 100.0;
+                    info!("  Progress: {}/{} tasks ({:.1}%)", current, total_tasks, pct);
+                } else if let Ok(mut last) = last_report.try_lock() {
                     if last.elapsed().as_secs() >= 2 {
-                        let pct = (count as f64 / total_tasks as f64) * 100.0;
-                        info!("  Progress: {}/{} tasks ({:.1}%)", count, total_tasks, pct);
+                        let pct = (current as f64 / total_tasks as f64) * 100.0;
+                        info!("  Progress: {}/{} tasks ({:.1}%)", current, total_tasks, pct);
                         *last = Instant::now();
                     }
                 }
+
             let task_key = format!("{}:{}", task.recipe_name, task.task_name);
 
             // Get helper functions for this recipe (both explicit helpers and other task functions)
@@ -576,7 +574,8 @@ impl BuildOrchestrator {
                 recipe_vars.entry("HOST_SYS".to_string()).or_insert_with(|| "aarch64-poky-linux".to_string());
                 recipe_vars.entry("BUILD_SYS".to_string()).or_insert_with(|| "x86_64-linux".to_string());
                 recipe_vars.entry("AUTOTOOLS_AUXDIR".to_string()).or_insert_with(|| "${S}/build-aux".to_string());
-                recipe_vars.entry("SRCREV".to_string()).or_insert_with(|| "INVALID".to_string());
+                // Note: SRCREV should come from recipe parsing, not set to a dummy value
+                // If missing, git fetcher will use HEAD/default branch
                 recipe_vars.entry("baselib".to_string()).or_insert_with(|| "lib".to_string());
                 recipe_vars.entry("prefix".to_string()).or_insert_with(|| "/usr".to_string());
                 recipe_vars.entry("bindir".to_string()).or_insert_with(|| "/usr/bin".to_string());
@@ -591,8 +590,22 @@ impl BuildOrchestrator {
                 recipe_vars.entry("KERNEL_VERSION".to_string()).or_insert_with(|| "5.15".to_string());
                 recipe_vars.entry("KERNEL_IMAGETYPE".to_string()).or_insert_with(|| "Image".to_string());
 
-                // Clone recipe_vars for task environment before moving into preprocessor
-                let env_vars = recipe_vars.clone();
+                // Clone recipe_vars for task environment, then expand Python expressions in values
+                let mut env_vars = recipe_vars.clone();
+
+                // Expand Python expressions in environment variables (especially SRC_URI)
+                // This uses the same SimplePythonEvaluator as script preprocessing
+                let evaluator = crate::simple_python_eval::SimplePythonEvaluator::new(env_vars.clone());
+                for (key, value) in env_vars.iter_mut() {
+                    if value.contains("${@") {
+                        // Expand Python expressions in this value
+                        let expanded = evaluator.expand_all_expressions(value);
+                        if expanded != *value {
+                            trace!("Expanded env var {}: {} -> {}", key, value, expanded);
+                            *value = expanded;
+                        }
+                    }
+                }
 
                 let preprocessor = ScriptPreprocessor::new(recipe_vars);
 
@@ -613,14 +626,19 @@ impl BuildOrchestrator {
                 };
 
                 let elapsed = preprocess_start.elapsed();
-                preprocess_total_time.fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+                preprocess_total_time.fetch_add(elapsed.as_micros() as usize, Ordering::Relaxed);
 
                 (result, env_vars)
             };
 
             let task_workdir = tmp_dir.join(&task.recipe_name).join(&task.task_name);
-            fs::create_dir_all(&task_workdir)
-                .map_err(|e| format!("Failed to create workdir: {}", e))?;
+            // Use std::fs::create_dir_all which handles concurrent creation safely
+            if let Err(e) = fs::create_dir_all(&task_workdir) {
+                // Only fail if directory doesn't exist after the call
+                if !task_workdir.exists() {
+                    return Err(format!("Failed to create workdir {}: {}", task_workdir.display(), e).into());
+                }
+            }
 
             // Output file - executor will prepend /work/outputs/ for relative paths
             let output_file = format!("{}.done", task.task_name);
@@ -651,12 +669,12 @@ impl BuildOrchestrator {
             Ok((task_key, spec))
         })
         .collect::<Result<HashMap<_, _>, _>>()
-        });  // Close pool.install()
+        });  // Close parallel block
 
         let specs = specs?;
 
-        let total_preprocess_micros = preprocess_total_time.load(Ordering::Relaxed);
-        if total_preprocess_micros > 0 {
+        let total_preprocess_micros = preprocess_total_time.load(Ordering::Relaxed) as u64;
+        if total_preprocess_micros > 0 && total_tasks > 0 {
             let total_time = Duration::from_micros(total_preprocess_micros);
             let avg_micros = total_preprocess_micros / total_tasks as u64;
             info!(
@@ -666,33 +684,6 @@ impl BuildOrchestrator {
         }
 
         Ok(specs)
-    }
-
-    /// Collect recipe variables for preprocessing
-    fn collect_recipe_vars(&self, recipe_name: &str, build_dir: &Path) -> HashMap<String, String> {
-        let mut vars = HashMap::new();
-
-        // Recipe metadata
-        vars.insert("PN".to_string(), recipe_name.to_string());
-        vars.insert("PV".to_string(), "1.0".to_string());
-        vars.insert("PR".to_string(), "r0".to_string());
-
-        // Directory paths (will be overridden by executor with actual paths)
-        let workdir = build_dir.join("tmp").join(recipe_name);
-        vars.insert("WORKDIR".to_string(), workdir.to_string_lossy().to_string());
-        vars.insert("S".to_string(), workdir.join("src").to_string_lossy().to_string());
-        vars.insert("B".to_string(), workdir.join("build").to_string_lossy().to_string());
-        vars.insert("D".to_string(), workdir.join("image").to_string_lossy().to_string());
-
-        // Other common variables (matching prelude.sh defaults)
-        vars.insert("TMPDIR".to_string(), build_dir.join("tmp").to_string_lossy().to_string());
-        vars.insert("PTEST_PATH".to_string(), "/usr/lib/ptest".to_string());
-        vars.insert("TESTDIR".to_string(), workdir.join("tests").to_string_lossy().to_string());
-
-        // TODO: Extract actual variable values from recipe parsing
-        // For now, using defaults
-
-        vars
     }
 
     /// Create a task script from implementation code with helper functions

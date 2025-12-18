@@ -2,9 +2,21 @@
 // Much faster than RustPython for simple operations
 
 use crate::python_ir::{OpKind, Operation, PythonIR, ValueId, ExecutionStrategy};
+use regex::Regex;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::python_executor::PythonExecutor;
+
+// Pre-compiled regex for variable expansion
+static VAR_EXPANSION_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_var_expansion_regex() -> &'static Regex {
+    VAR_EXPANSION_REGEX.get_or_init(|| {
+        Regex::new(r"\$\{([^}]+)\}")
+            .expect("Invalid regex pattern for variable expansion")
+    })
+}
 
 /// Result of IR execution
 #[derive(Debug, Clone)]
@@ -72,9 +84,7 @@ impl IRExecutor {
     /// Expand ${VAR} references in a string
     fn expand_var_references(&self, s: &str) -> String {
         let mut result = s.to_string();
-
-        // Simple expansion of ${VAR} patterns
-        let var_pattern = regex::Regex::new(r"\$\{([^}]+)\}").unwrap();
+        let var_pattern = get_var_expansion_regex();
 
         loop {
             let mut changed = false;

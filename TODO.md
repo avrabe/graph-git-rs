@@ -17,6 +17,8 @@
 | Core pipeline incomplete | High | **IN PROGRESS** |
 | 50+ unwrap() in production code | Medium | **FIXED** ✓ (convenient-git) |
 | No dry-run support for builds | Medium | **FIXED** ✓ (--dry-run flag) |
+| Parallel task spec gen crashes | High | **FIXED** ✓ (8MB stack threads) |
+| SRC_URI Python expressions | Medium | **FIXED** ✓ (expand at task spec creation) |
 
 ### Gap to State-of-the-Art
 | Feature | Buck2/Bazel | This Project | Gap |
@@ -90,6 +92,65 @@
 - [ ] Binary produced in expected location
 - [ ] `file busybox` shows ARM aarch64 executable
 - [ ] Binary runs in qemu-aarch64
+
+**Network/Proxy Support (November 2025):**
+- [x] Added TLS certificate handling via `native-certs` feature (uses OS cert store)
+- [x] Git protocol conversion: `git://` → `https://` for proxy compatibility
+- [x] HTTP proxy auto-detection from environment variables (`HTTPS_PROXY`, `https_proxy`)
+- [x] Added `--skip-fetch` flag for offline/network-less builds
+- [x] Git CLI fallback when git2 fails with authentication errors
+- [x] **Mirror Fallback System** for HTTP sources:
+  - Git config `url.<base>.insteadOf` support
+  - BitBake-style `PREMIRRORS` environment variable
+  - `FETCH_MIRRORS` environment variable (simpler format)
+  - Built-in mirrors for busybox, linux, glibc, openssl, zlib, xz, etc.
+  - Auto-detection via `github.com/mirror/*` repositories
+  - Creates proper compressed tarballs from git archive
+
+**SRC_URI Resolution (November 2025):**
+- [x] Extract `${PV}` from recipe filename (e.g., `busybox_1.35.0.bb` → PV=1.35.0)
+- [x] Resolve SRC_URI from include files (e.g., `libxcrypt.inc`)
+- [x] Expand `${PV}` and `${BPN}` in include directives
+- [x] Expand inline Python expressions `${@...}` in task env vars during task spec creation
+
+**Package Operations (November 2025):**
+- [x] `populate_packages()` - Pure Rust package splitting (-dev, -dbg, -doc, -locale, -staticdev)
+- [x] `chrpath` functionality using goblin crate for ELF RPATH manipulation:
+  - `get_rpath()` - Read RPATH/RUNPATH from ELF binaries
+  - `delete_rpath()` - Remove RPATH entries
+  - `replace_rpath()` - Modify RPATH (within size constraints)
+  - `list_rpath()` - Display RPATH like chrpath -l
+- [x] `kernel_do_install()` - Kernel image and module installation
+- [x] `module_do_install()` - Out-of-tree kernel module installation
+- [x] Executor integration for do_package and kernel tasks
+
+**Parallelism (November 2025):**
+- [x] Fixed parallel task spec generation crash (SIGSEGV)
+  - Root cause: Stack overflow in rayon threads (2MB default)
+  - Solution: Custom ThreadPool with 8MB stacks per thread
+- [x] Full parallel processing enabled using rayon par_iter()
+
+**In-Process Shell Execution (November 2025):**
+- [x] Integrated brush-shell for in-process bash script execution
+- [x] Custom BitBake builtins implemented as native Rust:
+  - `bb_note`, `bbnote` - Info-level logging
+  - `bb_warn`, `bbwarn` - Warning-level logging
+  - `bb_error`, `bberror` - Error-level logging
+  - `bb_fatal`, `bbfatal`, `bbfatal_log` - Fatal errors with exit
+  - `bb_debug`, `bbdebug` - Debug-level logging
+  - `bb_plain`, `bbplain` - Plain output
+  - `bbdirs` - Directory creation utility
+  - `oe_runmake` - Make execution with PARALLEL_MAKE support
+- [x] All logging routed through tracing framework for centralized collection
+- [x] Variable tracking (reads/writes) during script execution
+- [x] Exit code propagation from scripts
+
+**Known Issues:**
+- Some external servers (e.g., busybox.net) may return HTTP 503 intermittently
+  - ✅ Now handled by automatic git mirror fallback
+- ~~Inline Python expressions in SRC_URI (e.g., `${@["", "file://init.cfg"][...]}`) not evaluated~~
+  - ✅ Fixed: Python expressions now expanded in build_orchestrator.rs during task spec creation
+  - Uses SimplePythonEvaluator.expand_all_expressions() with proper nested brace handling
 
 ---
 
@@ -231,7 +292,7 @@
 | **Unpack** | `convenient-bitbake/src/fetcher.rs:111` | ✓ Wired to executor |
 | **Patch** | `convenient-bitbake/src/executor/executor.rs:495` | ✓ Implemented |
 | **Sysroot** | `convenient-bitbake/src/sysroot.rs` | ✓ Complete |
-| **Build cmd** | `hitzeleiter/src/commands/build.rs` | Needs testing |
+| **Build cmd** | `hitzeleiter/src/commands/build.rs` | ✓ --skip-fetch, --dry-run |
 | **Query cmd** | `hitzeleiter/src/commands/query.rs` | ✓ Works |
 | **Signature cache** | `convenient-bitbake/src/signature_cache.rs` | ✓ Works |
 | **Build orchestrator** | `convenient-bitbake/src/build_orchestrator.rs` | ✓ Core logic |

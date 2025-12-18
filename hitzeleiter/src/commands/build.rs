@@ -35,6 +35,7 @@ pub async fn execute(
     build_dir: &Path,
     target: &str,
     dry_run: bool,
+    _skip_fetch: bool, // TODO: Implement skip_fetch to skip do_fetch tasks in offline mode
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let start_time = Instant::now();
 
