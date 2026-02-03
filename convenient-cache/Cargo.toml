@@ -20,7 +20,7 @@ hex = "0.4"
 tonic = "0.12"
 prost = "0.13"
 prost-types = "0.13"
-bytes = "1.7"
+bytes = "1.11"
 
 [build-dependencies]
 tonic-build = "0.12"
